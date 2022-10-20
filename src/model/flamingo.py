@@ -3,6 +3,7 @@ Main Flamingo class
 Uses gated cross attention with Perceiver resampler
 '''
 
+from helpers import GatedCrossAttentionBlock, PerceiverResampler
 
 class Flamingo(nn.Module):
   '''
