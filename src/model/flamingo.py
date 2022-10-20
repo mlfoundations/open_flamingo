@@ -4,6 +4,7 @@ Uses gated cross attention with Perceiver resampler
 '''
 
 from helpers import GatedCrossAttentionBlock, PerceiverResampler
+from torch import nn
 
 class Flamingo(nn.Module):
   '''
@@ -31,6 +32,6 @@ class Flamingo(nn.Module):
     for i in range(len(self.lang_encoder)):
       vision_x = self.perceiver_resampler[i](vision_attended)
       lang_x = self.gated_cross_attn[i](lang_x, vision_x)
-      lang_x = self.language_encoder[i](lang_x)
+      lang_x = self.lang_encoder[i](lang_x)
    
    return lang_x
