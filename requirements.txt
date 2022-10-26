@@ -1,0 +1,5 @@
+einops
+einops-exts
+transformers
+torch
+pillow
