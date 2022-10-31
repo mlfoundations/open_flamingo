@@ -12,9 +12,8 @@ from .helpers import GatedCrossAttentionBlock, PerceiverResampler
 
 
 class FlamingoLayer(nn.Module):
-    def __init__(self, perciever_layer, gated_cross_attn_layer, decoder_layer):
+    def __init__(self, gated_cross_attn_layer, decoder_layer):
         super().__init__()
-        self.perciever_layer = perciever_layer
         self.gated_cross_attn_layer = gated_cross_attn_layer
         self.decoder_layer = decoder_layer
 
@@ -27,7 +26,6 @@ class FlamingoLayer(nn.Module):
                 output_attentions=False,
                 use_cache=False):
 
-        vis_x = self.perciever_layer(vis_x)
         lang_x = self.gated_cross_attn_layer(lang_x, vis_x)
         lang_x = self.decoder_layer(lang_x,
                                     attention_mask=attention_mask,
@@ -47,15 +45,11 @@ class OPTForCausalLMFlamingo(OPTForCausalLM):
             for _ in range(len(self.get_decoder().layers))
         ]
 
-        self.perceiver_resampler = [
-            PerceiverResampler(dim=self.config.hidden_size,
-                               depth=perceiver_depth)
-            for _ in range(len(self.get_decoder().layers))
-        ]
+        self.perceiver_resampler = PerceiverResampler(dim=self.config.hidden_size, depth=perceiver_depth)
 
-        self.get_decoder().layers = nn.ModuleList([FlamingoLayer(perceiver_layer, gated_cross_attn_layer, decoder_layer)
-                                                   for perceiver_layer, gated_cross_attn_layer, decoder_layer in
-                                                   zip(self.perceiver_resampler, self.gated_cross_attn, self.get_decoder().layers)])
+        self.get_decoder().layers = nn.ModuleList([FlamingoLayer(gated_cross_attn_layer, decoder_layer)
+                                                   for gated_cross_attn_layer, decoder_layer in
+                                                   zip(self.gated_cross_attn, self.get_decoder().layers)])
 
     def forward(
         self,
@@ -161,6 +155,7 @@ class OPTForCausalLMFlamingo(OPTForCausalLM):
                     f" {head_mask.size()[0]}."
                 )
 
+        vision_resampled = self.perceiver_resampler(vision_attended)
         for idx, decoder_layer in enumerate(self.get_decoder().layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
@@ -197,7 +192,7 @@ class OPTForCausalLMFlamingo(OPTForCausalLM):
                 )
             else:
                 layer_outputs = decoder_layer(
-                    vision_attended,
+                    vision_resampled,
                     hidden_states,
                     attention_mask=attention_mask,
                     layer_head_mask=(

@@ -94,9 +94,7 @@ class VQAEval:
 				outText = outText.replace(p, '')
 			else:
 				outText = outText.replace(p, ' ')
-		outText = self.periodStrip.sub("",
-									  outText,
-									  re.UNICODE)
+		outText = self.periodStrip.sub("", outText, re.UNICODE)
 		return outText
 	
 	def processDigitArticle(self, inText):
