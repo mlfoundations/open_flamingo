@@ -51,7 +51,7 @@ class Flamingo(nn.Module):
         unfinished_sequences = lang_x.new(lang_x.shape[0]).fill_(1)
 
         while True:
-            output = self.forward(vision_x, lang_x)[
+            output = self.forward(vision_x, lang_x, attention_mask=attention_mask)[
                 0][:, -1, :]  # just get logits for final token
             # get token with highest probability
             new_tokens = torch.argmax(output, dim=-1)
