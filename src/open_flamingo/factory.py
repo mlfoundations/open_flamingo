@@ -33,20 +33,22 @@ def create_model_and_transforms(
     text_tokenizer = AutoTokenizer.from_pretrained(lang_encoder_path)
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens({
-        'additional_special_tokens': ['<|endofchunk|>']
+        'additional_special_tokens': ['<|endofchunk|>', '<media>']
     })
 
     lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path)
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
 
+    model = Flamingo(vision_encoder, lang_encoder, text_tokenizer.encode("<|endofchunk|>")[0], text_tokenizer.encode("<media>")[0])
+
+    model.perceiver_resampler.requires_grad_(True)
+
     for layer in lang_encoder.get_decoder().layers:
         layer.requires_grad_(False)
-    lang_encoder.perceiver_resampler.requires_grad_(True)
+
     for layer in lang_encoder.gated_cross_attn_layers:
         layer.requires_grad_(True)
     lang_encoder.get_decoder().embed_tokens.requires_grad_(True)
-
-    model = Flamingo(vision_encoder, lang_encoder)
 
     logging.info(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")

@@ -176,9 +176,7 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
                                             attention_mask=encodings["attention_mask"].to(
                                                 device if device >= 0 else "cpu"),
                                             max_length=len(
-                                                encodings["input_ids"][0]) + max_generation_length,
-                                            eoc_token_id=tokenizer.encode(
-                                                "<|endofchunk|>")[0])
+                                                encodings["input_ids"][0]) + max_generation_length)
 
             predictions.extend([postprocess_vqa_generation(
                 out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)])
@@ -234,9 +232,7 @@ def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_g
                                             attention_mask=encodings["attention_mask"].to(
                                                 device if device >= 0 else "cpu"),
                                             max_length=len(
-                                                encodings["input_ids"][0]) + max_generation_length,
-                                            eoc_token_id=tokenizer.encode(
-                                                "<|endofchunk|>")[0])
+                                                encodings["input_ids"][0]) + max_generation_length)
 
         predictions.extend([postprocess_captioning_generation(
             out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)])
