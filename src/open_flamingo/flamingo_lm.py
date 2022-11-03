@@ -6,7 +6,7 @@ import torch.nn as nn
 from transformers import OPTForCausalLM, OPTPreTrainedModel, OPTModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from .helpers import GatedCrossAttentionBlock, PerceiverResampler
+from .helpers import GatedCrossAttentionBlock
 
 # Had to redefine the OPT model as it will be more difficult to iterate layer by layer (which should just be defined in the forward pass)
 # Forward pass code modified from https://github.com/huggingface/transformers/blob/bd469c40659ce76c81f69c7726759d249b4aef49/src/transformers/models/opt/modeling_opt.py
@@ -18,9 +18,13 @@ class FlamingoLayer(nn.Module):
         self.gated_cross_attn_layer = gated_cross_attn_layer
         self.decoder_layer = decoder_layer
         self.vis_x = None
+        self.media_locations = None
         
-    def condition(self, vis_x): # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
+    def condition_vis_x(self, vis_x): # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
         self.vis_x = vis_x
+    
+    def condition_media_locations(self, media_locations):
+        self.media_locations = media_locations
 
     def forward(self,
                 lang_x,
@@ -30,7 +34,7 @@ class FlamingoLayer(nn.Module):
                 output_attentions=False,
                 use_cache=False):
 
-        lang_x = self.gated_cross_attn_layer(lang_x, self.vis_x)
+        lang_x = self.gated_cross_attn_layer(lang_x, self.vis_x, media_locations=self.media_locations)
         lang_x = self.decoder_layer(lang_x,
                                     attention_mask=attention_mask,
                                     layer_head_mask=layer_head_mask,
@@ -47,7 +51,6 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         super().__init__(config)
         self.model = OPTModel(config)
         
-        self.perceiver_resampler = PerceiverResampler(dim=self.config.hidden_size, depth=2)
         self.gated_cross_attn_layers = nn.ModuleList([GatedCrossAttentionBlock(dim=self.config.hidden_size) for _ in self.model.decoder.layers])
 
         # the lm_head weight is automatically tied to the embed tokens weight
@@ -57,9 +60,17 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         self.post_init()
         
         self.initalized_flamingo = False
+        self.media_token_id = None
     
-    def init_flamingo(self):
+    def init_flamingo(self, media_token_id):
+        """
+        Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
+
+        Args:
+            media_token_id (_type_): _description_
+        """
         self.model.decoder.layers = nn.ModuleList([FlamingoLayer(gated_cross_attn_layer, decoder_layer) for gated_cross_attn_layer, decoder_layer in zip(self.gated_cross_attn_layers, self.model.decoder.layers)])
+        self.media_token_id = media_token_id
         self.initalized_flamingo = True
 
     def get_input_embeddings(self):
@@ -82,7 +93,6 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
 
     def forward(
         self,
-        vision_attended: torch.Tensor = None,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
@@ -163,12 +173,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
-        if vision_attended is not None:
-            vision_attended = self.perceiver_resampler(vision_attended)
-            
-            # condition on vis_attended
-            for layer in self.model.decoder.layers:
-                layer.condition(vision_attended)
+        media_locations = input_ids == self.media_token_id
+        for layer in self.get_decoder().layers:
+            layer.condition_media_locations(media_locations)
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -205,10 +212,11 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+        
     def clear_conditioned_layers(self):
         for layer in self.model.decoder.layers:
-            layer.condition(None)
-            
+            layer.condition_vis_x(None)
+            layer.condition_media_locations(None)
             
     def prepare_inputs_for_generation(self, input_ids, past=None, attention_mask=None, use_cache=None, **kwargs):
         # if model is used as a decoder in encoder-decoder model, the decoder attention mask is created on the fly
