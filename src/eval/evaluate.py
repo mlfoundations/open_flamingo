@@ -183,7 +183,6 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
 
             predictions.extend([postprocess_vqa_generation(
                 out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)])
-
     return {"vqa_accuracy": compute_vqa_accuracy(predictions, [row["answers"] for row in dataset])}
 
 
@@ -226,11 +225,8 @@ def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_g
         images = image_processor(
             images=[b["image"] for b in batch], return_tensors="pt")["pixel_values"]
 
-        encodings = tokenizer([(f"<image> Output:") for b in batch],
-                              padding="longest",
-                              truncation="only_first",
-                              max_length=30,
-                              return_tensors="pt")
+        encodings = tokenizer(["<image> Output:" for _ in batch], padding="longest", truncation="only_first", max_length=30, return_tensors="pt")
+
 
         with torch.inference_mode():
             outputs = model.greedy_generate(images,
