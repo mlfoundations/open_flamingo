@@ -33,8 +33,8 @@ class Flamingo(nn.Module):
         return output
 
     def generate(self, vision_x: torch.Tensor, lang_x: torch.Tensor, max_length: int, eoc_token_id: int, attention_mask: torch.Tensor = None, num_beams=1, temperature=1.0, top_k=0, top_p=1.0, no_repeat_ngram_size=0, length_penalty=1.0, num_return_sequences=1, do_sample=False, early_stopping=False):
-        """ Adapted from https://github.com/huggingface/transformers/blob/v4.23.1/src/transformers/generation_utils.py#L1637
-        This is a barebones implementation of greedy decoding. We should work on better methods later.
+        """ 
+        Generate text conditioned on vision and language inputs.
 
         Args:
             vision_x (torch.Tensor): Vision input
