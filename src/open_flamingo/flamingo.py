@@ -23,6 +23,7 @@ class Flamingo(nn.Module):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.lang_encoder = lang_encoder
+        self.lang_encoder.init_flamingo()
 
     def forward(self, vision_x: torch.Tensor, lang_x: torch.Tensor, attention_mask: torch.Tensor = None, labels: torch.Tensor = None):
         vision_attended = self.vision_encoder(vision_x)

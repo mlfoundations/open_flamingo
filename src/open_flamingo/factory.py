@@ -42,7 +42,7 @@ def create_model_and_transforms(
     for layer in lang_encoder.get_decoder().layers:
         layer.requires_grad_(False)
     lang_encoder.perceiver_resampler.requires_grad_(True)
-    for layer in lang_encoder.gated_cross_attn:
+    for layer in lang_encoder.gated_cross_attn_layers:
         layer.requires_grad_(True)
     lang_encoder.get_decoder().embed_tokens.requires_grad_(True)
 

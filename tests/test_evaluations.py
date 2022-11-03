@@ -1,7 +1,6 @@
 import unittest
 
-from src.eval.evaluate import (evaluate_imagenet_zeroshot, evaluate_okvqa,
-                               evaluate_text_vqa, evaluate_coco)
+from src.eval.evaluate import (evaluate_imagenet_zeroshot, evaluate_vqa, evaluate_coco)
 from src.open_flamingo.factory import create_model_and_transforms
 
 
