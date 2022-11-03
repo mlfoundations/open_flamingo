@@ -82,7 +82,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
 
     def forward(
         self,
-        vision_attended: torch.Tensor,
+        vision_attended: torch.Tensor = None,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
@@ -163,11 +163,12 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
-        vision_attended = self.perceiver_resampler(vision_attended)
-        
-        # condition on vis_attended
-        for layer in self.model.decoder.layers:
-            layer.condition(vision_attended)
+        if vision_attended is not None:
+            vision_attended = self.perceiver_resampler(vision_attended)
+            
+            # condition on vis_attended
+            for layer in self.model.decoder.layers:
+                layer.condition(vision_attended)
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -204,7 +205,11 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
+    def clear_conditioned_layers(self):
+        for layer in self.model.decoder.layers:
+            layer.condition(None)
+            
+            
     def prepare_inputs_for_generation(self, input_ids, past=None, attention_mask=None, use_cache=None, **kwargs):
         # if model is used as a decoder in encoder-decoder model, the decoder attention mask is created on the fly
         if attention_mask is None:
