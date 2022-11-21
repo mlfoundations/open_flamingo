@@ -1,5 +1,4 @@
 import logging
-import re
 
 import more_itertools
 import numpy as np
@@ -110,7 +109,7 @@ def evaluate_imagenet_zeroshot(model, tokenizer, image_processor, batch_size, nu
     return {"accuracy": predictions.count(True) / len(predictions)}
 
 
-def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_generation_length=15, num_samples=None, device=-1, evaluation_stage="validation", wandb=None, step=None, use_prompt=True):
+def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_generation_length=15, num_samples=5000, device=-1, evaluation_stage="validation", wandb=None, step=None):
     """Evaluate a model on COCO dataset.
 
     Args:
@@ -120,7 +119,7 @@ def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_g
         batch_size (int): batch size
         data_dir (str): path to data directory
         max_generation_length (int, optional): max generation length. Defaults to 30.
-        num_samples (int, optional): number of samples to evaluate on (for testing). Defaults to None (entire test set).
+        num_samples (int, optional): number of samples to evaluate on (for testing). Defaults to 5000 samples.
         device (int, optional): device to use. Defaults to -1 (cpu).
         evaluation_stage (str, optional): stage to evaluate on. Can be "validation" or "test". Defaults to "validation".
 
@@ -135,80 +134,59 @@ def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_g
             "evaluation_stage must be either 'validation' or 'test'")
 
     dataset = COCODataset(data_dir, evaluation_stage)
-    
-    assert num_samples <= len(dataset)-2, "num_samples must be less than the number of samples in the dataset"
+
+    # get a random subset of the dataset
+    np.random.seed(123)
+    random_indices = np.random.choice(
+        len(dataset), num_samples+2, replace=False)
 
     # get two samples from the dataset to use as prompts
-    sample_one = dataset[num_samples+1]
-    sample_two = dataset[num_samples+2]
-    
-    if num_samples is not None:
-        # get a random subset of the dataset
-        np.random.seed(123)
-        random_indices = np.random.choice(len(dataset), num_samples, replace=False)
-        dataset = torch.utils.data.Subset(dataset, random_indices)
-    
+    sample_one = dataset[random_indices[0]]
+    sample_two = dataset[random_indices[1]]
+
+    dataset = torch.utils.data.Subset(dataset, random_indices[2:])
+
     model.eval()
-    model.to(device if device >= 0 else "cpu")
 
     predictions = []
     ground_truths = []
-    
-    idx = 0
 
-    for batch in more_itertools.chunked(tqdm(dataset, desc="Running inference"), batch_size):
+    for idx, batch in enumerate(more_itertools.chunked(tqdm(dataset, desc="Running inference"), batch_size)):
         images = image_processor(
             images=[b["image"] for b in batch], return_tensors="pt")["pixel_values"]
-        
+
         tokenizer.padding_side = "left"
-
-        if use_prompt:
-            encodings = tokenizer([f"{sample_one['caption'].strip()}<|endofchunk|>{sample_two['caption'].strip()}<|endofchunk|><image>" for _ in batch], padding="longest", truncation="only_first", max_length=256, return_tensors="pt")
-        else:
-            encodings = tokenizer([f"<image>" for _ in batch], padding="longest", truncation="only_first", max_length=32, return_tensors="pt")
-
-        # print("Input:", tokenizer.batch_decode(encodings["input_ids"], skip_special_tokens=True))
+        encodings = tokenizer([f"{sample_one['caption'].strip()}<|endofchunk|>{sample_two['caption'].strip()}<|endofchunk|><image>" for _ in batch],
+                              padding="longest",
+                              truncation="only_first",
+                              max_length=64,
+                              return_tensors="pt")
 
         with torch.inference_mode():
-            outputs = model.generate(images.to(device if device >= 0 else "cpu"),
-                                            encodings["input_ids"].to(
-                                                device if device >= 0 else "cpu"),
-                                            attention_mask=encodings["attention_mask"].to(
-                                                device if device >= 0 else "cpu"),
-                                            max_length=len(
-                                                encodings["input_ids"][0]) + max_generation_length)
-            
-        # print("Output:", tokenizer.batch_decode(outputs, skip_special_tokens=True))
-        # get only the generated text
+            outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
+                                     encodings["input_ids"].to(
+                device if device >= 0 else "cpu"),
+                attention_mask=encodings["attention_mask"].to(
+                device if device >= 0 else "cpu"),
+                max_length=len(
+                encodings["input_ids"][0]) + max_generation_length)
+
         outputs = outputs[:, len(encodings["input_ids"][0]):]
-        # print("Output (postprocessed):", tokenizer.batch_decode(outputs, skip_special_tokens=True))
-        
         new_predictions = [postprocess_captioning_generation(
             out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)]
 
-        # print("predictions:", new_predictions)
-
         predictions.extend(new_predictions)
         ground_truths.extend([b["caption"] for b in batch])
-        
+
         if wandb is not None:
-            wandb.log({f"coco_with_prompt_{idx}" if use_prompt else f"coco_without_prompt_{idx}": wandb.Image(batch[0]["image"], caption=f"Groundtruth: {batch[0]['caption']}\nPrediction: {new_predictions[0]}")}, step=step, commit=False)
-        
-        idx += 1
-    
-    # randmly sample 10 images
-    num = 0
-    for p, gt in zip(predictions, ground_truths):
-        if num >= 10:
-            break
-        num += 1
-        print(f"Prediction: {p}\nGroundtruth: {gt}\n")
-        
-    
+            wandb.log({f"coco_{idx}": wandb.Image(batch[0]["image"], caption=f"Groundtruth: {batch[0]['caption']}\nPrediction: {new_predictions[0]}")},
+                      step=step,
+                      commit=False)
+
     return {"cider": compute_cider(predictions, ground_truths)}
 
 
-def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="TextVQA", data_dir=None, max_generation_length=15, num_samples=None, device=-1, evaluation_stage="validation", wandb=None, step=None, use_prompt=False):
+def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="TextVQA", data_dir=None, max_generation_length=15, num_samples=None, device=-1, evaluation_stage="validation", wandb=None, step=None):
     """Evaluate a model on VQA datasets.
 
     Args:
@@ -245,21 +223,18 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
         dataset = OKVQADataset(data_dir, evaluation_stage)
     else:
         raise ValueError("benchmark_name must be either TextVQA or OKVQA")
-    
-    assert num_samples <= len(dataset)-2, "num_samples must be <= len(dataset)-2"
-    
+
     # get two samples to use as prompts
-    prompt_one = dataset[num_samples+1]
-    prompt_two = dataset[num_samples+2]
+    prompt_one = dataset[0]
+    prompt_two = dataset[1]
 
     if num_samples is not None:
         if benchmark_name == "TextVQA":
-            dataset = dataset.shuffle().select(range(num_samples))
+            dataset = dataset.shuffle().select(range(2, num_samples+2))
         elif benchmark_name == "OKVQA":  # OKVQA is not a huggingface dataset so we can't use select
-            dataset = torch.utils.data.Subset(dataset, range(num_samples))
+            dataset = torch.utils.data.Subset(dataset, range(2, num_samples+2))
 
     model.eval()
-    model.to(device if device >= 0 else "cpu")
 
     predictions = []
     idx = 0
@@ -268,47 +243,34 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
             images=[b["image"] for b in batch], return_tensors="pt")["pixel_values"]
 
         tokenizer.padding_side = "left"
-        
-        if use_prompt:
-            encodings = tokenizer([(f"question:{prompt_one['question']} answer:{prompt_one['answers'][0]} <|endofchunk|> question:{prompt_two['question']} answer:{prompt_two['answers'][0]} <|endofchunk|> <image> question:{b['question']} answer:") for b in batch],
-                                padding="longest",
-                                truncation="only_first",
-                                max_length=256,
-                                return_tensors="pt")
-        else:
-            encodings = tokenizer([(f"<image> question:{b['question']} answer:") for b in batch],
+
+        encodings = tokenizer([(f"question:{prompt_one['question']} answer:{prompt_one['answers'][0]} <|endofchunk|> question:{prompt_two['question']} answer:{prompt_two['answers'][0]} <|endofchunk|> <image> question:{b['question']} answer:") for b in batch],
                                 padding="longest",
                                 truncation="only_first",
                                 max_length=64,
                                 return_tensors="pt")
 
-        print("Input:", tokenizer.batch_decode(encodings["input_ids"], skip_special_tokens=True))
-
         with torch.inference_mode():
-            outputs = model.generate(images.to(device if device >= 0 else "cpu"),
-                                            encodings["input_ids"].to(
-                                                device if device >= 0 else "cpu"),
-                                            attention_mask=encodings["attention_mask"].to(
-                                                device if device >= 0 else "cpu"),
-                                            max_length=len(
-                                                encodings["input_ids"][0]) + max_generation_length)
-            
-        print("Output:", tokenizer.batch_decode(outputs, skip_special_tokens=True))
-        
+            outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
+                                     encodings["input_ids"].to(
+                device if device >= 0 else "cpu"),
+                attention_mask=encodings["attention_mask"].to(
+                device if device >= 0 else "cpu"),
+                max_length=len(
+                encodings["input_ids"][0]) + max_generation_length)
+
+
         # get only the generated text
         outputs = outputs[:, len(encodings["input_ids"][0]):]
-    
-        print("Output (postprocessed):", tokenizer.batch_decode(outputs, skip_special_tokens=True))
-        
+
         new_predictions = [postprocess_vqa_generation(
             out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)]
-        
-        print("Predictions:", new_predictions)
-        
+
         predictions.extend(new_predictions)
-            
+
         if wandb is not None:
-            wandb.log({f"vqa_with_prompt_{idx}" if use_prompt else f"vqa_without_prompt_{idx}": wandb.Image(batch[0]["image"], caption=f"Question: {batch[0]['question']}\nGround truth: {batch[0]['answers'][0]}\nPrediction: {new_predictions[0]}")}, step=step, commit=False)
-            
+            wandb.log({f"vqa_{idx}": wandb.Image(
+                batch[0]["image"], caption=f"Question: {batch[0]['question']}\nGroundtruth: {batch[0]['answers'][0]}\nPrediction: {new_predictions[0]}")}, step=step, commit=False)
+
         idx += 1
     return {"vqa_accuracy": compute_vqa_accuracy(predictions, [row["answers"] for row in dataset])}

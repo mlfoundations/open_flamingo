@@ -42,6 +42,6 @@ class TestEvaluations(unittest.TestCase):
         print(evaluate_coco(model, tokenizer, image_processor,
               data_dir="/data/yfcc-tmp/data/mscoco", batch_size=2, num_samples=2))
 
-
+    
 if __name__ == '__main__':
     unittest.main()

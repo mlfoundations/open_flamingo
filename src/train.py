@@ -1,45 +1,57 @@
 ''' Main training script '''
 
 import glob
-import io
 import os
+import argparse
 
-import imageio
 import torch
 import torchvision
 import wandb
 import webdataset as wds
-from eval.evaluate import (evaluate_coco, evaluate_imagenet_zeroshot,
-                           evaluate_vqa)
-from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from eval.evaluate import (evaluate_coco,evaluate_vqa)
 from tqdm import tqdm
 
 from open_flamingo.factory import create_model_and_transforms
-from transformers import get_constant_schedule_with_warmup, get_constant_schedule
+from transformers import get_constant_schedule_with_warmup
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
 
-
-def train(model, tokenizer, image_processor, batch_size, num_epochs, lr, device, save_dir=None, eval_steps=1, save_steps=None):
-  """
-  Trains the model on the training dataset. Report results to wandb.
+def main():
+  parser = argparse.ArgumentParser()
+  parser.add_argument(
+        "--vision_encoder_path",
+        default="openai/clip-vit-large-patch14",
+        type=str)
+  parser.add_argument(
+      "--lm_path",
+      default="facebook/opt-350m",
+      type=str)
+  parser.add_argument("--run_name", type=str, default="opt-350 + vit large")
+  parser.add_argument("--batch_size", type=int, default=64)
+  parser.add_argument("--num_workers", type=int, default=1)
+  parser.add_argument("--eval_steps", type=int, default=10000)
+  parser.add_argument("--save_steps", type=int, default=10000)
+  args = parser.parse_args()
+    
+  model, image_processor, tokenizer = create_model_and_transforms(
+    args.vision_encoder_path, args.lm_path)
   
-  Args:
-      model (_type_): _description_
-      batch_size (_type_): _description_
-      num_epochs (_type_): _description_
-      lr (_type_): _description_
-      weight_decay (_type_): _description_
-      device (_type_): _description_
-      save_dir (_type_): _description_
-  """
-  wandb.init(project="open-flamingo", entity="anas-awadalla")
-  # wandb.config.update({"batch_size": batch_size, "num_epochs": num_epochs, "lr": lr, "weight_decay": weight_decay, "architecture": "CLIP + OPT 125M"})
+  dist.init_process_group("nccl")
+  rank = dist.get_rank()
+  print(f"Start running training on rank {rank}.")
   
+  if rank == 0:
+    wandb.init(project="open-flamingo", entity="anas-awadalla", name=args.run_name)
+  
+  device_id = rank % torch.cuda.device_count()
+  model = model.to(device_id)
+  model = DDP(model, device_ids=[device_id])
   
   def preprocess_image(sample):  
     image = image_processor(images=sample, return_tensors="pt")[ "pixel_values"]
     # apply random horizontal flip and color jitter
-    # image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
+    image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
     # image = torchvision.transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)(image)
     return image
 
@@ -49,38 +61,24 @@ def train(model, tokenizer, image_processor, batch_size, num_epochs, lr, device,
     text = tokenizer(sample, max_length=64, padding="longest", truncation="only_first", return_tensors="pt")
     return text["input_ids"], text["attention_mask"]
   
-  def generation_preprocess_text(sample):
-    sample = [(f"<image>") for s in sample]
-    text = tokenizer(sample, max_length=64, padding="longest", truncation="only_first", return_tensors="pt")
-    return text["input_ids"], text["attention_mask"]
+  data_chunks_yfcc = glob.glob("/data/yfcc-tmp/yfcc/chunks_merged_1e3/*.tar")
   
-  data_chunks = glob.glob("/data/yfcc-tmp/yfcc/chunks_merged_1e3/*.tar")
-
-  validation_chunks = data_chunks[0]
-  training_chunks = data_chunks[1:]
-  
-  dataset_size, batch_size = len(training_chunks), batch_size
-
   train_dataset = wds.DataPipeline(
-      wds.SimpleShardList(training_chunks),
+      wds.SimpleShardList(data_chunks_yfcc),
+      wds.split_by_node,
+      wds.split_by_worker,
       wds.tarfile_to_samples(),
       wds.decode("pil"),
       wds.to_tuple("jpg;png", "txt"),
-      wds.batched(batch_size),
-      wds.map_tuple(preprocess_image, preprocess_text),
-      wds.shuffle(),
-  )
+      wds.shuffle(1000),
+      wds.batched(args.batch_size, partial=False),
+      wds.map_tuple(preprocess_image, preprocess_text)
+  ).with_epoch(500000 // torch.cuda.device_count()) # Hardcoded 500k steps to make each process have same num of samples
   
-  train_loader = wds.WebLoader(train_dataset, num_workers=2, batch_size=None)
-  
-  validation_dataset = wds.DataPipeline(
-      wds.SimpleShardList(validation_chunks),
-      wds.tarfile_to_samples(),
-      wds.decode("pil"),
-      wds.to_tuple("jpg;png", "txt"),
-      wds.batched(batch_size),
-      wds.map_tuple(preprocess_image, generation_preprocess_text),
-  )
+  train_loader = wds.WebLoader(train_dataset,
+                               num_workers=args.num_workers,
+                               batch_size=None)
+  train_loader = train_loader
   
   def get_grouped_params(model):
     params_with_wd, params_without_wd = [], []
@@ -89,132 +87,78 @@ def train(model, tokenizer, image_processor, batch_size, num_epochs, lr, device,
         else: params_without_wd.append(p)
     return [{"params": params_with_wd, "weight_decay": 0.1},
             {"params": params_without_wd, "weight_decay": 0.0},]
-    
       
-  optimizer = torch.optim.AdamW(get_grouped_params(model), lr=lr)
-  model.to(device)
+  optimizer = torch.optim.AdamW(get_grouped_params(model), lr=1e-4)
   model.train()
   
   lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=5000)
+
+  for num_steps, batch in tqdm(enumerate(train_loader)):        
+    images = batch[0].to(device_id)
     
-  num_steps = 0
-  for epoch in range(num_epochs):
-    for i, batch in enumerate(train_loader):        
-      images = batch[0].to(device)
-      
-      input_ids = batch[1][0].to(device)
-      attention_mask = batch[1][1].to(device)
-      labels = input_ids.clone()
-      
-      # Do not compute loss on padding tokens
-      labels[labels == tokenizer.pad_token_id] = -100
-      # Do not compute loss on the media tokens and bos tokens
-      labels[:, 0] = -100
-      labels[:, 1] = -100
-      labels.to(device)
-      
-      # print a sample from input_ids
-      # print("Training sample: ", tokenizer.decode(input_ids[0]))
-      
-      loss = model(images, input_ids, attention_mask=attention_mask, labels=labels)[0]
-      loss.backward()
-      torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-      optimizer.step()
-      lr_scheduler.step()
-      optimizer.zero_grad()
-      
-      for idx, layer in enumerate(model.lang_encoder.gated_cross_attn_layers):
+    input_ids = batch[1][0].to(device_id)
+    print(f"Step: {num_steps} Rank: {rank} Batch: {input_ids}")
+    attention_mask = batch[1][1].to(device_id)
+    labels = input_ids.clone()
+    
+    # Do not compute loss on padding tokens
+    labels[labels == tokenizer.pad_token_id] = -100
+    # Do not compute loss on the media tokens and bos tokens
+    labels[:, 0] = -100
+    labels[:, 1] = -100
+    labels.to(device_id)
+    
+    loss = model(images, input_ids, attention_mask=attention_mask, labels=labels)[0]
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    optimizer.step()
+    lr_scheduler.step()
+    optimizer.zero_grad()
+    
+    if rank == 0:
+      for idx, layer in enumerate(model.module.lang_encoder.gated_cross_attn_layers):
         wandb.log({f"ff_gate {idx}": layer.ff_gate.item()}, step=num_steps, commit=False)
         wandb.log({f"attn_gate {idx}": layer.attn_gate.item()}, step=num_steps, commit=False)
         
       wandb.log({"loss": loss.item()}, step=num_steps)
       
-      if num_steps % eval_steps == 0:
-        print(f"Epoch: {epoch}, Step: {i}, Loss: {loss.item()}")
-        validation_loader = wds.WebLoader(validation_dataset, num_workers=2, batch_size=None)  
+    if rank == 0 and ((num_steps+1 % args.eval_steps) == 0):
+      print(f"Step: {num_steps}, Loss: {loss.item()}")
+        
+      score = evaluate_coco(model, tokenizer, image_processor,
+            data_dir="/data/yfcc-tmp/data/mscoco",
+            batch_size=args.batch_size,
+            num_samples=5,
+            device=device_id,
+            wandb=wandb,
+            step=num_steps)
       
-        # calculate validation loss
-        model.eval()
-        with torch.no_grad():
-          total_loss = 0
-          for j, batch in tqdm(enumerate(validation_loader)):
-            images = batch[0].to(device)
-            input_ids = batch[1][0].to(device)
-            attention_mask = batch[1][1].to(device)
-            labels = input_ids.clone()
-            
-            # Do not compute loss on padding tokens
-            labels[labels == tokenizer.pad_token_id] = -100
-            # Do not compute loss on the media tokens and bos tokens
-            labels[:, 0] = -100
-            labels[:, 1] = -100
-            labels.to(device)
-            
-            loss = model(images, input_ids, attention_mask=attention_mask, labels=labels)[0]
-            total_loss += loss.item()
-            
-            # forwards pass and check that the probabilities of the second token
-            # output= model(images, input_ids, attention_mask=attention_mask)
-            # get maximum probability token
-            # next_token_logits = output[0][:, -1, :]
-            # next_token = torch.argmax(next_token_logits, dim=-1)
-            # print(next_token[:50])
-                        
-            # try to generate a sample
-            generated_ids = model.generate(images, input_ids, attention_mask=attention_mask, max_length=15)
-            print("Generated sample: ", tokenizer.batch_decode(generated_ids[:50]))
-            
-          wandb.log({"validation_loss": total_loss / j}, step=num_steps, commit=False)
-          
-        # imnet_score = evaluate_imagenet_zeroshot(model, tokenizer, image_processor,num_samples_per_class=10, num_classes=1000, device=0, batch_size=128)
-        # wandb.log(imnet_score, step=num_steps)
-        
-        score = evaluate_coco(model, tokenizer, image_processor,
-              data_dir="/data/yfcc-tmp/data/mscoco",
-              batch_size=batch_size,
-              num_samples=5000,
-              device=device,
-              wandb=wandb,
-              step=num_steps,
-              use_prompt=False)
-        
-        wandb.log(score, step=num_steps, commit=True)
-        
-        # score = evaluate_coco(model, tokenizer, image_processor,
-        #       data_dir="/data/yfcc-tmp/data/mscoco",
-        #       batch_size=batch_size,
-        #       num_samples=5000,
-        #       device=device,
-        #       wandb=wandb,
-        #       step=num_steps,
-        #       use_prompt=True)
-        # score = {f"prompt_{k}": v for k, v in score.items()}
-        # wandb.log(score, step=num_steps, commit=True)
+      wandb.log(score, step=num_steps, commit=False)
 
-        # vqa_score = evaluate_vqa(model, tokenizer, image_processor, benchmark_name="OKVQA",
-        #                     data_dir="/mmfs1/gscratch/efml/anasa2/data/ok-vqa/train",
-        #                     batch_size=batch_size,
-        #                     num_samples=5000,
-        #                     device=device,
-        #                     wandb=wandb,
-        #                     step=num_steps,
-        #                     use_prompt=False)
-        
-        # wandb.log(vqa_score, step=num_steps, commit=True)
-        
-        model.train()
-        
-      num_steps += 1
-      if save_steps is not None and num_steps % save_steps == 0:
-        if not os.path.exists(save_dir):
-          os.makedirs(save_dir)
-        torch.save(model.state_dict(), f"{save_dir}/checkpoint_{i}.pt")    
-          
-    if not os.path.exists(save_dir):
-      os.makedirs(save_dir)
-    torch.save(model.state_dict(), f"{save_dir}/final_weight.pt")    
+      vqa_score = evaluate_vqa(model, tokenizer, image_processor, benchmark_name="OKVQA",
+                          data_dir="/mmfs1/gscratch/efml/anasa2/data/ok-vqa/train",
+                          batch_size=args.batch_size,
+                          num_samples=5,
+                          device=device_id,
+                          wandb=wandb,
+                          step=num_steps)
+      
+      wandb.log(vqa_score, step=num_steps, commit=True)
+      
+      model.train()
+      
+    if rank == 0 and ((num_steps+1 % args.save_steps) == 0):
+      if not os.path.exists(args.run_name):
+        os.makedirs(args.run_name)
+      torch.save(model.state_dict(), f"{args.run_name}/checkpoint_{num_steps}.pt")    
     
-model, image_processor, tokenizer = create_model_and_transforms(
-    "openai/clip-vit-large-patch14", "facebook/opt-350m")
-
-train(model, tokenizer, image_processor, batch_size=128, num_epochs=2, lr=1e-4, device=0, save_dir="flamingo-small-no-gate-decay", eval_steps=5000, save_steps=10000)
+    dist.barrier()
+    
+  if rank == 0:
+    if not os.path.exists(args.run_name):
+      os.makedirs(args.run_name)
+    torch.save(model.state_dict(), f"{args.run_name}/final_weight.pt")    
+    
+if __name__ == "__main__":
+  main()
+  

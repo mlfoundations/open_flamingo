@@ -226,8 +226,4 @@ class GatedCrossAttentionBlock(nn.Module):
         x = self.attn(x, media, media_locations = media_locations) * self.attn_gate.tanh() + x
         x = self.ff(x) * self.ff_gate.tanh()  + x
         
-        # rewrite without the gate
-        # x = self.attn(x, media, media_locations = media_locations) + x
-        # x = self.ff(x) + x
-        
         return x
