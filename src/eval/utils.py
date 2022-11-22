@@ -18,8 +18,8 @@ def compute_vqa_accuracy(predictions, ground_truth):
 
 
 def postprocess_vqa_generation(predictions):
-    generated_tokens = predictions.split("answer:", 1)[1]
-    return re.split("answer:|question:", generated_tokens, 1)[0]
+    # return predictions.split("answer:")[0]
+    return re.split("answer:|question:|Question:|Answer:", predictions, 1)[0]
 
 
 def compute_cider(predictions, ground_truth):
@@ -41,5 +41,5 @@ def compute_cider(predictions, ground_truth):
 
 
 def postprocess_captioning_generation(predictions):
-    generated_tokens = predictions.split("Output:", 1)[1]
-    return re.split("Output:", generated_tokens, 1)[0]
+    return predictions.split("Output:", 1)[0]
+    # return re.split("Output:", generated_tokens, 1)[0]

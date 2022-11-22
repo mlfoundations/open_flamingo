@@ -1,5 +1,4 @@
 import logging
-import re
 
 import more_itertools
 import numpy as np
@@ -54,14 +53,14 @@ def evaluate_imagenet_zeroshot(model, tokenizer, image_processor, batch_size, nu
     def evaluate_sample(row):
         # Finds the most likely class for a given image and returns predicted label
         image = image_processor(images=[row["image"]], return_tensors="pt")[
-            "pixel_values"]
+            "pixel_values"].to(device if device >= 0 else "cpu")
         label = row["label"]
 
         per_class_loss = []
 
-        for batch in more_itertools.chunked(imagenet_class_prompts, batch_size):
+        for batch in more_itertools.chunked(tqdm(imagenet_class_prompts), batch_size):
             encodings = tokenizer(
-                batch, padding="max_length", return_tensors="pt", max_length=20)
+                batch, padding="longest", return_tensors="pt", max_length=128, truncation=True)
             encodings = {k: v.to(device if device >= 0 else "cpu")
                          for k, v in encodings.items()}
 
@@ -94,7 +93,7 @@ def evaluate_imagenet_zeroshot(model, tokenizer, image_processor, batch_size, nu
             # sum loss over all tokens and divide by number of variable tokens
             loss = loss.sum(dim=1) / (labels != -100).sum(dim=1).float()
 
-            per_class_loss.extend(loss)
+            per_class_loss.extend(loss.cpu().numpy())
 
         return np.argmin(per_class_loss)
 
@@ -110,7 +109,84 @@ def evaluate_imagenet_zeroshot(model, tokenizer, image_processor, batch_size, nu
     return {"accuracy": predictions.count(True) / len(predictions)}
 
 
-def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="TextVQA", data_dir=None, max_generation_length=30, num_samples=None, device=-1, evaluation_stage="validation"):
+def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_generation_length=15, num_samples=5000, device=-1, evaluation_stage="validation", wandb=None, step=None):
+    """Evaluate a model on COCO dataset.
+
+    Args:
+        model (nn.Module): model to evaluate
+        tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
+        image_processor (transformers.ImageProcessor): image processor for the model
+        batch_size (int): batch size
+        data_dir (str): path to data directory
+        max_generation_length (int, optional): max generation length. Defaults to 30.
+        num_samples (int, optional): number of samples to evaluate on (for testing). Defaults to 5000 samples.
+        device (int, optional): device to use. Defaults to -1 (cpu).
+        evaluation_stage (str, optional): stage to evaluate on. Can be "validation" or "test". Defaults to "validation".
+
+    Returns:
+        dict: dictionary of metrics
+    """
+
+    logging.info("Evaluating on COCO...")
+
+    if evaluation_stage not in ["validation", "test"]:
+        raise ValueError(
+            "evaluation_stage must be either 'validation' or 'test'")
+
+    dataset = COCODataset(data_dir, evaluation_stage)
+
+    # get a random subset of the dataset
+    np.random.seed(123)
+    random_indices = np.random.choice(
+        len(dataset), num_samples+2, replace=False)
+
+    # get two samples from the dataset to use as prompts
+    sample_one = dataset[random_indices[0]]
+    sample_two = dataset[random_indices[1]]
+
+    dataset = torch.utils.data.Subset(dataset, random_indices[2:])
+
+    model.eval()
+
+    predictions = []
+    ground_truths = []
+
+    for idx, batch in enumerate(more_itertools.chunked(tqdm(dataset, desc="Running inference"), batch_size)):
+        images = image_processor(
+            images=[b["image"] for b in batch], return_tensors="pt")["pixel_values"]
+
+        tokenizer.padding_side = "left"
+        encodings = tokenizer([f"{sample_one['caption'].strip()}<|endofchunk|>{sample_two['caption'].strip()}<|endofchunk|><image>" for _ in batch],
+                              padding="longest",
+                              truncation="only_first",
+                              max_length=64,
+                              return_tensors="pt")
+
+        with torch.inference_mode():
+            outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
+                                     encodings["input_ids"].to(
+                device if device >= 0 else "cpu"),
+                attention_mask=encodings["attention_mask"].to(
+                device if device >= 0 else "cpu"),
+                max_length=len(
+                encodings["input_ids"][0]) + max_generation_length)
+
+        outputs = outputs[:, len(encodings["input_ids"][0]):]
+        new_predictions = [postprocess_captioning_generation(
+            out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)]
+
+        predictions.extend(new_predictions)
+        ground_truths.extend([b["caption"] for b in batch])
+
+        if wandb is not None:
+            wandb.log({f"coco_{idx}": wandb.Image(batch[0]["image"], caption=f"Groundtruth: {batch[0]['caption']}\nPrediction: {new_predictions[0]}")},
+                      step=step,
+                      commit=False)
+
+    return {"cider": compute_cider(predictions, ground_truths)}
+
+
+def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="TextVQA", data_dir=None, max_generation_length=15, num_samples=None, device=-1, evaluation_stage="validation", wandb=None, step=None):
     """Evaluate a model on VQA datasets.
 
     Args:
@@ -148,94 +224,53 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
     else:
         raise ValueError("benchmark_name must be either TextVQA or OKVQA")
 
+    # get two samples to use as prompts
+    prompt_one = dataset[0]
+    prompt_two = dataset[1]
+
     if num_samples is not None:
         if benchmark_name == "TextVQA":
-            dataset = dataset.shuffle().select(range(num_samples))
+            dataset = dataset.shuffle().select(range(2, num_samples+2))
         elif benchmark_name == "OKVQA":  # OKVQA is not a huggingface dataset so we can't use select
-            dataset = torch.utils.data.Subset(dataset, range(num_samples))
+            dataset = torch.utils.data.Subset(dataset, range(2, num_samples+2))
 
     model.eval()
-    model.to(device if device >= 0 else "cpu")
 
     predictions = []
-
+    idx = 0
     for batch in more_itertools.chunked(tqdm(dataset, desc="Running inference"), batch_size):
         images = image_processor(
             images=[b["image"] for b in batch], return_tensors="pt")["pixel_values"]
 
-        encodings = tokenizer([(f"<image> question:{b['question']} answer:") for b in batch],
-                              padding="longest",
-                              truncation="only_first",
-                              max_length=30,
-                              return_tensors="pt")
+        tokenizer.padding_side = "left"
+
+        encodings = tokenizer([(f"question:{prompt_one['question']} answer:{prompt_one['answers'][0]} <|endofchunk|> question:{prompt_two['question']} answer:{prompt_two['answers'][0]} <|endofchunk|> <image> question:{b['question']} answer:") for b in batch],
+                                padding="longest",
+                                truncation="only_first",
+                                max_length=64,
+                                return_tensors="pt")
 
         with torch.inference_mode():
-            outputs = model.generate(images,
-                                            encodings["input_ids"].to(
-                                                device if device >= 0 else "cpu"),
-                                            attention_mask=encodings["attention_mask"].to(
-                                                device if device >= 0 else "cpu"),
-                                            max_length=len(
-                                                encodings["input_ids"][0]) + max_generation_length)
+            outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
+                                     encodings["input_ids"].to(
+                device if device >= 0 else "cpu"),
+                attention_mask=encodings["attention_mask"].to(
+                device if device >= 0 else "cpu"),
+                max_length=len(
+                encodings["input_ids"][0]) + max_generation_length)
 
-            predictions.extend([postprocess_vqa_generation(
-                out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)])
+
+        # get only the generated text
+        outputs = outputs[:, len(encodings["input_ids"][0]):]
+
+        new_predictions = [postprocess_vqa_generation(
+            out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)]
+
+        predictions.extend(new_predictions)
+
+        if wandb is not None:
+            wandb.log({f"vqa_{idx}": wandb.Image(
+                batch[0]["image"], caption=f"Question: {batch[0]['question']}\nGroundtruth: {batch[0]['answers'][0]}\nPrediction: {new_predictions[0]}")}, step=step, commit=False)
+
+        idx += 1
     return {"vqa_accuracy": compute_vqa_accuracy(predictions, [row["answers"] for row in dataset])}
-
-
-def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_generation_length=30, num_samples=None, device=-1, evaluation_stage="validation"):
-    """Evaluate a model on COCO dataset.
-
-    Args:
-        model (nn.Module): model to evaluate
-        tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
-        image_processor (transformers.ImageProcessor): image processor for the model
-        batch_size (int): batch size
-        data_dir (str): path to data directory
-        max_generation_length (int, optional): max generation length. Defaults to 30.
-        num_samples (int, optional): number of samples to evaluate on (for testing). Defaults to None (entire test set).
-        device (int, optional): device to use. Defaults to -1 (cpu).
-        evaluation_stage (str, optional): stage to evaluate on. Can be "validation" or "test". Defaults to "validation".
-
-    Returns:
-        dict: dictionary of metrics
-    """
-
-    logging.info("Evaluating on COCO...")
-
-    if evaluation_stage not in ["validation", "test"]:
-        raise ValueError(
-            "evaluation_stage must be either 'validation' or 'test'")
-
-    dataset = COCODataset(data_dir, evaluation_stage)
-
-    if num_samples is not None:
-        dataset = torch.utils.data.Subset(dataset, range(num_samples))
-
-    model.eval()
-    model.to(device if device >= 0 else "cpu")
-
-    predictions = []
-    ground_truths = []
-
-    for batch in more_itertools.chunked(tqdm(dataset, desc="Running inference"), batch_size):
-        images = image_processor(
-            images=[b["image"] for b in batch], return_tensors="pt")["pixel_values"]
-
-        encodings = tokenizer(["<image> Output:" for _ in batch], padding="longest", truncation="only_first", max_length=30, return_tensors="pt")
-
-
-        with torch.inference_mode():
-            outputs = model.generate(images,
-                                            encodings["input_ids"].to(
-                                                device if device >= 0 else "cpu"),
-                                            attention_mask=encodings["attention_mask"].to(
-                                                device if device >= 0 else "cpu"),
-                                            max_length=len(
-                                                encodings["input_ids"][0]) + max_generation_length)
-
-        predictions.extend([postprocess_captioning_generation(
-            out) for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)])
-        ground_truths.extend([b["caption"] for b in batch])
-
-    return {"cider": compute_cider(predictions, ground_truths)}

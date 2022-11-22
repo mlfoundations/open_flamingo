@@ -223,7 +223,7 @@ class GatedCrossAttentionBlock(nn.Module):
         # boolean tensor indicating positions of media - (batch, sequence)
         media_locations=None
     ):
-        x = self.attn(x, media, media_locations=media_locations) * \
-            self.attn_gate.tanh() + x
-        x = self.ff(x) * self.ff_gate.tanh() + x
+        x = self.attn(x, media, media_locations = media_locations) * self.attn_gate.tanh() + x
+        x = self.ff(x) * self.ff_gate.tanh()  + x
+        
         return x

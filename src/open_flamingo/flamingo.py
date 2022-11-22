@@ -28,7 +28,7 @@ class Flamingo(nn.Module):
         self.lang_encoder.init_flamingo(media_token_id=media_token_id)
         
         self.perceiver_resampler = PerceiverResampler(
-            dim=lang_encoder.config.hidden_size, depth=2)
+            dim=vision_encoder.config.hidden_size, depth=6)
 
     def forward(self, vision_x: torch.Tensor, lang_x: torch.Tensor, attention_mask: torch.Tensor = None, labels: torch.Tensor = None):
         self._process_media(vision_x)
