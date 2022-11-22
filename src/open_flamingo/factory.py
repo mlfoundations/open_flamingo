@@ -37,7 +37,7 @@ def create_model_and_transforms(
         'additional_special_tokens': ['<|endofchunk|>', '<image>']
     })
 
-    lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path)
+    lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path).to("cpu")
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
     
     model = Flamingo(vision_encoder, lang_encoder, text_tokenizer.encode("<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1])
@@ -59,4 +59,4 @@ def create_model_and_transforms(
 
 
 def get_clip_vision_encoder(path):
-    return CLIPVisionModel.from_pretrained(path), CLIPProcessor.from_pretrained(path)
+    return CLIPVisionModel.from_pretrained(path).to("cpu"), CLIPProcessor.from_pretrained(path)
