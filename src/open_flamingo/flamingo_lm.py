@@ -58,7 +58,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         super().__init__(config)
         self.model = OPTModel(config)
         
-        self.gated_cross_attn_layers = nn.ModuleList([GatedCrossAttentionBlock(dim=self.config.hidden_size) for _ in self.model.decoder.layers])
+        self.gated_cross_attn_layers = None
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
@@ -69,13 +69,15 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         self.initalized_flamingo = False
         self.media_token_id = None
     
-    def init_flamingo(self, media_token_id):
+    def init_flamingo(self, media_token_id, vis_hidden_size):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
 
         Args:
             media_token_id (_type_): _description_
+            vis_hidden_size (_type_): _description_
         """
+        self.gated_cross_attn_layers = nn.ModuleList([GatedCrossAttentionBlock(dim=self.config.hidden_size, dim_visual=vis_hidden_size) for _ in self.model.decoder.layers])
         self.model.decoder.layers = nn.ModuleList([FlamingoLayer(gated_cross_attn_layer, decoder_layer) for gated_cross_attn_layer, decoder_layer in zip(self.gated_cross_attn_layers, self.model.decoder.layers)])
         self.media_token_id = media_token_id
         self.initalized_flamingo = True

@@ -25,7 +25,7 @@ class Flamingo(nn.Module):
 
         self.vision_encoder = vision_encoder
         self.lang_encoder = lang_encoder
-        self.lang_encoder.init_flamingo(media_token_id=media_token_id)
+        self.lang_encoder.init_flamingo(media_token_id=media_token_id, vis_hidden_size=self.vision_encoder.config.hidden_size)
         
         self.perceiver_resampler = PerceiverResampler(
             dim=vision_encoder.config.hidden_size, depth=6)
