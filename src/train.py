@@ -160,7 +160,7 @@ def main():
     ddp_model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
-    resume_from_epoch = checkpoint["epoch"]
+    resume_from_epoch = checkpoint["epoch"]+1
   
   ddp_model.train()
 
@@ -185,10 +185,10 @@ def main():
             num_samples=5000,
             device=device_id,
             wandb=wandb if args.report_to_wandb else None,
-            step=(epoch+1)*len(train_loader))
+            step=(epoch+1)*train_loader.num_batches)
       
       if args.report_to_wandb:
-        wandb.log(score, step=(epoch+1)*len(train_loader), commit=False)
+        wandb.log(score, step=(epoch+1)*train_loader.num_batches, commit=False)
 
       vqa_score = evaluate_vqa(ddp_model, tokenizer, image_processor, benchmark_name="OKVQA",
                           data_dir=args.eval_okvqa_data_dir,
@@ -196,10 +196,10 @@ def main():
                           num_samples=5000,
                           device=device_id,
                           wandb=wandb  if args.report_to_wandb else None,
-                          step=(epoch+1)*len(train_loader))
+                          step=(epoch+1)*train_loader.num_batches)
       
       if args.report_to_wandb:
-        wandb.log(vqa_score, step=(epoch+1)*len(train_loader), commit=True)
+        wandb.log(vqa_score, step=(epoch+1)*train_loader.num_batches, commit=True)
       
       ddp_model.train()
       
