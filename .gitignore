@@ -125,5 +125,8 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+*.out
+src/wandb
+
 # Pyre type checker
 .pyre/

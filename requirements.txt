@@ -3,3 +3,7 @@ einops-exts
 transformers
 torch
 pillow
+more-itertools
+datasets
+braceexpand
+webdataset
