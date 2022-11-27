@@ -128,6 +128,7 @@ class MaskedCrossAttention(nn.Module):
         self,
         *,
         dim,
+        dim_visual,
         dim_head=64,
         heads=8,
         only_attend_immediate_media=True
@@ -140,7 +141,7 @@ class MaskedCrossAttention(nn.Module):
         self.norm = nn.LayerNorm(dim)
 
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
-        self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
+        self.to_kv = nn.Linear(dim_visual, inner_dim * 2, bias=False)
         self.to_out = nn.Linear(inner_dim, dim, bias=False)
 
         # whether for text to only attend to immediate preceding image, or all images
@@ -160,7 +161,7 @@ class MaskedCrossAttention(nn.Module):
 
         q = self.to_q(x)
         media = rearrange(media, 'b t n d -> b (t n) d')
-
+        
         k, v = self.to_kv(media).chunk(2, dim=-1)
         q, k, v = rearrange_many((q, k, v), 'b n (h d) -> b h n d', h=h)
 
@@ -202,6 +203,7 @@ class GatedCrossAttentionBlock(nn.Module):
         self,
         *,
         dim,
+        dim_visual,
         dim_head=64,
         heads=8,
         ff_mult=4,
@@ -209,7 +211,11 @@ class GatedCrossAttentionBlock(nn.Module):
     ):
         super().__init__()
         self.attn = MaskedCrossAttention(
-            dim=dim, dim_head=dim_head, heads=heads, only_attend_immediate_media=only_attend_immediate_media)
+            dim=dim, 
+            dim_visual=dim_visual,
+            dim_head=dim_head, 
+            heads=heads, 
+            only_attend_immediate_media=only_attend_immediate_media)
         self.attn_gate = nn.Parameter(torch.tensor([0.]))
 
         self.ff = FeedForward(dim, mult=ff_mult)
