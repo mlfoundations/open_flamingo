@@ -1,5 +1,6 @@
 ''' Main training script '''
 
+import glob
 import os
 import argparse
 
@@ -13,6 +14,7 @@ import random
 from open_flamingo.factory import create_model_and_transforms
 from distributed import init_distributed_device, world_info_from_env
 from data import get_data
+from train_utils import train_one_epoch
 
 from transformers import get_constant_schedule_with_warmup
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -38,8 +40,7 @@ def main():
   parser.add_argument("--batch_size", type=int, default=128)
   parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
   parser.add_argument("--do_eval", action="store_true")
-  parser.add_argument("--eval_steps", type=int, default=5000)
-  parser.add_argument("--save_steps", type=int, default=10000)
+  parser.add_argument("--resume_from_checkpoint", type=str, default=None)
   parser.add_argument("--shards", type=str, default="/data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar")
   parser.add_argument("--eval_coco_data_dir", type=str, default="/data/yfcc-tmp/data/mscoco")
   parser.add_argument("--eval_okvqa_data_dir", type=str, default="/mmfs1/gscratch/efml/anasa2/data/ok-vqa/train")
@@ -126,79 +127,81 @@ def main():
             {"params": params_without_wd, "weight_decay": 0.0},]
       
   optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
-  ddp_model.train()
-  
   lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps)
+  
+  # check if a checkpoint exists for this run
+  if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
+    checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
+    if len(checkpoint_list) == 0:
+      print(f"Found no checkpoints for run {args.run_name}.")
+    else:
+      args.resume_from_checkpoint = sorted(checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0]))[-1]
+      print(f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}.")
+    
+  resume_from_epoch = 0
+  if args.resume_from_checkpoint is not None:
+    print(f"Loading checkpoint from {args.resume_from_checkpoint}")
+    checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
+    ddp_model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
+    resume_from_epoch = checkpoint["epoch"]
+  
+  ddp_model.train()
 
-  num_steps = 0
-
-  for epoch in range(args.num_epochs):
+  for epoch in range(resume_from_epoch, args.num_epochs):
     train_dataset.set_epoch(epoch)
     train_loader = train_dataset.dataloader
     
-    for batch in tqdm(train_loader, disable=args.rank != 0): 
-      images = batch[0].to(device_id)
+    train_one_epoch(args=args,
+                    model=ddp_model,
+                    tokenizer=tokenizer,
+                    optimizer=optimizer,
+                    lr_scheduler=lr_scheduler,
+                    train_loader=train_loader,
+                    device_id=device_id,
+                    wandb=wandb)
       
-      # get all zero index elements from pairs in batch[1]
-      input_ids = batch[1][0].to(device_id)
-      attention_mask = batch[1][1].to(device_id)
-      labels = input_ids.clone()
+    if args.do_eval and args.rank == 0:  
+      score = evaluate_coco(ddp_model, tokenizer, image_processor,
+            data_dir=args.eval_coco_data_dir,
+            batch_size=args.batch_size,
+            num_samples=5000,
+            device=device_id,
+            wandb=wandb if args.report_to_wandb else None,
+            step=(epoch+1)*len(train_loader))
       
-      # Do not compute loss on padding tokens
-      labels[labels == tokenizer.pad_token_id] = -100
-      # Do not compute loss on the media tokens and bos tokens
-      labels[:, 0] = -100
-      labels[:, 1] = -100
-      labels.to(device_id)
-      
-      loss = ddp_model(images, input_ids, attention_mask=attention_mask, labels=labels)[0]
-      divided_loss = loss / args.gradient_accumulation_steps
-      divided_loss.backward()
-      
-      torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 1.0)
-      
-      if ((num_steps+1) % args.gradient_accumulation_steps) == 0:
-        optimizer.step()
-        lr_scheduler.step()
-        optimizer.zero_grad()
-      
-      if args.rank == 0 and args.report_to_wandb:
-        wandb.log({"loss": loss.item()}, step=num_steps)
-      
-      if args.do_eval and args.rank == 0 and (((num_steps+1) % args.eval_steps) == 0):  
-        score = evaluate_coco(ddp_model, tokenizer, image_processor,
-              data_dir=args.eval_coco_data_dir,
-              batch_size=args.batch_size,
-              num_samples=5000,
-              device=device_id,
-              wandb=wandb if args.report_to_wandb else None,
-              step=num_steps)
-        
-        if args.report_to_wandb:
-          wandb.log(score, step=num_steps, commit=False)
+      if args.report_to_wandb:
+        wandb.log(score, step=(epoch+1)*len(train_loader), commit=False)
 
-        vqa_score = evaluate_vqa(ddp_model, tokenizer, image_processor, benchmark_name="OKVQA",
-                            data_dir=args.eval_okvqa_data_dir,
-                            batch_size=args.batch_size,
-                            num_samples=5000,
-                            device=device_id,
-                            wandb=wandb  if args.report_to_wandb else None,
-                            step=num_steps)
+      vqa_score = evaluate_vqa(ddp_model, tokenizer, image_processor, benchmark_name="OKVQA",
+                          data_dir=args.eval_okvqa_data_dir,
+                          batch_size=args.batch_size,
+                          num_samples=5000,
+                          device=device_id,
+                          wandb=wandb  if args.report_to_wandb else None,
+                          step=(epoch+1)*len(train_loader))
+      
+      if args.report_to_wandb:
+        wandb.log(vqa_score, step=(epoch+1)*len(train_loader), commit=True)
+      
+      ddp_model.train()
+      
+    if args.rank == 0:
+      if not os.path.exists(args.run_name):
+        os.makedirs(args.run_name)
         
-        if args.report_to_wandb:
-          wandb.log(vqa_score, step=num_steps, commit=True)
-        
-        ddp_model.train()
-        
-      if args.rank == 0 and (((num_steps+1) % args.save_steps) == 0):
-        if not os.path.exists(args.run_name):
-          os.makedirs(args.run_name)
-        torch.save(ddp_model.state_dict(), f"{args.run_name}/checkpoint_{num_steps}.pt")
-        if args.report_to_wandb:
-          wandb.save(f"{args.run_name}/checkpoint_{num_steps}.pt")
-    
-      num_steps+=1
-    
+      checkpoint_dict = {
+          "epoch": epoch,
+          "model_state_dict": ddp_model.state_dict(),
+          "optimizer_state_dict": optimizer.state_dict(),
+          "lr_scheduler_state_dict": lr_scheduler.state_dict(),
+      }
+      
+      torch.save(checkpoint_dict, f"{args.run_name}/checkpoint_{epoch}.pt")
+      if args.report_to_wandb:
+        wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
+      
   if args.rank == 0:
     if not os.path.exists(args.run_name):
       os.makedirs(args.run_name)
