@@ -134,7 +134,7 @@ def main():
   
   def get_grouped_params(model):
     params_with_wd, params_without_wd = [], []
-    apply_decay = lambda x: "gated_cross_attn_layer" in n and "ff_gate" not in n and "attn_gate" not in n and "norm" not in n and "bias" not in n
+    apply_decay = lambda x: "gated_cross_attn_layer" in x and "ff_gate" not in x and "attn_gate" not in x and "norm" not in x and "bias" not in x
     for n, p in model.named_parameters():
         if apply_decay(n): params_with_wd.append(p)
         else: params_without_wd.append(p)
