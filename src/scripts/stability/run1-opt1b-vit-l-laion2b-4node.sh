@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=gpu
 #SBATCH --job-name=openflamingo
-#SBATCH --nodes 2
+#SBATCH --nodes 4
 #SBATCH --ntasks-per-node 8
 #SBATCH --cpus-per-gpu=6
 #SBATCH --gres=gpu:8
@@ -28,7 +28,7 @@ echo $HOSTNAMES
 cd /fsx/home-mitchellw/open_flamingo/src
 export PYTHONPATH="$PYTHONPATH:/fsx/home-mitchellw/open_flamingo/src"
 
-EXP_NAME="run1-opt1b-vit-l-laion2b-2node-v4"
+EXP_NAME="run1-opt1b-vit-l-laion2b-4node-v2"
 
 # torchrun --nnodes=1 --nproc_per_node=2 train.py --run_name test-debug --batch_size 50 --shards "pipe:aws s3 cp s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar -" --dataset_resampled --train_num_samples 10000 --precision amp_bfloat16
 
@@ -41,7 +41,7 @@ EXP_NAME="run1-opt1b-vit-l-laion2b-2node-v4"
     --wandb_project open_flamingo \
     --wandb_entity dogml \
     --run_name ${EXP_NAME} \
-    --train_num_samples 1000000 \
+    --train_num_samples 2000000 \
     --num_epochs 500000
 
 
