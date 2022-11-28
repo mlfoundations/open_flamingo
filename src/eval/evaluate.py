@@ -164,7 +164,7 @@ def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_g
 
         with torch.inference_mode():
             outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
-                                     encodings["input_ids"].to(
+                                            encodings["input_ids"].to(
                 device if device >= 0 else "cpu"),
                 attention_mask=encodings["attention_mask"].to(
                 device if device >= 0 else "cpu"),
@@ -245,20 +245,19 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
         tokenizer.padding_side = "left"
 
         encodings = tokenizer([(f"question:{prompt_one['question']} answer:{prompt_one['answers'][0]} <|endofchunk|> question:{prompt_two['question']} answer:{prompt_two['answers'][0]} <|endofchunk|> <image> question:{b['question']} answer:") for b in batch],
-                                padding="longest",
-                                truncation="only_first",
-                                max_length=64,
-                                return_tensors="pt")
+                              padding="longest",
+                              truncation="only_first",
+                              max_length=64,
+                              return_tensors="pt")
 
         with torch.inference_mode():
             outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
-                                     encodings["input_ids"].to(
+                                            encodings["input_ids"].to(
                 device if device >= 0 else "cpu"),
                 attention_mask=encodings["attention_mask"].to(
                 device if device >= 0 else "cpu"),
                 max_length=len(
                 encodings["input_ids"][0]) + max_generation_length)
-
 
         # get only the generated text
         outputs = outputs[:, len(encodings["input_ids"][0]):]
