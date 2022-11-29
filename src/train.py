@@ -48,6 +48,12 @@ def main():
   parser.add_argument("--learning_rate", default=1e-4, type=float)
   parser.add_argument("--warmup_steps", default=5000, type=int)
   parser.add_argument("--weight_decay", default=0.1, type=float)
+  parser.add_argument(
+    "--precision",
+    choices=["amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
+    default="fp32",
+    help="Floating point precision."
+  )
   # data args
   parser.add_argument("--workers", type=int, default=1)
   parser.add_argument("--train_num_samples", type=int, default=None)
@@ -90,6 +96,15 @@ def main():
     default="anas-awadalla",
     type=str,
   )
+  
+  # if torch.cuda.is_available():
+  #   # This enables tf32 on Ampere GPUs which is only 8% slower than
+  #   # float16 and almost as accurate as float32
+  #   # This was a default in pytorch until 1.12
+  #   torch.backends.cuda.matmul.allow_tf32 = True
+  #   torch.backends.cudnn.benchmark = True
+  #   torch.backends.cudnn.deterministic = False
+
 
   args = parser.parse_args()
   
@@ -108,7 +123,7 @@ def main():
   print(f"Start running training on rank {args.rank}.")
   
   if args.rank == 0 and args.report_to_wandb:
-    wandb.init(project=args.wandb_project, entity=args.wandb_entity, name=args.run_name)
+    wandb.init(project=args.wandb_project, entity=args.wandb_entity, name=args.run_name, config=vars(args))
   
   device_id = args.rank % torch.cuda.device_count()
   model = model.to(device_id)
@@ -155,6 +170,7 @@ def main():
     
     train_one_epoch(args=args,
                     model=ddp_model,
+                    epoch=epoch,
                     tokenizer=tokenizer,
                     optimizer=optimizer,
                     lr_scheduler=lr_scheduler,
