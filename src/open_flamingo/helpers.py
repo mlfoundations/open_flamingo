@@ -161,7 +161,7 @@ class MaskedCrossAttention(nn.Module):
 
         q = self.to_q(x)
         media = rearrange(media, 'b t n d -> b (t n) d')
-        
+
         k, v = self.to_kv(media).chunk(2, dim=-1)
         q, k, v = rearrange_many((q, k, v), 'b n (h d) -> b h n d', h=h)
 
@@ -211,10 +211,10 @@ class GatedCrossAttentionBlock(nn.Module):
     ):
         super().__init__()
         self.attn = MaskedCrossAttention(
-            dim=dim, 
+            dim=dim,
             dim_visual=dim_visual,
-            dim_head=dim_head, 
-            heads=heads, 
+            dim_head=dim_head,
+            heads=heads,
             only_attend_immediate_media=only_attend_immediate_media)
         self.attn_gate = nn.Parameter(torch.tensor([0.]))
 
@@ -229,7 +229,8 @@ class GatedCrossAttentionBlock(nn.Module):
         # boolean tensor indicating positions of media - (batch, sequence)
         media_locations=None
     ):
-        x = self.attn(x, media, media_locations = media_locations) * self.attn_gate.tanh() + x
-        x = self.ff(x) * self.ff_gate.tanh()  + x
-        
+        x = self.attn(x, media, media_locations=media_locations) * \
+            self.attn_gate.tanh() + x
+        x = self.ff(x) * self.ff_gate.tanh() + x
+
         return x

@@ -1,6 +1,7 @@
 from contextlib import suppress
-from tqdm import tqdm
 import torch
+from tqdm import tqdm
+
 
 def get_cast_dtype(precision: str):
     cast_dtype = None

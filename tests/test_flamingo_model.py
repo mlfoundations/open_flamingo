@@ -2,6 +2,7 @@ import unittest
 
 import requests
 from PIL import Image
+
 from src.open_flamingo.factory import create_model_and_transforms
 
 
@@ -19,7 +20,8 @@ class TestFlamingoModel(unittest.TestCase):
                            return_tensors="pt")
 
         # try batched forward pass
-        model(vis_x, lang_x["input_ids"], attention_mask=lang_x["attention_mask"])
+        model(vis_x, lang_x["input_ids"],
+              attention_mask=lang_x["attention_mask"])
 
     def test_generate(self):
         model, image_processor, tokenizer = create_model_and_transforms(
@@ -33,11 +35,12 @@ class TestFlamingoModel(unittest.TestCase):
             "pixel_values"]
         lang_x = tokenizer(["<image> A dog", "<image> A cat <|endofchunk|>"], max_length=10,
                            padding=True, truncation=True, return_tensors="pt")
-        
+
         # try batched generation
         out = model.generate(vis_x, lang_x["input_ids"],
                              attention_mask=lang_x["attention_mask"],
                              max_length=20)
+
 
 if __name__ == '__main__':
     unittest.main()

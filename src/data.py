@@ -10,10 +10,9 @@ from dataclasses import dataclass
 from multiprocessing import Value
 
 import braceexpand
-import webdataset as wds
 import torchvision
-from torch.utils.data import (DataLoader, IterableDataset,
-                              get_worker_info)
+import webdataset as wds
+from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import (base_plus_ext, tar_file_expander,
@@ -23,7 +22,6 @@ try:
     import horovod.torch as hvd
 except ImportError:
     hvd = None
-
 
 
 class SharedEpoch:
@@ -216,18 +214,23 @@ class ResampledShards2(IterableDataset):
         for _ in range(self.nshards):
             yield dict(url=self.rng.choice(self.urls))
 
-def preprocess_image(sample, image_processor):  
-    image = image_processor(images=sample, return_tensors="pt")[ "pixel_values"]
+
+def preprocess_image(sample, image_processor):
+    image = image_processor(images=sample, return_tensors="pt")["pixel_values"]
     # apply random horizontal flip and color jitter
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
     image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
 
+
 def preprocess_text(sample, tokenizer):
     tokenizer.padding_side = "right"
-    sample = [(f"<image> {s.strip()} <|endofchunk|> {tokenizer.eos_token}") for s in sample]
-    text = tokenizer(sample, max_length=32, padding="longest", truncation="only_first", return_tensors="pt")
+    sample = [
+        (f"<image> {s.strip()} <|endofchunk|> {tokenizer.eos_token}") for s in sample]
+    text = tokenizer(sample, max_length=32, padding="longest",
+                     truncation="only_first", return_tensors="pt")
     return text["input_ids"], text["attention_mask"]
+
 
 def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.shards
@@ -249,10 +252,12 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             input_shards, deterministic=True, epoch=shared_epoch)]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
-        
+
     # create two preprocess functions that take in the passed in image_processor and tokenizer
-    preprocess_image_fn = functools.partial(preprocess_image, image_processor=image_processor)
-    preprocess_text_fn = functools.partial(preprocess_text, tokenizer=tokenizer)
+    preprocess_image_fn = functools.partial(
+        preprocess_image, image_processor=image_processor)
+    preprocess_text_fn = functools.partial(
+        preprocess_text, tokenizer=tokenizer)
 
     # at this point we have an iterator over all the shards
     if not resampled:
@@ -275,7 +280,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             initial=_SAMPLE_SHUFFLE_INITIAL,
         ),
     ])
- 
+
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
@@ -299,7 +304,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     num_samples = num_batches * global_batch_size
     # each worker is iterating over this
     dataset = dataset.with_epoch(num_worker_batches)
-   
+
     dataloader = wds.WebLoader(
         dataset,
         batch_size=None,
@@ -321,7 +326,8 @@ def get_dataset_fn(dataset_type):
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
+
 def get_data(args, image_processor, tokenizer, epoch=0):
 
     return get_dataset_fn(args.dataset_type)(
-            args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer)
+        args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer)
