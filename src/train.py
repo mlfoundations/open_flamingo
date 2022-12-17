@@ -9,14 +9,13 @@ import numpy as np
 import torch
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
-from tqdm import tqdm
 from transformers import get_constant_schedule_with_warmup
 
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from eval.evaluate import evaluate_coco, evaluate_vqa
 from open_flamingo.factory import create_model_and_transforms
-from train_utils import train_one_epoch
+from train_utils import train_one_epoch, get_checkpoint
 
 
 def random_seed(seed=42, rank=0):
@@ -42,6 +41,8 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--do_eval", action="store_true")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
+    parser.add_argument("--delete_previous_checkpoint", action="store_true",
+     help="delete previous checkpoint when saving new checkpoint")
     parser.add_argument(
         "--shards", type=str, default="/data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar")
     parser.add_argument("--eval_coco_data_dir", type=str,
@@ -170,7 +171,7 @@ def main():
         print(f"Loading checkpoint from {args.resume_from_checkpoint}")
         checkpoint = torch.load(
             args.resume_from_checkpoint, map_location="cpu")
-        ddp_model.load_state_dict(checkpoint["model_state_dict"])
+        ddp_model.load_state_dict(checkpoint["model_state_dict"], False)
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
         resume_from_epoch = checkpoint["epoch"]+1
@@ -217,14 +218,33 @@ def main():
                           train_loader.num_batches, commit=True)
 
             ddp_model.train()
-
+        
         if args.rank == 0:
             if not os.path.exists(args.run_name):
                 os.makedirs(args.run_name)
-            torch.save(ddp_model.state_dict(),
-                       f"{args.run_name}/final_weights.pt")
+                
+            checkpoint_dict = {
+                "epoch": epoch,
+                "model_state_dict": get_checkpoint(ddp_model),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "lr_scheduler_state_dict": lr_scheduler.state_dict(),
+            }
+            
+            torch.save(checkpoint_dict, f"{args.run_name}/checkpoint_{epoch}.pt")
             if args.report_to_wandb:
-                wandb.save(f"{args.run_name}/final_weights.pt")
+                wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
+            
+            if args.delete_previous_checkpoint:
+                if epoch > 0:
+                    os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
+
+    if args.rank == 0:
+        if not os.path.exists(args.run_name):
+            os.makedirs(args.run_name)
+        torch.save(get_checkpoint(ddp_model),
+                    f"{args.run_name}/final_weights.pt")
+        if args.report_to_wandb:
+            wandb.save(f"{args.run_name}/final_weights.pt")
 
 
 if __name__ == "__main__":
