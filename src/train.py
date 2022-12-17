@@ -9,7 +9,6 @@ import numpy as np
 import torch
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
-from tqdm import tqdm
 from transformers import get_constant_schedule_with_warmup
 
 from data import get_data
@@ -42,6 +41,8 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--do_eval", action="store_true")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
+    parser.add_argument("--delete_previous_checkpoint", action="store_true",
+     help="delete previous checkpoint when saving new checkpoint")
     parser.add_argument(
         "--shards", type=str, default="/data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar")
     parser.add_argument("--eval_coco_data_dir", type=str,
@@ -232,6 +233,10 @@ def main():
             torch.save(checkpoint_dict, f"{args.run_name}/checkpoint_{epoch}.pt")
             if args.report_to_wandb:
                 wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
+            
+            if args.delete_previous_checkpoint:
+                if epoch > 0:
+                    os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
 
     if args.rank == 0:
         if not os.path.exists(args.run_name):
