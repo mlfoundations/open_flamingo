@@ -55,4 +55,12 @@ def train_one_epoch(args, model, epoch, train_loader, tokenizer, optimizer, lr_s
         
         if args.rank == 0 and args.report_to_wandb:
             wandb.log({"loss": loss.item(), 'global_step': global_step})
-        
+
+def get_checkpoint(model):
+    state_dict = model.state_dict()
+
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            del state_dict[name]
+    
+    return state_dict
