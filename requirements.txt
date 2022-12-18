@@ -2,8 +2,10 @@ einops
 einops-exts
 transformers
 torch
+torchvision
 pillow
 more-itertools
 datasets
 braceexpand
 webdataset
+wandb
