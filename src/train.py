@@ -31,9 +31,22 @@ def main():
         default="openai/clip-vit-large-patch14",
         type=str)
     parser.add_argument(
+        "--clip_processor_path",
+        default=None,
+        type=str,
+        help="path to clip processor defaults to vision_encoder_path")
+    parser.add_argument(
         "--lm_path",
         default="facebook/opt-1.3b",
-        type=str)
+        type=str)   
+    
+    # From previous experiments other opt tokenizers may have a bug
+    # so we defualt to this one in any case they should all be the same.
+    parser.add_argument(
+        "--tokenizer_path",
+        default="facebook/opt-30b",
+        type=str,
+        help="path to tokenizer")
     parser.add_argument("--run_name", type=str, default="large model test",
                         help="used to name saving directory and wandb run")
     parser.add_argument("--offline", action="store_true")
@@ -119,13 +132,17 @@ def main():
 
     args.dataset_type = "webdataset"
     args.local_rank, args.rank, args.world_size = world_info_from_env()
-
+    
     device_id = init_distributed_device(args)
 
     random_seed(args.seed)
 
     model, image_processor, tokenizer = create_model_and_transforms(
-        args.vision_encoder_path, args.lm_path, use_local_files=args.offline)
+        args.vision_encoder_path, 
+        args.clip_processor_path if args.clip_processor_path else args.vision_encoder_path,
+        args.lm_path, 
+        args.tokenizer_path if args.tokenizer_path else args.lm_path,
+        use_local_files=args.offline)
 
     random_seed(args.seed, args.rank)
 
