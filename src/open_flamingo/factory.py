@@ -10,6 +10,7 @@ from .flamingo_lm import OPTForCausalLMFlamingo
 def create_model_and_transforms(
     clip_vision_encoder_path: str,
     lang_encoder_path: str,
+    use_local_files: bool = False,
 ):
     """
     Initialize a Flamingo model from a pretrained vision encoder and language encoder. 
@@ -18,7 +19,7 @@ def create_model_and_transforms(
     Args:
         clip_vision_encoder_path (str): path to pretrained clip vision encoder
         lang_encoder_path (str): path to pretrained language encoder
-
+        use_local_files (bool, optional): whether to use local files. Defaults to False.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
         Image processor: Pipeline to preprocess input images
@@ -26,8 +27,8 @@ def create_model_and_transforms(
     """
     logging.info("Initializing Flamingo model...")
 
-    vision_encoder, image_processor = get_clip_vision_encoder(
-        clip_vision_encoder_path)
+    vision_encoder = CLIPVisionModel.from_pretrained(path, use_local_files=use_local_files)
+    image_processor = CLIPProcessor.from_pretrained(path, use_local_files=use_local_files)
 
     for p in vision_encoder.parameters():
         p.requires_grad = False
@@ -38,8 +39,7 @@ def create_model_and_transforms(
         'additional_special_tokens': ['<|endofchunk|>', '<image>']
     })
 
-    lang_encoder = OPTForCausalLMFlamingo.from_pretrained(
-        lang_encoder_path).to("cpu")
+    lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path, use_local_files=use_local_files)
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
 
     model = Flamingo(vision_encoder, lang_encoder, text_tokenizer.encode(
@@ -60,7 +60,3 @@ def create_model_and_transforms(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")
 
     return model, image_processor, text_tokenizer
-
-
-def get_clip_vision_encoder(path):
-    return CLIPVisionModel.from_pretrained(path).to("cpu"), CLIPProcessor.from_pretrained(path)

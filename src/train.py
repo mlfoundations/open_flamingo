@@ -36,6 +36,7 @@ def main():
         type=str)
     parser.add_argument("--run_name", type=str, default="large model test",
                         help="used to name saving directory and wandb run")
+    parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
@@ -112,6 +113,10 @@ def main():
 
     args = parser.parse_args()
 
+    if args.offline:
+        os.environ["WANDB_MODE"] = "dryrun"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
     args.dataset_type = "webdataset"
     args.local_rank, args.rank, args.world_size = world_info_from_env()
 
@@ -120,7 +125,7 @@ def main():
     random_seed(args.seed)
 
     model, image_processor, tokenizer = create_model_and_transforms(
-        args.vision_encoder_path, args.lm_path)
+        args.vision_encoder_path, args.lm_path, use_local_files=args.offline)
 
     random_seed(args.seed, args.rank)
 
