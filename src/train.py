@@ -127,7 +127,7 @@ def main():
     args = parser.parse_args()
 
     if args.offline:
-        os.environ["WANDB_MODE"] = "dryrun"
+        os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     args.dataset_type = "webdataset"
