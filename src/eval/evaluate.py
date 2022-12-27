@@ -83,8 +83,8 @@ def evaluate_imagenet_zeroshot(model, tokenizer, image_processor, batch_size, nu
             # Loss computation from OPT code:
             # Compute per instance loss
             # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
+            logits = logits[..., :-1, :].contiguous()
+            labels = labels[..., 1:].contiguous()
 
             loss_fct = CrossEntropyLoss(reduction="none")
             loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
@@ -106,7 +106,7 @@ def evaluate_imagenet_zeroshot(model, tokenizer, image_processor, batch_size, nu
             for row in per_class_dataset:
                 predictions.append(evaluate_sample(row) == label_idx)
 
-    return {"accuracy": predictions.count(True) / len(predictions)}
+    return {"imnet_accuracy": predictions.count(True) / len(predictions)}
 
 
 def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_generation_length=15, num_samples=5000, device=-1, evaluation_stage="validation", wandb=None, step=None):
@@ -156,20 +156,29 @@ def evaluate_coco(model, tokenizer, image_processor, batch_size, data_dir, max_g
             images=[b["image"] for b in batch], return_tensors="pt")["pixel_values"]
 
         tokenizer.padding_side = "left"
-        encodings = tokenizer([f"{sample_one['caption'].strip()}<|endofchunk|>{sample_two['caption'].strip()}<|endofchunk|><image>" for _ in batch],
+        encodings = tokenizer([f"<image> " for _ in batch],
                               padding="longest",
                               truncation="only_first",
                               max_length=64,
                               return_tensors="pt")
 
         with torch.inference_mode():
-            outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
-                                            encodings["input_ids"].to(
-                device if device >= 0 else "cpu"),
-                attention_mask=encodings["attention_mask"].to(
-                device if device >= 0 else "cpu"),
-                max_length=len(
-                encodings["input_ids"][0]) + max_generation_length)
+            if isinstance(model, torch.nn.DataParallel):
+                outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
+                                                encodings["input_ids"].to(
+                    device if device >= 0 else "cpu"),
+                    attention_mask=encodings["attention_mask"].to(
+                    device if device >= 0 else "cpu"),
+                    max_length=len(
+                    encodings["input_ids"][0]) + max_generation_length)
+            else:
+                outputs = model.generate(images.to(device if device >= 0 else "cpu"),
+                                         encodings["input_ids"].to(
+                    device if device >= 0 else "cpu"),
+                    attention_mask=encodings["attention_mask"].to(
+                    device if device >= 0 else "cpu"),
+                    max_length=len(
+                    encodings["input_ids"][0]) + max_generation_length)
 
         outputs = outputs[:, len(encodings["input_ids"][0]):]
         new_predictions = [postprocess_captioning_generation(
@@ -244,20 +253,29 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
 
         tokenizer.padding_side = "left"
 
-        encodings = tokenizer([(f"question:{prompt_one['question']} answer:{prompt_one['answers'][0]} <|endofchunk|> question:{prompt_two['question']} answer:{prompt_two['answers'][0]} <|endofchunk|> <image> question:{b['question']} answer:") for b in batch],
+        encodings = tokenizer([(f"<image> question:{b['question']} answer:") for b in batch],
                               padding="longest",
                               truncation="only_first",
                               max_length=64,
                               return_tensors="pt")
 
         with torch.inference_mode():
-            outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
-                                            encodings["input_ids"].to(
-                device if device >= 0 else "cpu"),
-                attention_mask=encodings["attention_mask"].to(
-                device if device >= 0 else "cpu"),
-                max_length=len(
-                encodings["input_ids"][0]) + max_generation_length)
+            if isinstance(model, torch.nn.DataParallel):
+                outputs = model.module.generate(images.to(device if device >= 0 else "cpu"),
+                                                encodings["input_ids"].to(
+                    device if device >= 0 else "cpu"),
+                    attention_mask=encodings["attention_mask"].to(
+                    device if device >= 0 else "cpu"),
+                    max_length=len(
+                    encodings["input_ids"][0]) + max_generation_length)
+            else:
+                outputs = model.generate(images.to(device if device >= 0 else "cpu"),
+                                         encodings["input_ids"].to(
+                    device if device >= 0 else "cpu"),
+                    attention_mask=encodings["attention_mask"].to(
+                    device if device >= 0 else "cpu"),
+                    max_length=len(
+                    encodings["input_ids"][0]) + max_generation_length)
 
         # get only the generated text
         outputs = outputs[:, len(encodings["input_ids"][0]):]

@@ -226,7 +226,8 @@ def preprocess_image(sample, image_processor):
 def preprocess_text(sample, tokenizer):
     tokenizer.padding_side = "right"
     sample = [
-        (f"<image> {s.strip()} <|endofchunk|> {tokenizer.eos_token}") for s in sample]
+        (f"<image>{s.strip()}<|endofchunk|>" if random.random() < 0.5 else f"<image> {s.strip()}<|endofchunk|>")
+        for s in sample]
     text = tokenizer(sample, max_length=32, padding="longest",
                      truncation="only_first", return_tensors="pt")
     return text["input_ids"], text["attention_mask"]

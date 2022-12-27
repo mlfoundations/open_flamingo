@@ -1,7 +1,7 @@
 from contextlib import suppress
 import torch
 from tqdm import tqdm
-
+from eval.evaluate import evaluate_coco, evaluate_vqa
 
 def get_cast_dtype(precision: str):
     cast_dtype = None
@@ -64,3 +64,33 @@ def get_checkpoint(model):
             del state_dict[name]
     
     return state_dict
+
+def run_eval_suite(args, model, tokenizer, image_processor, epoch, num_batches, device_id, wandb):
+    score = evaluate_coco(model, tokenizer, image_processor,
+                                  data_dir=args.eval_coco_data_dir,
+                                  batch_size=args.batch_size,
+                                  num_samples=5000,
+                                  device=device_id,
+                                  wandb=wandb if args.report_to_wandb else None,
+                                  step=(epoch+1)*num_batches)
+
+    print(f"CIDER score on COCO: {score['cider']}")
+
+    if args.report_to_wandb:
+        wandb.log(score, step=(epoch+1) *
+                    num_batches, commit=False)
+
+    vqa_score = evaluate_vqa(model, tokenizer, image_processor, benchmark_name="OKVQA",
+                                data_dir=args.eval_okvqa_data_dir,
+                                batch_size=args.batch_size,
+                                num_samples=5000,
+                                device=device_id,
+                                wandb=wandb if args.report_to_wandb else None,
+                                step=(epoch+1)*num_batches)
+
+    print(f"VQA Accuracy on OKVQA: {vqa_score['vqa_accuracy']}")
+
+    if args.report_to_wandb:
+        wandb.log(vqa_score, step=(epoch+1) *
+                    num_batches, commit=True)
+

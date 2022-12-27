@@ -8,7 +8,6 @@ from torch import nn
 
 from .helpers import GatedCrossAttentionBlock, PerceiverResampler
 
-
 class FlamingoLayer(nn.Module):
     def __init__(self, gated_cross_attn_layer, decoder_layer):
         super().__init__()

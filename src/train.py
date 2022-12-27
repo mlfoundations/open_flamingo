@@ -13,9 +13,8 @@ from transformers import get_constant_schedule_with_warmup
 
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
-from eval.evaluate import evaluate_coco, evaluate_vqa
 from open_flamingo.factory import create_model_and_transforms
-from train_utils import train_one_epoch, get_checkpoint
+from train_utils import train_one_epoch, get_checkpoint, run_eval_suite
 
 
 def random_seed(seed=42, rank=0):
@@ -53,6 +52,7 @@ def main():
     parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--do_train", action="store_true")
     parser.add_argument("--do_eval", action="store_true")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument("--delete_previous_checkpoint", action="store_true",
@@ -155,9 +155,8 @@ def main():
     device_id = args.rank % torch.cuda.device_count()
     model = model.to(device_id)
 
-    ddp_model = DDP(model, device_ids=[device_id])
-
-    train_dataset = get_data(args, image_processor, tokenizer)
+    if args.world_size > 1:
+        model = DDP(model, device_ids=[device_id])
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -173,7 +172,7 @@ def main():
                 {"params": params_without_wd, "weight_decay": 0.0}, ]
 
     optimizer = torch.optim.AdamW(
-        get_grouped_params(ddp_model), lr=args.learning_rate)
+        get_grouped_params(model), lr=args.learning_rate)
     lr_scheduler = get_constant_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps)
 
@@ -193,19 +192,29 @@ def main():
         print(f"Loading checkpoint from {args.resume_from_checkpoint}")
         checkpoint = torch.load(
             args.resume_from_checkpoint, map_location="cpu")
-        ddp_model.load_state_dict(checkpoint["model_state_dict"], False)
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
-        resume_from_epoch = checkpoint["epoch"]+1
+        model.load_state_dict(checkpoint["model_state_dict"], False)
 
-    ddp_model.train()
+        # only want to evaluate checkpoint 
+        if not args.do_train and args.do_eval:
+            if args.rank == 0:
+                model.eval()
+                run_eval_suite(args, model, tokenizer, image_processor, 0, 0, device_id, wandb)
+            return
+
+        if args.do_train:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
+            resume_from_epoch = checkpoint["epoch"] + 1
+            
+    model.train()
+    train_dataset = get_data(args, image_processor, tokenizer)
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         train_dataset.set_epoch(epoch)
         train_loader = train_dataset.dataloader
 
         train_one_epoch(args=args,
-                        model=ddp_model,
+                        model=model,
                         epoch=epoch,
                         tokenizer=tokenizer,
                         optimizer=optimizer,
@@ -215,31 +224,9 @@ def main():
                         wandb=wandb)
 
         if args.do_eval and args.rank == 0:
-            score = evaluate_coco(ddp_model, tokenizer, image_processor,
-                                  data_dir=args.eval_coco_data_dir,
-                                  batch_size=args.batch_size,
-                                  num_samples=5000,
-                                  device=device_id,
-                                  wandb=wandb if args.report_to_wandb else None,
-                                  step=(epoch+1)*train_loader.num_batches)
-
-            if args.report_to_wandb:
-                wandb.log(score, step=(epoch+1) *
-                          train_loader.num_batches, commit=False)
-
-            vqa_score = evaluate_vqa(ddp_model, tokenizer, image_processor, benchmark_name="OKVQA",
-                                     data_dir=args.eval_okvqa_data_dir,
-                                     batch_size=args.batch_size,
-                                     num_samples=5000,
-                                     device=device_id,
-                                     wandb=wandb if args.report_to_wandb else None,
-                                     step=(epoch+1)*train_loader.num_batches)
-
-            if args.report_to_wandb:
-                wandb.log(vqa_score, step=(epoch+1) *
-                          train_loader.num_batches, commit=True)
-
-            ddp_model.train()
+            model.eval()
+            run_eval_suite(args, model, tokenizer, image_processor, epoch, train_loader.num_batches, device_id, wandb)
+            model.train()
         
         if args.rank == 0:
             if not os.path.exists(args.run_name):
@@ -247,7 +234,7 @@ def main():
                 
             checkpoint_dict = {
                 "epoch": epoch,
-                "model_state_dict": get_checkpoint(ddp_model),
+                "model_state_dict": get_checkpoint(model),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "lr_scheduler_state_dict": lr_scheduler.state_dict(),
             }
@@ -263,7 +250,7 @@ def main():
     if args.rank == 0:
         if not os.path.exists(args.run_name):
             os.makedirs(args.run_name)
-        torch.save(get_checkpoint(ddp_model),
+        torch.save(get_checkpoint(model),
                     f"{args.run_name}/final_weights.pt")
         if args.report_to_wandb:
             wandb.save(f"{args.run_name}/final_weights.pt")
