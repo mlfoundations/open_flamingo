@@ -31,14 +31,14 @@ def create_model_and_transforms(
     vision_encoder = CLIPVisionModel.from_pretrained(clip_vision_encoder_path, local_files_only=use_local_files)
     image_processor = CLIPProcessor.from_pretrained(clip_processor_path, local_files_only=use_local_files)
 
-    for p in vision_encoder.parameters():
-        p.requires_grad = False
-
     text_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=use_local_files)
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens({
         'additional_special_tokens': ['<|endofchunk|>', '<image>']
     })
+
+    if not text_tokenizer.pad_token:
+        text_tokenizer.pad_token = text_tokenizer.eos_token
 
     lang_encoder = AutoModelForCausalLM.from_pretrained(lang_encoder_path, local_files_only=use_local_files)
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
