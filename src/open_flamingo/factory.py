@@ -1,10 +1,8 @@
 import logging
 
-from transformers import AutoTokenizer, CLIPProcessor, CLIPVisionModel
+from transformers import AutoTokenizer, CLIPProcessor, CLIPVisionModel, AutoModelForCausalLM
 
 from .flamingo import Flamingo
-from .flamingo_lm import OPTForCausalLMFlamingo
-
 
 def create_model_and_transforms(
     clip_vision_encoder_path: str,
@@ -42,22 +40,12 @@ def create_model_and_transforms(
         'additional_special_tokens': ['<|endofchunk|>', '<image>']
     })
 
-    lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path, local_files_only=use_local_files)
+    lang_encoder = AutoModelForCausalLM.from_pretrained(lang_encoder_path, local_files_only=use_local_files)
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
 
     model = Flamingo(vision_encoder, lang_encoder, text_tokenizer.encode(
         "<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1])
-
-    for p in lang_encoder.get_decoder().layers.parameters():
-        p.requires_grad = False
-
-    for p in model.perceiver_resampler.parameters():
-        p.requires_grad = True
-
-    for p in lang_encoder.gated_cross_attn_layers.parameters():
-        p.requires_grad = True
-
-    lang_encoder.get_input_embeddings().weight.requires_grad = True
+    model.freeze_backbones()
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")
