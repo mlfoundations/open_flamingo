@@ -3,13 +3,11 @@ Main Flamingo class
 Uses gated cross attention with Perceiver resampler
 '''
 
-from typing import Optional, Tuple, Union
-
 import torch
 from torch import nn
-from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from .helpers import PerceiverResampler, GatedCrossAttentionBlock
+from .helpers import GatedCrossAttentionBlock, PerceiverResampler
+
 
 class FlamingoLayer(nn.Module):
     def __init__(self, gated_cross_attn_layer, decoder_layer):
@@ -45,6 +43,7 @@ class FlamingoLayer(nn.Module):
                                     **kwargs)
         return lang_x
 
+
 class Flamingo(nn.Module):
     def __init__(self, vision_encoder: nn.Module, lang_encoder: nn.Module, eoc_token_id: int, media_token_id: int):
         """
@@ -60,13 +59,13 @@ class Flamingo(nn.Module):
         self.lang_encoder = lang_encoder
         self.gated_cross_attn_layers = nn.ModuleList([GatedCrossAttentionBlock(
             dim=self.lang_encoder.config.hidden_size, dim_visual=self.vision_encoder.config.hidden_size) for _ in range(len(self.get_lm_decoder_layers()))])
-        
+
         flamingo_layers = self._create_flamingo_layers()
 
         # replace language model decoder layers with Flamingo layers
         if "OPT" in self.lang_encoder.__class__.__name__:
             self.lang_encoder.get_decoder().layers = flamingo_layers
-        elif "GPTNeoX" in self.lang_encoder.__class__.__name__: # For Pythia models
+        elif "GPTNeoX" in self.lang_encoder.__class__.__name__:  # For Pythia models
             self.lang_encoder.gpt_neox.layers = flamingo_layers
         else:
             self.lang_encoder.transformer.h = flamingo_layers
@@ -74,17 +73,19 @@ class Flamingo(nn.Module):
         self.perceiver_resampler = PerceiverResampler(
             dim=vision_encoder.config.hidden_size, depth=6)
 
+        # replace language model forward pass with Flamingo forward pass
         self.lang_encoder.original_forward = self.lang_encoder.forward
         self.lang_encoder.forward = self.lm_forward
 
     def _create_flamingo_layers(self):
         return nn.ModuleList([FlamingoLayer(gated_cross_attn_layer, decoder_layer)
-                                                  for gated_cross_attn_layer, decoder_layer in zip(self.gated_cross_attn_layers, self.get_lm_decoder_layers())])
+                              for gated_cross_attn_layer, decoder_layer in zip(self.gated_cross_attn_layers, self.get_lm_decoder_layers())])
 
     def forward(self, vision_x: torch.Tensor, lang_x: torch.Tensor, attention_mask: torch.Tensor = None, labels: torch.Tensor = None):
         self._process_media(vision_x)
-        
-        output = self.lang_encoder.forward(lang_x, attention_mask=attention_mask, labels=labels)
+
+        output = self.lang_encoder.forward(
+            lang_x, attention_mask=attention_mask, labels=labels)
 
         self.clear_conditioned_layers()
         return output
@@ -111,7 +112,7 @@ class Flamingo(nn.Module):
             torch.Tensor: lang_x with generated tokens appended to it
         """
         self._process_media(vision_x)
-        
+
         output = self.lang_encoder.generate(
             lang_x,
             attention_mask=attention_mask,
@@ -147,26 +148,26 @@ class Flamingo(nn.Module):
 
     def lm_forward(
         self,
-        input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        input_ids,
+        attention_mask=None,
         **kwargs
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
-        
+    ):
+
         # condition language model layers on media locations
         media_locations = input_ids == self.media_token_id
         for layer in self.get_lm_decoder_layers():
             layer.condition_media_locations(media_locations)
-        
+
         return self.lang_encoder.original_forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             **kwargs
         )
-    
+
     def get_lm_decoder_layers(self):
         if "OPT" in self.lang_encoder.__class__.__name__:
             return self.lang_encoder.get_decoder().layers
-        elif "GPTNeoX" in self.lang_encoder.__class__.__name__: # For Pythia models
+        elif "GPTNeoX" in self.lang_encoder.__class__.__name__:  # For Pythia models
             return self.lang_encoder.gpt_neox.layers
         else:
             return self.lang_encoder.transformer.h
