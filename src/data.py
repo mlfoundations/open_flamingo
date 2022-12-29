@@ -238,7 +238,6 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     resampled = getattr(args, 'dataset_resampled', False)
 
     num_samples, num_shards = get_dataset_size(input_shards)
-    num_samples = None
     if not num_samples:
         num_samples = args.train_num_samples
         if not num_samples:
