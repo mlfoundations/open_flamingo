@@ -215,17 +215,17 @@ def main():
                         wandb=wandb)
 
         if args.do_eval and args.rank == 0:
+            step = wandb.run.step if args.report_to_wandb else 0
             score = evaluate_coco(ddp_model, tokenizer, image_processor,
                                   data_dir=args.eval_coco_data_dir,
                                   batch_size=args.batch_size,
                                   num_samples=5000,
                                   device=device_id,
                                   wandb=wandb if args.report_to_wandb else None,
-                                  step=(epoch+1)*train_loader.num_batches)
+                                  step=step)
 
             if args.report_to_wandb:
-                wandb.log(score, step=(epoch+1) *
-                          train_loader.num_batches, commit=False)
+                wandb.log(score, step=step, commit=False)
 
             vqa_score = evaluate_vqa(ddp_model, tokenizer, image_processor, benchmark_name="OKVQA",
                                      data_dir=args.eval_okvqa_data_dir,
@@ -233,11 +233,10 @@ def main():
                                      num_samples=5000,
                                      device=device_id,
                                      wandb=wandb if args.report_to_wandb else None,
-                                     step=(epoch+1)*train_loader.num_batches)
+                                     step=step)
 
             if args.report_to_wandb:
-                wandb.log(vqa_score, step=(epoch+1) *
-                          train_loader.num_batches, commit=True)
+                wandb.log(vqa_score, step=step, commit=True)
 
             ddp_model.train()
         
