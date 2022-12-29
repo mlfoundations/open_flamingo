@@ -244,7 +244,7 @@ def evaluate_vqa(model, tokenizer, image_processor, batch_size, benchmark_name="
 
         tokenizer.padding_side = "left"
 
-        encodings = tokenizer([(f"question:{prompt_one['question']} answer:{prompt_one['answers'][0]} <|endofchunk|> question:{prompt_two['question']} answer:{prompt_two['answers'][0]} <|endofchunk|> <image> question:{b['question']} answer:") for b in batch],
+        encodings = tokenizer([(f"question:{prompt_one['question']} answer:{prompt_one['answers'][0]}<|endofchunk|>question:{prompt_two['question']} answer:{prompt_two['answers'][0]}<|endofchunk|><image>question:{b['question']} answer:") for b in batch],
                               padding="longest",
                               truncation="only_first",
                               max_length=64,

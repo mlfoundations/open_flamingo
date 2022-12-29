@@ -12,6 +12,7 @@ from multiprocessing import Value
 import braceexpand
 import torchvision
 import webdataset as wds
+import numpy as np
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
@@ -217,6 +218,7 @@ class ResampledShards2(IterableDataset):
 
 def preprocess_image(sample, image_processor):
     image = image_processor(images=sample, return_tensors="pt")["pixel_values"]
+
     # apply random horizontal flip and color jitter
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
     image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
@@ -226,9 +228,10 @@ def preprocess_image(sample, image_processor):
 def preprocess_text(sample, tokenizer):
     tokenizer.padding_side = "right"
     sample = [
-        (f"<image> {s.strip()} <|endofchunk|> {tokenizer.eos_token}") for s in sample]
+        (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample]
     text = tokenizer(sample, max_length=32, padding="longest",
                      truncation="only_first", return_tensors="pt")
+
     return text["input_ids"], text["attention_mask"]
 
 
@@ -238,6 +241,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     resampled = getattr(args, 'dataset_resampled', False)
 
     num_samples, num_shards = get_dataset_size(input_shards)
+    num_samples = None
     if not num_samples:
         num_samples = args.train_num_samples
         if not num_samples:
@@ -286,7 +290,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         wds.decode("pilrgb", handler=log_and_continue),
         wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
         wds.batched(args.batch_size, partial=False),
-        wds.map_tuple(preprocess_image_fn, preprocess_text_fn),
+        wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
     ])
 
     dataset = wds.DataPipeline(*pipeline)
