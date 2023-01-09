@@ -31,7 +31,7 @@ For how to generate using Flamingo look at examples/example.py
 # Training instructions
 Currently, we only support OPT models on the language side and CLIP on the vision side.
 
-To train a model, modify the following example command:
+To train a model, modify the following example command from the open_flamingo/train directory:
 ```
 torchrun --nnodes=1 --nproc_per_node=2
 train.py 

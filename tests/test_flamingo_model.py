@@ -5,6 +5,7 @@ from PIL import Image
 
 from open_flamingo import create_model_and_transforms
 
+
 class TestFlamingoModel(unittest.TestCase):
     def test_forward_pass(self):
         model, image_processor, tokenizer = create_model_and_transforms(
@@ -47,6 +48,7 @@ class TestFlamingoModel(unittest.TestCase):
 
         # try batched generation
         out = model.generate(vis_x, lang_x["input_ids"], attention_mask=lang_x["attention_mask"], max_length=20)
+
 
 if __name__ == "__main__":
     unittest.main()

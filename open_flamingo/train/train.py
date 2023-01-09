@@ -11,11 +11,11 @@ import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 from transformers import get_constant_schedule_with_warmup
 
-from train.data import get_data
-from train.distributed import init_distributed_device, world_info_from_env
+from data import get_data
+from distributed import init_distributed_device, world_info_from_env
 from eval.evaluate import evaluate_coco, evaluate_vqa
-from src.factory import create_model_and_transforms
-from train.train_utils import train_one_epoch, get_checkpoint
+from open_flamingo import create_model_and_transforms
+from train_utils import train_one_epoch, get_checkpoint
 
 
 def random_seed(seed=42, rank=0):
@@ -59,6 +59,7 @@ def main():
     )
     parser.add_argument("--eval_coco_data_dir", type=str, default="/data/yfcc-tmp/data/mscoco")
     parser.add_argument("--eval_okvqa_data_dir", type=str, default="/mmfs1/gscratch/efml/anasa2/data/ok-vqa/train")
+    parser.add_argument("--eval_vqav2_data_dir", type=str, default="/mmfs1/gscratch/efml/anasa2/data/vqav2/train2014/")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
     parser.add_argument("--warmup_steps", default=5000, type=int)
@@ -213,6 +214,7 @@ def main():
                 data_dir=args.eval_coco_data_dir,
                 batch_size=args.batch_size,
                 num_samples=5000,
+                num_shots=0,
                 device=device_id,
                 wandb=wandb if args.report_to_wandb else None,
                 step=step,
@@ -229,6 +231,24 @@ def main():
                 data_dir=args.eval_okvqa_data_dir,
                 batch_size=args.batch_size,
                 num_samples=5000,
+                num_shots=0,
+                device=device_id,
+                wandb=wandb if args.report_to_wandb else None,
+                step=step,
+            )
+
+            if args.report_to_wandb:
+                wandb.log(vqa_score, step=step, commit=False)
+
+            vqa_score = evaluate_vqa(
+                ddp_model,
+                tokenizer,
+                image_processor,
+                benchmark_name="VQAv2",
+                data_dir=args.eval_vqav2_data_dir,
+                batch_size=args.batch_size,
+                num_samples=5000,
+                num_shots=0,
                 device=device_id,
                 wandb=wandb if args.report_to_wandb else None,
                 step=step,

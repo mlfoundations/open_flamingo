@@ -416,6 +416,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     resampled = getattr(args, "dataset_resampled", False)
 
     num_samples, num_shards = get_dataset_size(input_shards)
+    num_samples = None
     if not num_samples:
         num_samples = args.train_num_samples
         if not num_samples:
@@ -467,7 +468,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             wds.decode("pilrgb", handler=log_and_continue),
             wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
-            wds.map_tuple(preprocess_image_fn, preprocess_text_fn),
+            wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
         ]
     )
 

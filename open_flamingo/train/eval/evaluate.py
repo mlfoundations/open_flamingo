@@ -169,11 +169,17 @@ def evaluate_coco(
     def get_prompt(sample):
         return f"<image>{sample['caption'].strip()}<|endofchunk|>"
 
-    context_text = "".join([get_prompt(sample) for sample in in_context_samples]) + "<image>"
-    context_images = image_processor(images=[sample["image"] for sample in in_context_samples], return_tensors="pt")[
-        "pixel_values"
-    ]
-    context_images = context_images.unsqueeze(1).unsqueeze(0)
+    context_text = "".join([get_prompt(sample) for sample in in_context_samples]) if num_shots > 0 else ""
+    context_text += "<image>"
+    print(context_text)
+
+    if num_shots > 0:
+        context_images = image_processor(images=[sample["image"] for sample in in_context_samples], return_tensors="pt")[
+            "pixel_values"
+        ]
+        context_images = context_images.unsqueeze(1).unsqueeze(0)
+    else:
+        context_images = None
 
     model.eval()
 
@@ -186,8 +192,7 @@ def evaluate_coco(
         for b in batch:
             b_image = image_processor(images=[b["image"]], return_tensors="pt")["pixel_values"]
             b_image = b_image.unsqueeze(1).unsqueeze(0)
-            # concatenate context_images and b_image
-            b_image = torch.cat([context_images, b_image], dim=1)
+            b_image = torch.cat([context_images, b_image], dim=1) if num_shots > 0 else b_image
 
             if batch_images is None:
                 batch_images = b_image
@@ -224,7 +229,7 @@ def evaluate_coco(
                 commit=False,
             )
 
-    return {"cider": compute_cider(predictions, ground_truths)}
+    return {"cider_for_coco": compute_cider(predictions, ground_truths)}
 
 
 def evaluate_vqa(
@@ -292,16 +297,20 @@ def evaluate_vqa(
     def get_prompt(sample, train=True):
         return f"<image>question:{sample['question']} answer:{sample['answer'] if train else ''}{'<|endofchunk|>' if train else ''}"
 
-    context_text = " ".join([get_prompt(s) for s in in_context_samples])
-    context_images = image_processor(images=[s["image"] for s in in_context_samples], return_tensors="pt")[
-        "pixel_values"
-    ]
-    context_images = context_images.unsqueeze(1).unsqueeze(0)
+    context_text = " ".join([get_prompt(s) for s in in_context_samples]) if num_shots > 0 else ""
+
+    if num_shots > 0:
+        context_images = image_processor(images=[s["image"] for s in in_context_samples], return_tensors="pt")[
+            "pixel_values"
+        ]
+        context_images = context_images.unsqueeze(1).unsqueeze(0)
+    else:
+        context_images = None
 
     if num_samples is not None:
         if benchmark_name == "TextVQA":
             dataset = dataset.shuffle().select(range(num_samples, num_samples + num_samples))
-        elif benchmark_name == "OKVQA":  # OKVQA is not a huggingface dataset so we can't use select
+        elif benchmark_name == "OKVQA" or benchmark_name == "VQAv2":  # not a huggingface dataset so we can't use select
             dataset = torch.utils.data.Subset(dataset, range(num_samples, num_samples + num_samples))
 
     model.eval()
@@ -310,13 +319,13 @@ def evaluate_vqa(
     idx = 0
     for batch in more_itertools.chunked(tqdm(dataset, desc="Running inference"), batch_size):
         batch_images = None
-        batch_text = [context_text + get_prompt(b) for b in batch]
-
+        batch_text = [context_text + get_prompt(b, train=False) for b in batch]
+        print(batch_text)
         for b in batch:
             b_image = image_processor(images=[b["image"]], return_tensors="pt")["pixel_values"]
             b_image = b_image.unsqueeze(1).unsqueeze(0)
             # concatenate context_images and b_image
-            b_image = torch.cat([context_images, b_image], dim=1)
+            b_image = torch.cat([context_images, b_image], dim=1) if num_shots > 0 else b_image
 
             if batch_images is None:
                 batch_images = b_image
@@ -346,7 +355,7 @@ def evaluate_vqa(
         if wandb is not None:
             wandb.log(
                 {
-                    f"vqa_{idx}": wandb.Image(
+                    f"{benchmark_name}_{idx}": wandb.Image(
                         batch[0]["image"],
                         caption=f"Question: {batch[0]['question']}\nGroundtruth: {batch[0]['answers'][0]}\nPrediction: {new_predictions[0]}",
                     )
@@ -356,4 +365,6 @@ def evaluate_vqa(
             )
 
         idx += 1
-    return {"vqa_accuracy": compute_vqa_accuracy(predictions, [row["answers"] for row in dataset])}
+    return {
+        f"vqa_accuracy_for_{benchmark_name}": compute_vqa_accuracy(predictions, [row["answers"] for row in dataset])
+    }

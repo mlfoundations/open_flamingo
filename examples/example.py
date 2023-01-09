@@ -19,7 +19,13 @@ vis_x = image_processor(images=[image, image], return_tensors="pt")["pixel_value
 vis_x = vis_x.unsqueeze(1).unsqueeze(1)
 
 lang_x = tokenizer(
-    ["<image>An animal", "<image>A cat<|endofchunk|>"], max_length=10, padding=True, truncation=True, return_tensors="pt"
+    ["<image>An animal", "<image>A cat<|endofchunk|>"],
+    max_length=10,
+    padding=True,
+    truncation=True,
+    return_tensors="pt",
 )
 
-generation = tokenizer.batch_decode(model.generate(vis_x, lang_x["input_ids"], attention_mask=lang_x["attention_mask"], max_length=20))
+generation = tokenizer.batch_decode(
+    model.generate(vis_x, lang_x["input_ids"], attention_mask=lang_x["attention_mask"], max_length=20)
+)
