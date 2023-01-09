@@ -14,7 +14,7 @@ def create_model_and_transforms(
     use_local_files: bool = False,
 ):
     """
-    Initialize a Flamingo model from a pretrained vision encoder and language encoder. 
+    Initialize a Flamingo model from a pretrained vision encoder and language encoder.
     Appends special tokens to the tokenizer and freezes backbones.
 
     Args:
@@ -38,15 +38,14 @@ def create_model_and_transforms(
 
     text_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=use_local_files)
     # add Flamingo special tokens to the tokenizer
-    text_tokenizer.add_special_tokens({
-        'additional_special_tokens': ['<|endofchunk|>', '<image>']
-    })
+    text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
 
     lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path, local_files_only=use_local_files)
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
 
-    model = Flamingo(vision_encoder, lang_encoder, text_tokenizer.encode(
-        "<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1])
+    model = Flamingo(
+        vision_encoder, lang_encoder, text_tokenizer.encode("<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1]
+    )
 
     for p in lang_encoder.get_decoder().layers.parameters():
         p.requires_grad = False
@@ -60,6 +59,7 @@ def create_model_and_transforms(
     lang_encoder.get_input_embeddings().weight.requires_grad = True
 
     print(
-        f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")
+        f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
+    )
 
     return model, image_processor, text_tokenizer

@@ -28,29 +28,31 @@ class FlamingoLayer(nn.Module):
     def condition_media_locations(self, media_locations):
         self.media_locations = media_locations
 
-    def forward(self,
-                lang_x,
-                attention_mask=None,
-                layer_head_mask=None,
-                past_key_value=None,
-                output_attentions=False,
-                use_cache=False):
+    def forward(
+        self,
+        lang_x,
+        attention_mask=None,
+        layer_head_mask=None,
+        past_key_value=None,
+        output_attentions=False,
+        use_cache=False,
+    ):
 
         if self.vis_x is None:
             raise ValueError("vis_x must be conditioned before forward pass")
 
         if self.media_locations is None:
-            raise ValueError(
-                "media_locations must be conditioned before forward pass")
+            raise ValueError("media_locations must be conditioned before forward pass")
 
-        lang_x = self.gated_cross_attn_layer(
-            lang_x, self.vis_x, media_locations=self.media_locations)
-        lang_x = self.decoder_layer(lang_x,
-                                    attention_mask=attention_mask,
-                                    layer_head_mask=layer_head_mask,
-                                    past_key_value=past_key_value,
-                                    output_attentions=output_attentions,
-                                    use_cache=use_cache)
+        lang_x = self.gated_cross_attn_layer(lang_x, self.vis_x, media_locations=self.media_locations)
+        lang_x = self.decoder_layer(
+            lang_x,
+            attention_mask=attention_mask,
+            layer_head_mask=layer_head_mask,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+        )
         return lang_x
 
 
@@ -64,8 +66,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         self.gated_cross_attn_layers = None
 
         # the lm_head weight is automatically tied to the embed tokens weight
-        self.lm_head = nn.Linear(
-            config.word_embed_proj_dim, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -81,10 +82,20 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
             media_token_id (_type_): _description_
             vis_hidden_size (_type_): _description_
         """
-        self.gated_cross_attn_layers = nn.ModuleList([GatedCrossAttentionBlock(
-            dim=self.config.hidden_size, dim_visual=vis_hidden_size) for _ in self.model.decoder.layers])
-        self.model.decoder.layers = nn.ModuleList([FlamingoLayer(gated_cross_attn_layer, decoder_layer)
-                                                  for gated_cross_attn_layer, decoder_layer in zip(self.gated_cross_attn_layers, self.model.decoder.layers)])
+        self.gated_cross_attn_layers = nn.ModuleList(
+            [
+                GatedCrossAttentionBlock(dim=self.config.hidden_size, dim_visual=vis_hidden_size)
+                for _ in self.model.decoder.layers
+            ]
+        )
+        self.model.decoder.layers = nn.ModuleList(
+            [
+                FlamingoLayer(gated_cross_attn_layer, decoder_layer)
+                for gated_cross_attn_layer, decoder_layer in zip(
+                    self.gated_cross_attn_layers, self.model.decoder.layers
+                )
+            ]
+        )
         self.media_token_id = media_token_id
         self.initalized_flamingo = True
 
@@ -180,8 +191,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         ```"""
 
         if not self.initalized_flamingo:
-            raise ValueError(
-                "Flamingo layers are not initialized. Please call `init_flamingo` first.")
+            raise ValueError("Flamingo layers are not initialized. Please call `init_flamingo` first.")
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -216,8 +226,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(
-                shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
+            loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -255,6 +264,5 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
     def _reorder_cache(past, beam_idx):
         reordered_past = ()
         for layer_past in past:
-            reordered_past += (tuple(past_state.index_select(0, beam_idx)
-                               for past_state in layer_past),)
+            reordered_past += (tuple(past_state.index_select(0, beam_idx) for past_state in layer_past),)
         return reordered_past
