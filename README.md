@@ -27,6 +27,25 @@ model.load_state_dict(torch.load("path/to/checkpoint.pt"), strict=False)
 ```
 For how to generate using Flamingo look at examples/example.py
 
+## Demo
+Alternatively, if you want to play around with the model without worrying about the code, you can use the demo streamlit in the examples directory.
+
+First run:
+```
+pip install streamlit
+pip install huggingface_hub
+```
+
+after that you need to authenticate into HuggingFace hub to access model weights:
+
+```
+huggingface-cli login
+```
+
+Then to run the demo, run the following command from the examples directory:
+```
+streamlit run demo.py
+```
 
 # Training instructions
 Currently, we only support OPT models on the language side and CLIP on the vision side.
