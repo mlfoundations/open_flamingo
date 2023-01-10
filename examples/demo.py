@@ -11,7 +11,7 @@ from open_flamingo import create_model_and_transforms
 
 @st.experimental_singleton
 def get_model():
-    checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo3B-v0", "checkpoint_v2.pt")
+    checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo3B-v1", "checkpoint_v2.pt")
 
     model, image_processor, tokenizer = create_model_and_transforms(
         clip_vision_encoder_path="openai/clip-vit-large-patch14",
