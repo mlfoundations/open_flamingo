@@ -58,7 +58,7 @@ if task == "Captioning 🗯️":
                 .unsqueeze(1)
                 .unsqueeze(1),
                 input_ids,
-                max_length=100,
+                max_length=25,
             )
             st.success(tokenizer.decode(output[0][len(input_ids[0]) :], skip_special_tokens=True))
 
