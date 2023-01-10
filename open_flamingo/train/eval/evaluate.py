@@ -174,9 +174,9 @@ def evaluate_coco(
     print(context_text)
 
     if num_shots > 0:
-        context_images = image_processor(images=[sample["image"] for sample in in_context_samples], return_tensors="pt")[
-            "pixel_values"
-        ]
+        context_images = image_processor(
+            images=[sample["image"] for sample in in_context_samples], return_tensors="pt"
+        )["pixel_values"]
         context_images = context_images.unsqueeze(1).unsqueeze(0)
     else:
         context_images = None
