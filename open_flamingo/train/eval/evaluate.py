@@ -295,7 +295,7 @@ def evaluate_vqa(
     in_context_samples = [dataset[i] for i in range(num_shots)]
 
     def get_prompt(sample, train=True):
-        return f"<image>question:{sample['question']} answer:{sample['answer'] if train else ''}{'<|endofchunk|>' if train else ''}"
+        return f"<image>question:{sample['question']} answer:{sample['answers'][0] if train else ''}{'<|endofchunk|>' if train else ''}"
 
     context_text = " ".join([get_prompt(s) for s in in_context_samples]) if num_shots > 0 else ""
 
