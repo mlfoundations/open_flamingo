@@ -91,6 +91,7 @@ def main():
     )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
+    parser.add_argument("--save_checkpoints_to_wandb", default=False, action="store_true")
     parser.add_argument(
         "--wandb_project",
         default="open-flamingo",
@@ -111,6 +112,9 @@ def main():
     #   torch.backends.cudnn.deterministic = False
 
     args = parser.parse_args()
+    
+    if args.save_checkpoints_to_wandb and not args.report_to_wandb:
+        raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
@@ -271,7 +275,7 @@ def main():
             }
 
             torch.save(checkpoint_dict, f"{args.run_name}/checkpoint_{epoch}.pt")
-            if args.report_to_wandb:
+            if args.report_to_wandb and args.save_checkpoints_to_wandb:
                 wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
 
             if args.delete_previous_checkpoint:
@@ -282,7 +286,7 @@ def main():
         if not os.path.exists(args.run_name):
             os.makedirs(args.run_name)
         torch.save(get_checkpoint(ddp_model), f"{args.run_name}/final_weights.pt")
-        if args.report_to_wandb:
+        if args.report_to_wandb and args.save_checkpoints_to_wandb:
             wandb.save(f"{args.run_name}/final_weights.pt")
 
 
