@@ -112,6 +112,7 @@ class Flamingo(nn.Module):
         assert T == 1, "Only single frame supported"
         vision_x = rearrange(vision_x, "b N T c h w -> (b N T) c h w")
         with torch.no_grad():
+            #TODO: how to call this and get the hiddens state from OPCLIP
             vision_x = self.vision_encoder(vision_x).last_hidden_state
         vision_x = rearrange(vision_x, "(b N T) v d -> (b N) T v d", b=b, N=N, T=T)
         vision_x = self.perceiver_resampler(vision_x)

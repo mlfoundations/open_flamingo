@@ -2,6 +2,8 @@ import logging
 
 from transformers import AutoTokenizer, CLIPProcessor, CLIPVisionModel
 
+import open_clip #Imported to switch from HG CLIP to openClip
+
 from .flamingo import Flamingo
 from .flamingo_lm import OPTForCausalLMFlamingo
 
@@ -30,21 +32,31 @@ def create_model_and_transforms(
     """
     logging.info("Initializing Flamingo model...")
 
-    vision_encoder = CLIPVisionModel.from_pretrained(clip_vision_encoder_path, local_files_only=use_local_files)
-    image_processor = CLIPProcessor.from_pretrained(clip_processor_path, local_files_only=use_local_files)
+    #TODO change to open clip pacakage
+    #vision_encoder = CLIPVisionModel.from_pretrained(clip_vision_encoder_path, local_files_only=use_local_files)
+    #image_processor = CLIPProcessor.from_pretrained(clip_processor_path, local_files_only=use_local_files)
 
-    for p in vision_encoder.parameters():
+    #open_clip vison encoders
+    clip_vision_encoder = open_clip.create_model_and_transforms(clip_vision_encoder_path)
+    # open_clip new image processor
+    clip_image_processor = open_clip.create_model_and_transforms(clip_processor_path)
+    # New text tokenizer using open_clip
+    clip_tokenizer = open_clip.get_tokenizer(tokenizer_path)
+    clip_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
+
+    for p in clip_vision_encoder.parameters():
         p.requires_grad = False
 
-    text_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=use_local_files)
+
+    #text_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=use_local_files)
     # add Flamingo special tokens to the tokenizer
-    text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
+    #text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
 
     lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path, local_files_only=use_local_files)
-    lang_encoder.resize_token_embeddings(len(text_tokenizer))
+    lang_encoder.resize_token_embeddings(len(clip_tokenizer))
 
     model = Flamingo(
-        vision_encoder, lang_encoder, text_tokenizer.encode("<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1]
+        clip_vision_encoder, lang_encoder, clip_tokenizer.encode("<|endofchunk|>")[-1], clip_tokenizer.encode("<image>")[-1]
     )
 
     for p in lang_encoder.get_decoder().layers.parameters():
@@ -62,4 +74,4 @@ def create_model_and_transforms(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
     )
 
-    return model, image_processor, text_tokenizer
+    return model, clip_image_processor, clip_tokenizer
