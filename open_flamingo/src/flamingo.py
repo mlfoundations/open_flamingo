@@ -1,8 +1,3 @@
-"""
-Main Flamingo class
-Uses gated cross attention with Perceiver resampler
-"""
-
 import torch
 from einops import rearrange
 from torch import nn
@@ -28,8 +23,6 @@ class Flamingo(nn.Module):
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id, vis_hidden_size=self.vision_encoder.config.projection_dim
         )
-
-        # self.perceiver_resampler = PerceiverResampler(dim=vision_encoder.config.projection_dim, depth=6)
 
     def forward(
         self,
@@ -111,7 +104,7 @@ class Flamingo(nn.Module):
 
     def _process_media(self, vision_x: torch.Tensor, is_vision_encoded: bool = False):
         """
-        Compute media tokens from vision input by passing it through vision encoder, resampling and conditioning language model.
+        Compute media tokens from vision input by passing it through vision encoder and conditioning language model.
         """
         # rearrange code taken from https://github.com/dhansmair/flamingo-mini
         b, N, T = vision_x.shape[:3]
