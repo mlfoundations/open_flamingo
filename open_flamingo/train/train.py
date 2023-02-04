@@ -91,8 +91,8 @@ def main():
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
     )
     # wandb args
-    parser.add_argument("--report_to_wandb",
-                        default=False, action="store_true")
+    parser.add_argument("--report_to_wandb", default=False, action="store_true")
+    parser.add_argument("--save_checkpoints_to_wandb", default=False, action="store_true")
     parser.add_argument(
         "--wandb_project",
         default="open-flamingo",
@@ -113,6 +113,9 @@ def main():
     #   torch.backends.cudnn.deterministic = False
 
     args = parser.parse_args()
+    
+    if args.save_checkpoints_to_wandb and not args.report_to_wandb:
+        raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
     assert (args.train_num_samples_laion //
             args.batch_size) == (args.train_num_samples_pile // args.batch_size)
@@ -245,10 +248,10 @@ def main():
                 "optimizer_state_dict": optimizer.state_dict(),
                 "lr_scheduler_state_dict": lr_scheduler.state_dict(),
             }
+
             print(f"Saving checkpoint to {args.run_name}/checkpoint_{epoch}.pt")
-            torch.save(checkpoint_dict,
-                       f"{args.run_name}/checkpoint_{epoch}.pt")
-            if args.report_to_wandb:
+            torch.save(checkpoint_dict, f"{args.run_name}/checkpoint_{epoch}.pt")
+            if args.report_to_wandb and args.save_checkpoints_to_wandb:
                 wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
 
             if args.delete_previous_checkpoint:
@@ -258,9 +261,9 @@ def main():
     if args.rank == 0:
         if not os.path.exists(args.run_name):
             os.makedirs(args.run_name)
-        torch.save(get_checkpoint(ddp_model),
-                   f"{args.run_name}/final_weights.pt")
-        if args.report_to_wandb:
+
+        torch.save(get_checkpoint(ddp_model), f"{args.run_name}/final_weights.pt")
+        if args.report_to_wandb and args.save_checkpoints_to_wandb:
             wandb.save(f"{args.run_name}/final_weights.pt")
 
 
