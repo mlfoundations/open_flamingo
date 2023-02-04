@@ -1,6 +1,6 @@
 import re
 
-from .cider import Cider
+from .coco_eval import Cider
 from .vqa_eval import VQAEval
 
 

@@ -1,7 +1,6 @@
 from contextlib import suppress
 
 import torch
-import torch.nn as nn
 from einops import rearrange
 from tqdm import tqdm
 
@@ -25,7 +24,7 @@ def get_autocast(precision):
         return suppress
 
 
-def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, optimizer, lr_scheduler, device_id, wandb, use_text_to_image_mapping=False, mapping_matrix_path=None):
+def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, optimizer, lr_scheduler, device_id, wandb):
     num_batches_per_epoch_laion = laion_loader.num_batches
     num_batches_per_epoch_pile = pile_loader.num_batches
 
@@ -33,22 +32,12 @@ def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, op
     # which also = num_batches_per_epoch_pile
     num_batches_per_epoch = num_batches_per_epoch_laion
 
-    assert mapping_matrix_path if use_text_to_image_mapping else True, "mapping_matrix_path must be provided if use_text_to_image_mapping is True"
-
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
 
-    if use_text_to_image_mapping:
-        text_to_image_transform = nn.Linear(768, 768)
-        text_to_image_transform.load_state_dict(
-            torch.load(mapping_matrix_path,
-                       map_location=torch.device("cpu"))
-        )
-        text_to_image_transform.to(device_id)
-        for p in text_to_image_transform.parameters():
-            p.requires_grad = False
-
     media_token_id = tokenizer("<image>", add_special_tokens=False)[
+        "input_ids"][-1]
+    endofchunk_token_id = tokenizer("<|endofchunk|>", add_special_tokens=False)[
         "input_ids"][-1]
 
     model.train()
@@ -96,11 +85,6 @@ def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, op
             vision_features = vision_features / \
                 vision_features.norm(p=2, dim=-1, keepdim=True)
 
-        if use_text_to_image_mapping:
-            with torch.no_grad():
-                vision_features = text_to_image_transform(vision_features)
-
-        # bring back the N demension
         vision_features = rearrange(
             vision_features, '(n h) w -> n h w', n=N, h=I)
         vision_features = vision_features.unsqueeze(2).unsqueeze(2)

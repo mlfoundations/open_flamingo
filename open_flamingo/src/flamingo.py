@@ -32,6 +32,17 @@ class Flamingo(nn.Module):
         labels: torch.Tensor = None,
         is_vision_encoded: bool = False,
     ):
+        """
+        Forward pass of Flamingo.
+
+        Args:
+            vision_x (torch.Tensor): Vision input
+            lang_x (torch.Tensor): Language input
+            attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
+            labels (torch.Tensor, optional): Labels. Defaults to None.
+            is_vision_encoded (bool, optional): Whether vision input is already encoded. Defaults to False. This is useful
+            in training when passing text projections as 'vision' input for PILE input.
+        """
         self._process_media(vision_x, is_vision_encoded)
 
         output = self.lang_encoder(
@@ -105,6 +116,11 @@ class Flamingo(nn.Module):
     def _process_media(self, vision_x: torch.Tensor, is_vision_encoded: bool = False):
         """
         Compute media tokens from vision input by passing it through vision encoder and conditioning language model.
+
+        Args:
+            vision_x (torch.Tensor): Vision input
+            is_vision_encoded (bool, optional): Whether vision input is already encoded. Defaults to False. This is useful
+            in training when passing text projections as 'vision' input.
         """
         # rearrange code taken from https://github.com/dhansmair/flamingo-mini
         b, N, T = vision_x.shape[:3]

@@ -1,5 +1,3 @@
-import logging
-
 from transformers import AutoTokenizer, CLIPProcessor, CLIPVisionModel
 
 from .flamingo import Flamingo
@@ -28,30 +26,31 @@ def create_model_and_transforms(
         Image processor: Pipeline to preprocess input images
         Tokenizer: A tokenizer for the language model
     """
-    logging.info("Initializing Flamingo model...")
-
-    vision_encoder = CLIPVisionModel.from_pretrained(clip_vision_encoder_path, local_files_only=use_local_files)
-    image_processor = CLIPProcessor.from_pretrained(clip_processor_path, local_files_only=use_local_files)
+    vision_encoder = CLIPVisionModel.from_pretrained(
+        clip_vision_encoder_path, local_files_only=use_local_files)
+    image_processor = CLIPProcessor.from_pretrained(
+        clip_processor_path, local_files_only=use_local_files)
 
     for p in vision_encoder.parameters():
         p.requires_grad = False
 
-    text_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=use_local_files)
+    text_tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_path, local_files_only=use_local_files)
     # add Flamingo special tokens to the tokenizer
-    text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
+    text_tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
 
-    lang_encoder = OPTForCausalLMFlamingo.from_pretrained(lang_encoder_path, local_files_only=use_local_files)
+    lang_encoder = OPTForCausalLMFlamingo.from_pretrained(
+        lang_encoder_path, local_files_only=use_local_files)
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
 
     model = Flamingo(
-        vision_encoder, lang_encoder, text_tokenizer.encode("<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1]
+        vision_encoder, lang_encoder, text_tokenizer.encode(
+            "<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1]
     )
 
     for p in lang_encoder.get_decoder().layers.parameters():
         p.requires_grad = False
-
-    for p in model.perceiver_resampler.parameters():
-        p.requires_grad = True
 
     for p in lang_encoder.gated_cross_attn_layers.parameters():
         p.requires_grad = True

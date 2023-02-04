@@ -2,7 +2,6 @@
 
 import copy
 import math
-import pdb
 from collections import defaultdict
 
 import numpy as np
@@ -66,7 +65,7 @@ def precook(s, n=4, out=False):
     counts = defaultdict(int)
     for k in range(1, n + 1):
         for i in range(len(words) - k + 1):
-            ngram = tuple(words[i : i + k])
+            ngram = tuple(words[i: i + k])
             counts[ngram] += 1
     return counts
 
@@ -124,7 +123,8 @@ class CiderScorer(object):
                 self.ctest.append(None)
 
     def size(self):
-        assert len(self.crefs) == len(self.ctest), "refs/test mismatch! %d<>%d" % (len(self.crefs), len(self.ctest))
+        assert len(self.crefs) == len(
+            self.ctest), "refs/test mismatch! %d<>%d" % (len(self.crefs), len(self.ctest))
         return len(self.crefs)
 
     def __iadd__(self, other):
@@ -197,7 +197,8 @@ class CiderScorer(object):
                 # ngram
                 for (ngram, count) in vec_hyp[n].items():
                     # vrama91 : added clipping
-                    val[n] += min(vec_hyp[n][ngram], vec_ref[n][ngram]) * vec_ref[n][ngram]
+                    val[n] += min(vec_hyp[n][ngram], vec_ref[n]
+                                  [ngram]) * vec_ref[n][ngram]
 
                 if (norm_hyp[n] != 0) and (norm_ref[n] != 0):
                     val[n] /= norm_hyp[n] * norm_ref[n]

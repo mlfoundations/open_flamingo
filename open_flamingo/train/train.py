@@ -104,11 +104,6 @@ def main():
         type=str,
     )
 
-    # experimental args
-    parser.add_argument("--use_text_to_image_mapping", action="store_true")
-    parser.add_argument("--mapping_matrix_path", type=str,
-                        default="/mmfs1/gscratch/efml/anasa2/open_flamingo/open_flamingo/train/clip_transformation/model_9.pt")
-
     # if torch.cuda.is_available():
     #   # This enables tf32 on Ampere GPUs which is only 8% slower than
     #   # float16 and almost as accurate as float32
@@ -189,9 +184,11 @@ def main():
 
     optimizer = torch.optim.AdamW(
         get_grouped_params(ddp_model), lr=args.learning_rate)
+    
+    total_training_steps = ((args.train_num_samples)//(args.batch_size * args.world_size)) * args.num_epochs
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
-            optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=len(train_dataset) * args.num_epochs)
+            optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=total_training_steps)
     else:
         lr_scheduler = get_constant_schedule_with_warmup(
             optimizer, num_warmup_steps=args.warmup_steps)
@@ -232,12 +229,10 @@ def main():
             tokenizer=tokenizer,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            train_loader=laion_loader,
-            pile_train_loader=pile_loader,
+            laion_loader=laion_loader,
+            pile_loader=pile_loader,
             device_id=device_id,
             wandb=wandb,
-            use_text_to_image_mapping=args.use_text_to_image_mapping,
-            mapping_matrix_path=args.mapping_matrix_path,
         )
 
         if args.rank == 0:
@@ -250,7 +245,7 @@ def main():
                 "optimizer_state_dict": optimizer.state_dict(),
                 "lr_scheduler_state_dict": lr_scheduler.state_dict(),
             }
-
+            print(f"Saving checkpoint to {args.run_name}/checkpoint_{epoch}.pt")
             torch.save(checkpoint_dict,
                        f"{args.run_name}/checkpoint_{epoch}.pt")
             if args.report_to_wandb:
