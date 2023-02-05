@@ -31,6 +31,8 @@ def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, op
     assert num_batches_per_epoch_laion == num_batches_per_epoch_pile, "Number of batches in laion and pile datasets must be the same"
     # which also = num_batches_per_epoch_pile
     num_batches_per_epoch = num_batches_per_epoch_laion
+    
+    print(f"Number of batches per epoch: {num_batches_per_epoch}")
 
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)

@@ -43,8 +43,7 @@ def main():
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     # Sum of gradient optimization batch size
-    parser.add_argument("--batch_size_pile", type=int, default=128)
-    parser.add_argument("--batch_size_laion", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument(
@@ -53,13 +52,12 @@ def main():
         help="delete previous checkpoint when saving new checkpoint",
     )
     parser.add_argument("--laion_shards", type=str,
-                        default="/data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar")
+                        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar")
     parser.add_argument("--pile_shards", type=str,
-                        default="/mmfs1/gscratch/efml/anasa2/data/pile/shard-{000000..000067}.tar")
+                        default="/fsx/home-anasawadalla/pile/shard-{000000..000169}.tar")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
-    parser.add_argument("--lr_scheduler", default="constant",
-                        type=str, options=["constant", "linear"])
+    parser.add_argument("--lr_scheduler", default="constant", type=str)
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
     parser.add_argument(
@@ -70,8 +68,7 @@ def main():
     )
     # data args
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--train_num_samples_laion", type=int, default=None)
-    parser.add_argument("--train_num_samples_pile", type=int, default=None)
+    parser.add_argument("--train_num_samples", type=int, default=None)
     parser.add_argument("--dataset_resampled", action="store_true")
     # distributed training args
     parser.add_argument(
@@ -114,11 +111,14 @@ def main():
 
     args = parser.parse_args()
     
+    if args.laion_shards.startswith('s3'):
+        args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
+    
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
-    assert (args.train_num_samples_laion //
-            args.batch_size) == (args.train_num_samples_pile // args.batch_size)
+    # assert (args.train_num_samples_laion //
+    #         args.batch_size) == (args.train_num_samples_pile // args.batch_size)
 
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
@@ -153,14 +153,10 @@ def main():
 
     args.shards = args.laion_shards
     args.dataset_type = "image_text"
-    args.num_train_samples = args.train_num_samples_laion
-    args.batch_size = args.batch_size_laion
     laion_dataset = get_data(args, image_processor, tokenizer)
 
     args.shards = args.pile_shards
     args.dataset_type = "pile"
-    args.num_train_samples = args.train_num_samples_pile
-    args.batch_size = args.batch_size_pile
     pile_dataset = get_data(args, image_processor, tokenizer)
 
     def get_grouped_params(model):

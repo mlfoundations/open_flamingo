@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=g40n112
+#SBATCH --partition=g40423
 #SBATCH --job-name=openflamingo
 #SBATCH --nodes 8
 #SBATCH --ntasks-per-node=8
@@ -24,24 +24,21 @@ export COUNT_NODE=`scontrol show hostnames "$SLURM_JOB_NODELIST" | wc -l`
 echo go $COUNT_NODE
 echo $HOSTNAMES
 
-cd /fsx/home-mitchellw/open_flamingo/src
-export PYTHONPATH="$PYTHONPATH:/fsx/home-mitchellw/open_flamingo/src"
-
-EXP_NAME="run1-opt1b-vit-l-laion2b-8node-v1"
+cd /fsx/home-anasawadalla/open_flamingo/open_flamingo/train
+export PYTHONPATH="$PYTHONPATH:/fsx/home-anasawadalla/open_flamingo/open_flamingo/train"
 
 # torchrun --nnodes=1 --nproc_per_node=2 train.py --run_name test-debug --batch_size 50 --shards "pipe:aws s3 cp s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar -" --dataset_resampled --train_num_samples 10000 --precision amp_bfloat16
 
+EXP_NAME="run1-opt1b-vit-l-laion2b-pile-8node"
+
 srun --comment laion --cpu_bind=v --accel-bind=gn python train.py \
-    --shards="pipe:aws s3 cp s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar -" \
     --dataset_resampled \
-    --batch_size=48 \
+    --batch_size=6 \
     --workers=2 \
     --report_to_wandb \
-    --wandb_project open_flamingo \
-    --wandb_entity dogml \
     --run_name ${EXP_NAME} \
-    --train_num_samples 2000000 \
-    --num_epochs 500000
-
-
+    --train_num_samples 750000 \
+    --num_epochs 25 \
+    --lr_scheduler linear \
+    --warmup_steps 1000 \
 

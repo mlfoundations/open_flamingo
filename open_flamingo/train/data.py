@@ -223,11 +223,6 @@ class ResampledShards2(IterableDataset):
             yield dict(url=self.rng.choice(self.urls))
 
 
-def preprocess_image_text(sample, image_processor):
-    image = preprocess_image(sample, image_processor)
-    return image.unsqueeze(1).unsqueeze(1)
-
-
 def preprocess_image(sample, image_processor):
     image = image_processor(images=sample, return_tensors="pt")["pixel_values"]
     # apply random horizontal flip and color jitter
@@ -263,11 +258,11 @@ def preprocess_pile(sample, tokenizer, clip_processor):
         raise ValueError("No sentences in sample")
 
     # replace sentences 70% of the time
-    indices_replaced = torch.zeros(len(sentences), dtype=torch.bool)
-    indices_replaced[torch.rand(len(sentences)) <= 0.7] = True
+    indices_replaced = torch.ones(len(sentences), dtype=torch.bool)
+    # indices_replaced[torch.rand(len(sentences)) <= 0.7] = True
 
-    if indices_replaced.sum() == 0:
-        raise ValueError("No sentences to mask")
+    # if indices_replaced.sum() == 0:
+    #     raise ValueError("No sentences to mask")
 
     # cap the number of sentences to replace to 10
     if indices_replaced.sum() > 10:
@@ -336,9 +331,6 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
 
-    # create two preprocess functions that take in the passed in image_processor and tokenizer
-    # preprocess_image_fn = functools.partial(preprocess_image_text, image_processor=image_processor)
-    # preprocess_text_fn = functools.partial(preprocess_text, tokenizer=tokenizer)
     preprocess_fn = functools.partial(
         preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer)
 
@@ -434,7 +426,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
     # create two preprocess functions that take in the passed in image_processor and tokenizer
     preprocess_image_fn = functools.partial(
-        preprocess_image_text, image_processor=image_processor)
+        preprocess_image, image_processor=image_processor)
     preprocess_text_fn = functools.partial(
         preprocess_text, tokenizer=tokenizer)
 
