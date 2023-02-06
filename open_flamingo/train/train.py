@@ -43,7 +43,8 @@ def main():
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     # Sum of gradient optimization batch size
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--batch_size_pile", type=int, default=128)
+    parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument(
@@ -68,7 +69,11 @@ def main():
     )
     # data args
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--train_num_samples", type=int, default=None)
+    parser.add_argument("--train_num_samples_pile", type=int, default=10000)
+    parser.add_argument("--train_num_samples_laion", type=int, default=10000)
+    parser.add_argument("--loss_multiplier_pile", type=float, default=1.0)
+    parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
+    parser.add_argument("--mask_embedding_gradients", action="store_true", help="Do not train embeddings for tokens in vanilla LM vocab")
     parser.add_argument("--dataset_resampled", action="store_true")
     # distributed training args
     parser.add_argument(
@@ -117,6 +122,9 @@ def main():
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
+    assert (args.train_num_samples_laion //
+            args.batch_size) == (args.train_num_samples_pile // args.batch_size), "number of samples per epoch must be equal for pile and laion"
+
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -148,19 +156,18 @@ def main():
 
     ddp_model = DDP(model, device_ids=[device_id])
 
-    args.shards = args.pile_shards
-    args.dataset_type = "pile"
-    pile_dataset = get_data(args, image_processor, tokenizer)
-    
     args.shards = args.laion_shards
     args.dataset_type = "image_text"
-    args.train_num_samples = args.train_num_samples * 2
-    args.batch_size = args.batch_size * 2
+    args.batch_size = args.batch_size_laion
+    args.train_num_samples = args.train_num_samples_laion
     laion_dataset = get_data(args, image_processor, tokenizer)
-    
-    args.batch_size = args.batch_size // 2
-    args.train_num_samples = args.train_num_samples // 2
 
+    args.shards = args.pile_shards
+    args.dataset_type = "pile"
+    args.batch_size = args.batch_size_pile
+    args.train_num_samples = args.train_num_samples_pile
+    pile_dataset = get_data(args, image_processor, tokenizer)
+    
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
 

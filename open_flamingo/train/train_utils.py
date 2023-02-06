@@ -113,17 +113,18 @@ def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, op
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
         #### BACKWARD PASS ####
-        loss = divided_loss_laion + (divided_loss_pile * 0.2)
+        loss = divided_loss_laion*args.loss_multiplier_laion + divided_loss_pile*args.loss_multiplier_pile
         loss.backward()
-
-        #### MASK EMBEDDING GRADIENTS ####
-        zero_mask = torch.zeros_like(
-            model.module.lang_encoder.get_input_embeddings().weight.grad)
-        zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-        zero_mask[endofchunk_token_id] = torch.ones_like(
-            zero_mask[endofchunk_token_id])
-        model.module.lang_encoder.get_input_embeddings().weight.grad = model.module.lang_encoder.get_input_embeddings(
-        ).weight.grad * zero_mask
+        
+        if args.mask_embedding_gradients:
+            #### MASK EMBEDDING GRADIENTS ####
+            zero_mask = torch.zeros_like(
+                model.module.lang_encoder.get_input_embeddings().weight.grad)
+            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+            zero_mask[endofchunk_token_id] = torch.ones_like(
+                zero_mask[endofchunk_token_id])
+            model.module.lang_encoder.get_input_embeddings().weight.grad = model.module.lang_encoder.get_input_embeddings(
+            ).weight.grad * zero_mask
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
