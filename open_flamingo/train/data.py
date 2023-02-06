@@ -251,18 +251,16 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     sentences = sent_tokenize(sample)
     # remove sentences that are just punctuation
     sentences = [s for s in sentences if not re.match(r"^\W+$", s)]
-    # filter out sentences with less than 3 words
-    sentences = [s for s in sentences if len(s.split()) > 3]
 
     if len(sentences) == 0:
         raise ValueError("No sentences in sample")
 
     # replace sentences 70% of the time
-    indices_replaced = torch.ones(len(sentences), dtype=torch.bool)
-    # indices_replaced[torch.rand(len(sentences)) <= 0.7] = True
+    indices_replaced = torch.zeros(len(sentences), dtype=torch.bool)
+    indices_replaced[torch.rand(len(sentences)) <= 0.7] = True
 
-    # if indices_replaced.sum() == 0:
-    #     raise ValueError("No sentences to mask")
+    if indices_replaced.sum() == 0:
+        raise ValueError("No sentences to mask")
 
     # cap the number of sentences to replace to 10
     if indices_replaced.sum() > 10:
@@ -270,11 +268,6 @@ def preprocess_pile(sample, tokenizer, clip_processor):
         overflowing = indices_replaced.sum() - 10
         indices_replaced[true_indices[torch.randperm(
             len(true_indices))[:overflowing]]] = False
-
-    assert len(indices_replaced) == len(sentences)
-
-    if indices_replaced.sum() == 0:
-        raise ValueError("No sentences to mask")
 
     chosen_sentences = [sentences[i].strip() for i in range(
         len(indices_replaced)) if indices_replaced[i]]

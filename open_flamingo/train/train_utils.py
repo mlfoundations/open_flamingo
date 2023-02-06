@@ -27,10 +27,12 @@ def get_autocast(precision):
 def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, optimizer, lr_scheduler, device_id, wandb):
     num_batches_per_epoch_laion = laion_loader.num_batches
     num_batches_per_epoch_pile = pile_loader.num_batches
+    
+    print(f"Number of batches per epoch in laion: {num_batches_per_epoch_laion}")
+    print(f"Number of batches per epoch in pile: {num_batches_per_epoch_pile}")
 
-    assert num_batches_per_epoch_laion == num_batches_per_epoch_pile, "Number of batches in laion and pile datasets must be the same"
-    # which also = num_batches_per_epoch_pile
-    num_batches_per_epoch = num_batches_per_epoch_laion
+    # assert num_batches_per_epoch_laion == num_batches_per_epoch_pile, "Number of batches in laion and pile datasets must be the same"
+    num_batches_per_epoch = num_batches_per_epoch_pile
     
     print(f"Number of batches per epoch: {num_batches_per_epoch}")
 
@@ -111,8 +113,17 @@ def train_one_epoch(args, model, epoch, laion_loader, pile_loader, tokenizer, op
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
         #### BACKWARD PASS ####
-        loss = divided_loss_laion + divided_loss_pile
+        loss = divided_loss_laion + (divided_loss_pile * 0.2)
         loss.backward()
+
+        #### MASK EMBEDDING GRADIENTS ####
+        zero_mask = torch.zeros_like(
+            model.module.lang_encoder.get_input_embeddings().weight.grad)
+        zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+        zero_mask[endofchunk_token_id] = torch.ones_like(
+            zero_mask[endofchunk_token_id])
+        model.module.lang_encoder.get_input_embeddings().weight.grad = model.module.lang_encoder.get_input_embeddings(
+        ).weight.grad * zero_mask
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 

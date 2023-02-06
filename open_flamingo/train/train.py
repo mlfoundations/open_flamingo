@@ -117,9 +117,6 @@ def main():
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
-    # assert (args.train_num_samples_laion //
-    #         args.batch_size) == (args.train_num_samples_pile // args.batch_size)
-
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -151,13 +148,18 @@ def main():
 
     ddp_model = DDP(model, device_ids=[device_id])
 
-    args.shards = args.laion_shards
-    args.dataset_type = "image_text"
-    laion_dataset = get_data(args, image_processor, tokenizer)
-
     args.shards = args.pile_shards
     args.dataset_type = "pile"
     pile_dataset = get_data(args, image_processor, tokenizer)
+    
+    args.shards = args.laion_shards
+    args.dataset_type = "image_text"
+    args.train_num_samples = args.train_num_samples * 2
+    args.batch_size = args.batch_size * 2
+    laion_dataset = get_data(args, image_processor, tokenizer)
+    
+    args.batch_size = args.batch_size // 2
+    args.train_num_samples = args.train_num_samples // 2
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -185,6 +187,7 @@ def main():
         get_grouped_params(ddp_model), lr=args.learning_rate)
     
     total_training_steps = ((args.train_num_samples)//(args.batch_size * args.world_size)) * args.num_epochs
+    print(f"Total training steps: {total_training_steps}")
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
             optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=total_training_steps)

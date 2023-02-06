@@ -38,7 +38,7 @@ srun --comment laion --cpu_bind=v --accel-bind=gn python train.py \
     --report_to_wandb \
     --run_name ${EXP_NAME} \
     --train_num_samples 750000 \
-    --num_epochs 25 \
-    --lr_scheduler linear \
-    --warmup_steps 1000 \
+    --num_epochs 20 \
+    --lr_scheduler constant \
+    --warmup_steps 2500 \
 
