@@ -59,6 +59,9 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
     parser.add_argument("--lr_scheduler", default="constant", type=str)
+    parser.add_argument("--loss_multiplier_pile", type=float, default=1.0)
+    parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
+    parser.add_argument("--mask_embedding_gradients", action="store_true", help="Do not train embeddings for tokens in vanilla LM vocab")
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
     parser.add_argument(
@@ -71,9 +74,6 @@ def main():
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--train_num_samples_pile", type=int, default=10000)
     parser.add_argument("--train_num_samples_laion", type=int, default=10000)
-    parser.add_argument("--loss_multiplier_pile", type=float, default=1.0)
-    parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
-    parser.add_argument("--mask_embedding_gradients", action="store_true", help="Do not train embeddings for tokens in vanilla LM vocab")
     parser.add_argument("--dataset_resampled", action="store_true")
     # distributed training args
     parser.add_argument(

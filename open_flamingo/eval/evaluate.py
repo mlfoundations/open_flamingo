@@ -57,8 +57,11 @@ def main():
         args.lm_tokenizer_path,
     )
 
-    flamingo.load_state_dict(torch.load(
-        args.checkpoint_path, map_location="cpu"), strict=False)
+    checkpoint = torch.load(args.checkpoint_path, map_location="cpu")["model_state_dict"]
+    # remove the "module." prefix from the keys
+    checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
+
+    flamingo.load_state_dict(checkpoint, strict=False)
 
     print("Evaluating on COCO...")
     for shot in args.shots:
