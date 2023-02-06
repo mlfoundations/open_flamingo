@@ -32,7 +32,7 @@ parser.add_argument("--trial_seeds", nargs="+", default=[
 parser.add_argument("--num_samples", type=int, default=5000)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--num_workers", type=int, default=4)
-parser.add_argument("--device", type=str, default=0)
+parser.add_argument("--device", type=int, default=0)
 
 # Dataset arguments
 parser.add_argument("--coco_image_dir_path", type=str,

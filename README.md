@@ -55,20 +55,43 @@ To train a model, modify the following example command from the open_flamingo/tr
 torchrun --nnodes=1 --nproc_per_node=2
 train.py 
 --run_name flamingo3B
---batch_size 32
---shards /data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar
---dataset_type image_text
+--batch_size_pile 8
+--batch_size_laion 16
+--train_num_samples_pile 10000
+--train_num_samples_laion 20000
+--laion_shards s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar
+--pile_shards /fsx/home-anasawadalla/pile/shard-{000000..000169}.tar
+--mask_embedding_gradients
 --vision_encoder_path openai/clip-vit-large-patch14
 --lm_path facebook/opt-1.3b
---train_num_samples 10000 (Number of samples per epoch)
 --dataset_resampled
---num_epochs 500
+--num_epochs 10
 ```
 
 ## Additional arguments:
 
 ### Evaluation
-To evaluate the model, use the --do_eval flag and specify the path to the data for evaluation using the --eval_coco_data_dir or --eval_okvqa_data_dir arguments.
+Before evaluating the model, you will need to download the COCO and VQAv2 datasets. You will also need to install the coco evaluation package by running the following command:
+```
+pip install pycocoevalcap
+```
+
+To evaluate the model, use script open_flamingo/eval/evaluate.py with the following arguments:
+
+```
+python evaluate.py
+--lm_path facebook/opt-1.3b
+--lm_tokenizer_path facebook/opt-1.3b
+--clip_path openai/clip-vit-large-patch14
+--checkpoint_path path/to/checkpoint.pt
+--device 0
+--coco_image_dir_path path/to/coco/images
+--coco_annotation_path path/to/coco/annotations
+--vqav2_image_dir_path path/to/vqav2/images
+--vqav2_annotation_path path/to/vqav2/annotations
+--vqav2_question_path path/to/vqav2/questions
+``` 
+
 
 ### Wandb
 To log to wandb, use the --report_to wandb flag. The run name will be specified using the --run_name argument. To specify the wandb project, use the --wandb_project argument and use wandb_entity to specify the wandb entity.
