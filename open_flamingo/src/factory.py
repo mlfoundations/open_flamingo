@@ -27,26 +27,33 @@ def create_model_and_transforms(
         Tokenizer: A tokenizer for the language model
     """
     vision_encoder = CLIPModel.from_pretrained(
-        clip_vision_encoder_path, local_files_only=use_local_files)
+        clip_vision_encoder_path, local_files_only=use_local_files
+    )
     image_processor = CLIPProcessor.from_pretrained(
-        clip_processor_path, local_files_only=use_local_files)
+        clip_processor_path, local_files_only=use_local_files
+    )
 
     for p in vision_encoder.parameters():
         p.requires_grad = False
 
     text_tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path, local_files_only=use_local_files)
+        tokenizer_path, local_files_only=use_local_files
+    )
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens(
-        {"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
+        {"additional_special_tokens": ["<|endofchunk|>", "<image>"]}
+    )
 
     lang_encoder = OPTForCausalLMFlamingo.from_pretrained(
-        lang_encoder_path, local_files_only=use_local_files)
+        lang_encoder_path, local_files_only=use_local_files
+    )
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
 
     model = Flamingo(
-        vision_encoder, lang_encoder, text_tokenizer.encode(
-            "<|endofchunk|>")[-1], text_tokenizer.encode("<image>")[-1]
+        vision_encoder,
+        lang_encoder,
+        text_tokenizer.encode("<|endofchunk|>")[-1],
+        text_tokenizer.encode("<image>")[-1],
     )
 
     for p in lang_encoder.get_decoder().layers.parameters():

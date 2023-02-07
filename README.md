@@ -86,10 +86,10 @@ python evaluate.py
 --checkpoint_path path/to/checkpoint.pt
 --device 0
 --coco_image_dir_path path/to/coco/images
---coco_annotation_path path/to/coco/annotations
+--coco_annotation_path path/to/coco/captions_train2017.json
 --vqav2_image_dir_path path/to/vqav2/images
---vqav2_annotation_path path/to/vqav2/annotations
---vqav2_question_path path/to/vqav2/questions
+--vqav2_annotation_path path/to/vqav2/v2_mscoco_train2014_annotations.json
+--vqav2_question_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json
 ``` 
 
 

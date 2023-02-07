@@ -44,7 +44,9 @@ class FlamingoLayer(nn.Module):
         if self.media_locations is None:
             raise ValueError("media_locations must be conditioned before forward pass")
 
-        lang_x = self.gated_cross_attn_layer(lang_x, self.vis_x, media_locations=self.media_locations)
+        lang_x = self.gated_cross_attn_layer(
+            lang_x, self.vis_x, media_locations=self.media_locations
+        )
         lang_x = self.decoder_layer(
             lang_x,
             attention_mask=attention_mask,
@@ -66,7 +68,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         self.gated_cross_attn_layers = None
 
         # the lm_head weight is automatically tied to the embed tokens weight
-        self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(
+            config.word_embed_proj_dim, config.vocab_size, bias=False
+        )
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -84,7 +88,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         """
         self.gated_cross_attn_layers = nn.ModuleList(
             [
-                GatedCrossAttentionBlock(dim=self.config.hidden_size, dim_visual=vis_hidden_size)
+                GatedCrossAttentionBlock(
+                    dim=self.config.hidden_size, dim_visual=vis_hidden_size
+                )
                 for _ in self.model.decoder.layers
             ]
         )
@@ -191,13 +197,23 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         ```"""
 
         if not self.initalized_flamingo:
-            raise ValueError("Flamingo layers are not initialized. Please call `init_flamingo` first.")
+            raise ValueError(
+                "Flamingo layers are not initialized. Please call `init_flamingo` first."
+            )
 
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
         )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        output_hidden_states = (
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
+        )
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         media_locations = input_ids == self.media_token_id
 
@@ -226,7 +242,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
+            loss = loss_fct(
+                shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1)
+            )
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -245,7 +263,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
             layer.condition_vis_x(None)
             layer.condition_media_locations(None)
 
-    def prepare_inputs_for_generation(self, input_ids, past=None, attention_mask=None, use_cache=None, **kwargs):
+    def prepare_inputs_for_generation(
+        self, input_ids, past=None, attention_mask=None, use_cache=None, **kwargs
+    ):
         # if model is used as a decoder in encoder-decoder model, the decoder attention mask is created on the fly
         if attention_mask is None:
             attention_mask = input_ids.new_ones(input_ids.shape)
@@ -264,5 +284,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
     def _reorder_cache(past, beam_idx):
         reordered_past = ()
         for layer_past in past:
-            reordered_past += (tuple(past_state.index_select(0, beam_idx) for past_state in layer_past),)
+            reordered_past += (
+                tuple(
+                    past_state.index_select(0, beam_idx) for past_state in layer_past
+                ),
+            )
         return reordered_past

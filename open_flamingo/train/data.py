@@ -19,8 +19,12 @@ from PIL import Image
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
-from webdataset.tariterators import (base_plus_ext, tar_file_expander,
-                                     url_opener, valid_sample)
+from webdataset.tariterators import (
+    base_plus_ext,
+    tar_file_expander,
+    url_opener,
+    valid_sample,
+)
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 
@@ -62,8 +66,12 @@ def get_dataset_size(shards):
     if os.path.exists(sizes_filename):
         sizes = json.load(open(sizes_filename, "r"))
         total_size = sum(
-            [int(sizes[os.path.basename(shard)]) if os.path.basename(
-                shard) in sizes else 0 for shard in shards_list]
+            [
+                int(sizes[os.path.basename(shard)])
+                if os.path.basename(shard) in sizes
+                else 0
+                for shard in shards_list
+            ]
         )
     elif os.path.exists(len_filename):
         # FIXME this used to be eval(open(...)) but that seemed rather unsafe
@@ -90,7 +98,9 @@ def count_samples(dataloader):
 
 
 def filter_no_caption_or_no_image(sample):
-    return ("txt" in sample) and ("png" in sample or "jpg" in sample or "jpeg" in sample)
+    return ("txt" in sample) and (
+        "png" in sample or "jpg" in sample or "jpeg" in sample
+    )
 
 
 def log_and_continue(exn):
@@ -99,7 +109,9 @@ def log_and_continue(exn):
     return True
 
 
-def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, handler=None):
+def group_by_keys_nothrow(
+    data, keys=base_plus_ext, lcase=True, suffixes=None, handler=None
+):
     """Return function over iterator that groups key, value pairs into samples.
 
     :param keys: function that splits the key into key and extension (base_plus_ext)
@@ -117,11 +129,14 @@ def group_by_keys_nothrow(data, keys=base_plus_ext, lcase=True, suffixes=None, h
         # FIXME webdataset version throws if suffix in current_sample, but we have a potential for
         #  this happening in the current LAION400m dataset if a tar ends with same prefix as the next
         #  begins, rare, but can happen since prefix aren't unique across tar files in that dataset
-        if current_sample is None or prefix != current_sample["__key__"] or suffix in current_sample:
+        if (
+            current_sample is None
+            or prefix != current_sample["__key__"]
+            or suffix in current_sample
+        ):
             if valid_sample(current_sample):
                 yield current_sample
-            current_sample = dict(
-                __key__=prefix, __url__=filesample["__url__"])
+            current_sample = dict(__key__=prefix, __url__=filesample["__url__"])
         if suffixes is None or suffix in suffixes:
             current_sample[suffix] = value
     if valid_sample(current_sample):
@@ -233,10 +248,16 @@ def preprocess_image(sample, image_processor):
 
 def preprocess_text(sample, tokenizer):
     tokenizer.padding_side = "right"
-    sample = [(f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}")
-              for s in sample]
-    text = tokenizer(sample, max_length=32, padding="longest",
-                     truncation="only_first", return_tensors="pt")
+    sample = [
+        (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample
+    ]
+    text = tokenizer(
+        sample,
+        max_length=32,
+        padding="longest",
+        truncation="only_first",
+        return_tensors="pt",
+    )
     return text["input_ids"], text["attention_mask"]
 
 
@@ -266,11 +287,15 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     if indices_replaced.sum() > 10:
         true_indices = torch.nonzero(indices_replaced).squeeze()
         overflowing = indices_replaced.sum() - 10
-        indices_replaced[true_indices[torch.randperm(
-            len(true_indices))[:overflowing]]] = False
+        indices_replaced[
+            true_indices[torch.randperm(len(true_indices))[:overflowing]]
+        ] = False
 
-    chosen_sentences = [sentences[i].strip() for i in range(
-        len(indices_replaced)) if indices_replaced[i]]
+    chosen_sentences = [
+        sentences[i].strip()
+        for i in range(len(indices_replaced))
+        if indices_replaced[i]
+    ]
 
     for i in range(len(sentences)):
         if indices_replaced[i]:
@@ -284,21 +309,31 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt")
+        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+    )
 
     clip_text_tensor = clip_processor.tokenizer(
-        chosen_sentences, max_length=24, truncation=True, padding="max_length", return_tensors="pt")
+        chosen_sentences,
+        max_length=24,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
+    )
 
     # pad to 10 sentences
     if len(chosen_sentences) < 10:
-        zero_padding = torch.zeros(
-            (10-len(chosen_sentences), 24), dtype=torch.long)
+        zero_padding = torch.zeros((10 - len(chosen_sentences), 24), dtype=torch.long)
         clip_text_tensor["input_ids"] = torch.cat(
-            (clip_text_tensor["input_ids"], zero_padding), dim=0)
+            (clip_text_tensor["input_ids"], zero_padding), dim=0
+        )
         clip_text_tensor["attention_mask"] = torch.cat(
-            (clip_text_tensor["attention_mask"], zero_padding), dim=0)
+            (clip_text_tensor["attention_mask"], zero_padding), dim=0
+        )
 
-    return (clip_text_tensor["input_ids"], clip_text_tensor["attention_mask"]), (text_tensor["input_ids"], text_tensor["attention_mask"])
+    return (clip_text_tensor["input_ids"], clip_text_tensor["attention_mask"]), (
+        text_tensor["input_ids"],
+        text_tensor["attention_mask"],
+    )
 
 
 def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
@@ -319,13 +354,15 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     # create a shared epoch store to sync epoch to dataloader worker proc
     shared_epoch = SharedEpoch(epoch=epoch)
     if resampled:
-        pipeline = [ResampledShards2(
-            input_shards, deterministic=True, epoch=shared_epoch)]
+        pipeline = [
+            ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)
+        ]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer)
+        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer
+    )
 
     # at this point we have an iterator over all the shards
     if not resampled:
@@ -358,22 +395,21 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             wds.to_tuple("txt"),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
-
             # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
         ]
     )
 
     dataset = wds.DataPipeline(*pipeline)
     if not resampled:
-        assert num_shards >= args.workers * \
-            args.world_size, "number of shards must be >= total workers"
+        assert (
+            num_shards >= args.workers * args.world_size
+        ), "number of shards must be >= total workers"
     # roll over and repeat a few samples to get same number of full batches on each node
     round_fn = math.floor if floor else math.ceil
     global_batch_size = args.batch_size * args.world_size
     num_batches = round_fn(num_samples / global_batch_size)
     num_workers = max(1, args.workers)
-    num_worker_batches = round_fn(
-        num_batches / num_workers)  # per dataloader worker
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
     num_batches = num_worker_batches * num_workers
     num_samples = num_batches * global_batch_size
     # each worker is iterating over this
@@ -412,16 +448,17 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     # create a shared epoch store to sync epoch to dataloader worker proc
     shared_epoch = SharedEpoch(epoch=epoch)
     if resampled:
-        pipeline = [ResampledShards2(
-            input_shards, deterministic=True, epoch=shared_epoch)]
+        pipeline = [
+            ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)
+        ]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # create two preprocess functions that take in the passed in image_processor and tokenizer
     preprocess_image_fn = functools.partial(
-        preprocess_image, image_processor=image_processor)
-    preprocess_text_fn = functools.partial(
-        preprocess_text, tokenizer=tokenizer)
+        preprocess_image, image_processor=image_processor
+    )
+    preprocess_text_fn = functools.partial(preprocess_text, tokenizer=tokenizer)
 
     # at this point we have an iterator over all the shards
     if not resampled:
@@ -455,22 +492,23 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             wds.decode("pilrgb", handler=log_and_continue),
             wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
-            wds.map_tuple(preprocess_image_fn, preprocess_text_fn,
-                          handler=log_and_continue),
+            wds.map_tuple(
+                preprocess_image_fn, preprocess_text_fn, handler=log_and_continue
+            ),
         ]
     )
 
     dataset = wds.DataPipeline(*pipeline)
     if not resampled:
-        assert num_shards >= args.workers * \
-            args.world_size, "number of shards must be >= total workers"
+        assert (
+            num_shards >= args.workers * args.world_size
+        ), "number of shards must be >= total workers"
     # roll over and repeat a few samples to get same number of full batches on each node
     round_fn = math.floor if floor else math.ceil
     global_batch_size = args.batch_size * args.world_size
     num_batches = round_fn(num_samples / global_batch_size)
     num_workers = max(1, args.workers)
-    num_worker_batches = round_fn(
-        num_batches / num_workers)  # per dataloader worker
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
     num_batches = num_worker_batches * num_workers
     num_samples = num_batches * global_batch_size
     # each worker is iterating over this
@@ -502,4 +540,6 @@ def get_dataset_fn(dataset_type):
 
 def get_data(args, image_processor, tokenizer, epoch=0):
 
-    return get_dataset_fn(args.dataset_type)(args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer)
+    return get_dataset_fn(args.dataset_type)(
+        args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
+    )

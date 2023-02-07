@@ -12,8 +12,10 @@ from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
 from train_utils import get_checkpoint, train_one_epoch
-from transformers import (get_constant_schedule_with_warmup,
-                          get_linear_schedule_with_warmup)
+from transformers import (
+    get_constant_schedule_with_warmup,
+    get_linear_schedule_with_warmup,
+)
 
 from open_flamingo import create_model_and_transforms
 
@@ -26,19 +28,30 @@ def random_seed(seed=42, rank=0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--vision_encoder_path",
-                        default="openai/clip-vit-large-patch14", type=str)
     parser.add_argument(
-        "--clip_processor_path", default=None, type=str, help="path to clip processor defaults to vision_encoder_path"
+        "--vision_encoder_path", default="openai/clip-vit-large-patch14", type=str
+    )
+    parser.add_argument(
+        "--clip_processor_path",
+        default=None,
+        type=str,
+        help="path to clip processor defaults to vision_encoder_path",
     )
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
 
     # From previous experiments other opt tokenizers may have a bug
     # so we default to this one in any case they should all be the same.
-    parser.add_argument("--tokenizer_path", default="facebook/opt-30b",
-                        type=str, help="path to tokenizer")
     parser.add_argument(
-        "--run_name", type=str, default="large model test", help="used to name saving directory and wandb run"
+        "--tokenizer_path",
+        default="facebook/opt-30b",
+        type=str,
+        help="path to tokenizer",
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default="large model test",
+        help="used to name saving directory and wandb run",
     )
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
@@ -52,16 +65,26 @@ def main():
         action="store_true",
         help="delete previous checkpoint when saving new checkpoint",
     )
-    parser.add_argument("--laion_shards", type=str,
-                        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar")
-    parser.add_argument("--pile_shards", type=str,
-                        default="/fsx/home-anasawadalla/pile/shard-{000000..000169}.tar")
+    parser.add_argument(
+        "--laion_shards",
+        type=str,
+        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
+    )
+    parser.add_argument(
+        "--pile_shards",
+        type=str,
+        default="/fsx/home-anasawadalla/pile/shard-{000000..000169}.tar",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
     parser.add_argument("--lr_scheduler", default="constant", type=str)
     parser.add_argument("--loss_multiplier_pile", type=float, default=1.0)
     parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
-    parser.add_argument("--mask_embedding_gradients", action="store_true", help="Do not train embeddings for tokens in vanilla LM vocab")
+    parser.add_argument(
+        "--mask_embedding_gradients",
+        action="store_true",
+        help="Do not train embeddings for tokens in vanilla LM vocab",
+    )
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
     parser.add_argument(
@@ -82,10 +105,15 @@ def main():
         type=str,
         help="url used to set up distributed training",
     )
-    parser.add_argument("--dist-backend", default="nccl",
-                        type=str, help="distributed backend")
-    parser.add_argument("--horovod", default=False, action="store_true",
-                        help="Use horovod for distributed training.")
+    parser.add_argument(
+        "--dist-backend", default="nccl", type=str, help="distributed backend"
+    )
+    parser.add_argument(
+        "--horovod",
+        default=False,
+        action="store_true",
+        help="Use horovod for distributed training.",
+    )
     parser.add_argument(
         "--no-set-device-rank",
         default=False,
@@ -94,7 +122,9 @@ def main():
     )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
-    parser.add_argument("--save_checkpoints_to_wandb", default=False, action="store_true")
+    parser.add_argument(
+        "--save_checkpoints_to_wandb", default=False, action="store_true"
+    )
     parser.add_argument(
         "--wandb_project",
         default="open-flamingo",
@@ -115,15 +145,16 @@ def main():
     #   torch.backends.cudnn.deterministic = False
 
     args = parser.parse_args()
-    
-    if args.laion_shards.startswith('s3'):
+
+    if args.laion_shards.startswith("s3"):
         args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
-    
+
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
-    assert (args.train_num_samples_laion //
-            args.batch_size) == (args.train_num_samples_pile // args.batch_size), "number of samples per epoch must be equal for pile and laion"
+    assert (args.train_num_samples_laion // args.batch_size) == (
+        args.train_num_samples_pile // args.batch_size
+    ), "number of samples per epoch must be equal for pile and laion"
 
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
@@ -137,7 +168,9 @@ def main():
 
     model, image_processor, tokenizer = create_model_and_transforms(
         args.vision_encoder_path,
-        args.clip_processor_path if args.clip_processor_path else args.vision_encoder_path,
+        args.clip_processor_path
+        if args.clip_processor_path
+        else args.vision_encoder_path,
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
@@ -148,8 +181,12 @@ def main():
     print(f"Start running training on rank {args.rank}.")
 
     if args.rank == 0 and args.report_to_wandb:
-        wandb.init(project=args.wandb_project, entity=args.wandb_entity,
-                   name=args.run_name, config=vars(args))
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.run_name,
+            config=vars(args),
+        )
 
     device_id = args.rank % torch.cuda.device_count()
     model = model.to(device_id)
@@ -167,7 +204,7 @@ def main():
     args.batch_size = args.batch_size_pile
     args.train_num_samples = args.train_num_samples_pile
     pile_dataset = get_data(args, image_processor, tokenizer)
-    
+
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
 
@@ -190,17 +227,22 @@ def main():
             {"params": params_without_wd, "weight_decay": 0.0},
         ]
 
-    optimizer = torch.optim.AdamW(
-        get_grouped_params(ddp_model), lr=args.learning_rate)
-    
-    total_training_steps = ((args.train_num_samples)//(args.batch_size * args.world_size)) * args.num_epochs
+    optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
+
+    total_training_steps = (
+        (args.train_num_samples) // (args.batch_size * args.world_size)
+    ) * args.num_epochs
     print(f"Total training steps: {total_training_steps}")
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
-            optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=total_training_steps)
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=total_training_steps,
+        )
     else:
         lr_scheduler = get_constant_schedule_with_warmup(
-            optimizer, num_warmup_steps=args.warmup_steps)
+            optimizer, num_warmup_steps=args.warmup_steps
+        )
 
     # check if a checkpoint exists for this run
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
@@ -209,15 +251,16 @@ def main():
             print(f"Found no checkpoints for run {args.run_name}.")
         else:
             args.resume_from_checkpoint = sorted(
-                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0]))[-1]
+                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
+            )[-1]
             print(
-                f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}.")
+                f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
+            )
 
     resume_from_epoch = 0
     if args.resume_from_checkpoint is not None:
         print(f"Loading checkpoint from {args.resume_from_checkpoint}")
-        checkpoint = torch.load(
-            args.resume_from_checkpoint, map_location="cpu")
+        checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
         ddp_model.load_state_dict(checkpoint["model_state_dict"], False)
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])

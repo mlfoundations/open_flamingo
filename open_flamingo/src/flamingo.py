@@ -7,7 +7,11 @@ from .flamingo_lm import OPTForCausalLMFlamingo
 
 class Flamingo(nn.Module):
     def __init__(
-        self, vision_encoder: nn.Module, lang_encoder: OPTForCausalLMFlamingo, eoc_token_id: int, media_token_id: int
+        self,
+        vision_encoder: nn.Module,
+        lang_encoder: OPTForCausalLMFlamingo,
+        eoc_token_id: int,
+        media_token_id: int,
     ):
         """
         Args:
@@ -21,7 +25,8 @@ class Flamingo(nn.Module):
         self.vision_encoder = vision_encoder
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
-            media_token_id=media_token_id, vis_hidden_size=self.vision_encoder.config.projection_dim
+            media_token_id=media_token_id,
+            vis_hidden_size=self.vision_encoder.config.projection_dim,
         )
 
     def forward(
@@ -45,8 +50,7 @@ class Flamingo(nn.Module):
         """
         self._process_media(vision_x, is_vision_encoded)
 
-        output = self.lang_encoder(
-            lang_x, attention_mask=attention_mask, labels=labels)
+        output = self.lang_encoder(lang_x, attention_mask=attention_mask, labels=labels)
 
         self.lang_encoder.clear_conditioned_layers()
         return output
@@ -55,9 +59,9 @@ class Flamingo(nn.Module):
         self,
         vision_x: torch.Tensor,
         lang_x: torch.Tensor,
-        max_length: int,
         attention_mask: torch.Tensor = None,
         num_beams=1,
+        max_new_tokens=None,
         temperature=1.0,
         top_k=0,
         top_p=1.0,
@@ -74,9 +78,10 @@ class Flamingo(nn.Module):
         Args:
             vision_x (torch.Tensor): Vision input
             lang_x (torch.Tensor): Language input
-            max_length (int): Maximum length of the output
+            max_length (int, optional): Maximum length of the output. Defaults to None.
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             num_beams (int, optional): Number of beams. Defaults to 1.
+            max_new_tokens (int, optional): Maximum new tokens. Defaults to None.
             temperature (float, optional): Temperature. Defaults to 1.0.
             top_k (int, optional): Top k. Defaults to 0.
             top_p (float, optional): Top p. Defaults to 1.0.
@@ -96,9 +101,9 @@ class Flamingo(nn.Module):
         output = self.lang_encoder.generate(
             lang_x,
             attention_mask=attention_mask,
-            max_length=max_length,
             eos_token_id=self.eoc_token_id,
             num_beams=num_beams,
+            max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_k=top_k,
             top_p=top_p,

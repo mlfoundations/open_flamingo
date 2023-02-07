@@ -12,7 +12,11 @@ model, image_processor, tokenizer = create_model_and_transforms(
 
 tokenizer.padding_side = "left"  # we want to pad on the left side for generation
 
-image = Image.open(requests.get("http://images.cocodataset.org/val2017/000000039769.jpg", stream=True).raw)
+image = Image.open(
+    requests.get(
+        "http://images.cocodataset.org/val2017/000000039769.jpg", stream=True
+    ).raw
+)
 vis_x = image_processor(images=[image, image], return_tensors="pt")["pixel_values"]
 
 # add frame and num_images demensions
@@ -27,5 +31,10 @@ lang_x = tokenizer(
 )
 
 generation = tokenizer.batch_decode(
-    model.generate(vis_x, lang_x["input_ids"], attention_mask=lang_x["attention_mask"], max_length=20)
+    model.generate(
+        vis_x,
+        lang_x["input_ids"],
+        attention_mask=lang_x["attention_mask"],
+        max_length=20,
+    )
 )
