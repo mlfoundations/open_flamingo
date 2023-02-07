@@ -35,14 +35,17 @@ EXP_NAME="run1-opt1b-vit-l-laion2b-2node-v4"
 srun --comment laion --cpu_bind=v --accel-bind=gn python train.py \
     --shards="pipe:aws s3 cp s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar -" \
     --dataset_resampled \
-    --batch_size=48 \
+    --batch_size_pile=6 \
+    --batch_size_laion=12 \
+    --train_num_samples_pile 1000000 \
+    --train_num_samples_laion 2000000 \
+    --loss_multiplier_laion 0.2 \
     --workers=2 \
     --report_to_wandb \
     --wandb_project open_flamingo \
     --wandb_entity dogml \
     --run_name ${EXP_NAME} \
-    --train_num_samples 1000000 \
-    --num_epochs 500000
+    --num_epochs 15
 
 
 
