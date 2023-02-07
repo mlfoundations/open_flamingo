@@ -152,8 +152,8 @@ def main():
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
-    assert (args.train_num_samples_laion // args.batch_size) == (
-        args.train_num_samples_pile // args.batch_size
+    assert (args.train_num_samples_laion // args.batch_size_laion) == (
+        args.train_num_samples_pile // args.batch_size_pile
     ), "number of samples per epoch must be equal for pile and laion"
 
     if args.offline:
