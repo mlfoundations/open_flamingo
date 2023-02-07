@@ -11,7 +11,9 @@ from open_flamingo import create_model_and_transforms
 
 @st.experimental_singleton
 def get_model():
-    checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo3B-v1", "checkpoint_v2.pt")
+    checkpoint_path = hf_hub_download(
+        "openflamingo/OpenFlamingo3B-v1", "checkpoint_v2.pt"
+    )
 
     model, image_processor, tokenizer = create_model_and_transforms(
         clip_vision_encoder_path="openai/clip-vit-large-patch14",
@@ -21,7 +23,9 @@ def get_model():
     )
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     checkpoint["model_state_dict"] = {
-        k.replace("gated_cross_attn_layers.", "lang_encoder.gated_cross_attn_layers."): v
+        k.replace(
+            "gated_cross_attn_layers.", "lang_encoder.gated_cross_attn_layers."
+        ): v
         for k, v in checkpoint["model_state_dict"].items()
     }
 
@@ -41,11 +45,17 @@ st.write(
 task = st.selectbox("Select a task", ["Captioning 🗯️", "Visual Question Answering 🙋"])
 
 if task == "Captioning 🗯️":
-    st.write("This is a captioning task. You can upload an image and the model will generate a caption for it.")
+    st.write(
+        "This is a captioning task. You can upload an image and the model will generate a caption for it."
+    )
     if st.button("Try a random image", type="primary"):
-        st.session_state["image"] = Image.open(requests.get("https://source.unsplash.com/random", stream=True).raw)
+        st.session_state["image"] = Image.open(
+            requests.get("https://source.unsplash.com/random", stream=True).raw
+        )
     elif st.session_state.get("image") is None:
-        st.session_state["image"] = st.file_uploader("Or upload an image", type=["jpg", "png"])
+        st.session_state["image"] = st.file_uploader(
+            "Or upload an image", type=["jpg", "png"]
+        )
 
     if st.session_state["image"]:
         st.image(st.session_state["image"], width=300)
@@ -54,22 +64,32 @@ if task == "Captioning 🗯️":
         with st.spinner("Generating caption..."):
             input_ids = tokenizer("<image>", return_tensors="pt")["input_ids"]
             output = model.generate(
-                image_processor(images=[st.session_state["image"]], return_tensors="pt")["pixel_values"]
+                image_processor(
+                    images=[st.session_state["image"]], return_tensors="pt"
+                )["pixel_values"]
                 .unsqueeze(1)
                 .unsqueeze(1),
                 input_ids,
                 max_length=25,
             )
-            st.success(tokenizer.decode(output[0][len(input_ids[0]) :], skip_special_tokens=True))
+            st.success(
+                tokenizer.decode(
+                    output[0][len(input_ids[0]) :], skip_special_tokens=True
+                )
+            )
 
 if task == "Visual Question Answering 🙋":
     st.write(
         "This is a visual question answering task. You can upload an image and the model will generate an answer for it."
     )
     if st.button("Try a random image", type="primary"):
-        st.session_state["image"] = Image.open(requests.get("https://source.unsplash.com/random", stream=True).raw)
+        st.session_state["image"] = Image.open(
+            requests.get("https://source.unsplash.com/random", stream=True).raw
+        )
     elif st.session_state.get("image") is None:
-        st.session_state["image"] = st.file_uploader("Or upload an image", type=["jpg", "png"])
+        st.session_state["image"] = st.file_uploader(
+            "Or upload an image", type=["jpg", "png"]
+        )
 
     if st.session_state["image"]:
         st.image(st.session_state["image"], width=300)
@@ -78,15 +98,23 @@ if task == "Visual Question Answering 🙋":
 
     if st.session_state["image"] and st.button("Generate answer", type="primary"):
         with st.spinner("Generating answer..."):
-            input_ids = tokenizer("<image>" + "question:" + question + " answer:", return_tensors="pt")["input_ids"]
+            input_ids = tokenizer(
+                "<image>" + "question:" + question + " answer:", return_tensors="pt"
+            )["input_ids"]
             output = model.generate(
-                image_processor(images=[st.session_state["image"]], return_tensors="pt")["pixel_values"]
+                image_processor(
+                    images=[st.session_state["image"]], return_tensors="pt"
+                )["pixel_values"]
                 .unsqueeze(1)
                 .unsqueeze(1),
                 input_ids,
                 max_length=100,
             )
-            st.success(tokenizer.decode(output[0][len(input_ids[0]) :], skip_special_tokens=True))
+            st.success(
+                tokenizer.decode(
+                    output[0][len(input_ids[0]) :], skip_special_tokens=True
+                )
+            )
 if st.button("Reset"):
     for key in st.session_state:
         del st.session_state[key]

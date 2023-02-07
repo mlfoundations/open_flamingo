@@ -16,7 +16,10 @@ def exists(val):
 def FeedForward(dim, mult=4):
     inner_dim = int(dim * mult)
     return nn.Sequential(
-        nn.LayerNorm(dim), nn.Linear(dim, inner_dim, bias=False), nn.GELU(), nn.Linear(inner_dim, dim, bias=False)
+        nn.LayerNorm(dim),
+        nn.Linear(dim, inner_dim, bias=False),
+        nn.GELU(),
+        nn.Linear(inner_dim, dim, bias=False),
     )
 
 
@@ -70,7 +73,17 @@ class PerceiverAttention(nn.Module):
 
 
 class PerceiverResampler(nn.Module):
-    def __init__(self, *, dim, depth, dim_head=64, heads=8, num_latents=64, num_media_embeds=4, ff_mult=4):
+    def __init__(
+        self,
+        *,
+        dim,
+        depth,
+        dim_head=64,
+        heads=8,
+        num_latents=64,
+        num_media_embeds=4,
+        ff_mult=4
+    ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
         self.media_pos_emb = nn.Parameter(torch.randn(num_media_embeds, 1, dim))
@@ -79,7 +92,10 @@ class PerceiverResampler(nn.Module):
         for _ in range(depth):
             self.layers.append(
                 nn.ModuleList(
-                    [PerceiverAttention(dim=dim, dim_head=dim_head, heads=heads), FeedForward(dim=dim, mult=ff_mult)]
+                    [
+                        PerceiverAttention(dim=dim, dim_head=dim_head, heads=heads),
+                        FeedForward(dim=dim, mult=ff_mult),
+                    ]
                 )
             )
 
@@ -105,7 +121,9 @@ class PerceiverResampler(nn.Module):
 
 
 class MaskedCrossAttention(nn.Module):
-    def __init__(self, *, dim, dim_visual, dim_head=64, heads=8, only_attend_immediate_media=True):
+    def __init__(
+        self, *, dim, dim_visual, dim_head=64, heads=8, only_attend_immediate_media=True
+    ):
         super().__init__()
         self.scale = dim_head**-0.5
         self.heads = heads
@@ -147,7 +165,8 @@ class MaskedCrossAttention(nn.Module):
             mask_op = torch.eq if self.only_attend_immediate_media else torch.ge
 
             text_to_media_mask = mask_op(
-                rearrange(text_time, "b i -> b 1 i 1"), repeat(media_time, "j -> 1 1 1 (j m)", m=m)
+                rearrange(text_time, "b i -> b 1 i 1"),
+                repeat(media_time, "j -> 1 1 1 (j m)", m=m),
             )
             sim = sim.masked_fill(~text_to_media_mask, -torch.finfo(sim.dtype).max)
 
@@ -157,7 +176,9 @@ class MaskedCrossAttention(nn.Module):
         if exists(media_locations) and self.only_attend_immediate_media:
             # any text without a preceding media needs to have attention zeroed out
             text_without_media_mask = text_time == 0
-            text_without_media_mask = rearrange(text_without_media_mask, "b i -> b 1 i 1")
+            text_without_media_mask = rearrange(
+                text_without_media_mask, "b i -> b 1 i 1"
+            )
             attn = attn.masked_fill(text_without_media_mask, 0.0)
 
         out = einsum("... i j, ... j d -> ... i d", attn, v)
@@ -166,7 +187,16 @@ class MaskedCrossAttention(nn.Module):
 
 
 class GatedCrossAttentionBlock(nn.Module):
-    def __init__(self, *, dim, dim_visual, dim_head=64, heads=8, ff_mult=4, only_attend_immediate_media=True):
+    def __init__(
+        self,
+        *,
+        dim,
+        dim_visual,
+        dim_head=64,
+        heads=8,
+        ff_mult=4,
+        only_attend_immediate_media=True
+    ):
         super().__init__()
         self.attn = MaskedCrossAttention(
             dim=dim,
@@ -188,7 +218,10 @@ class GatedCrossAttentionBlock(nn.Module):
         # boolean tensor indicating positions of media - (batch, sequence)
         media_locations=None,
     ):
-        x = self.attn(x, media, media_locations=media_locations) * self.attn_gate.tanh() + x
+        x = (
+            self.attn(x, media, media_locations=media_locations) * self.attn_gate.tanh()
+            + x
+        )
         x = self.ff(x) * self.ff_gate.tanh() + x
 
         return x
