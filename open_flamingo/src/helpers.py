@@ -75,14 +75,14 @@ class PerceiverResampler(nn.Module):
         dim_head=64,
         heads=8,
         num_latents=64,
-        max_num_media=4,
+        max_num_media=None,
         max_num_frames=None,
         ff_mult=4
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
         self.frame_embs = nn.Parameter(torch.randn(max_num_frames, dim)) if not exists(max_num_frames) else None
-        self.media_time_embs = nn.Parameter(torch.randn(max_num_media, 1, dim))
+        self.media_time_embs = nn.Parameter(torch.randn(max_num_media, 1, dim)) if not exists (max_num_media) else None
 
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -112,7 +112,8 @@ class PerceiverResampler(nn.Module):
             frame_embs = repeat(self.frame_embs[:F], 'F d -> b T F v d', b=b, T=T, v=v)
             x = x + frame_embs
         x = rearrange(x, 'b T F v d -> b T (F v) d') # flatten the frame and spatial dimensions
-        x = x + self.media_time_embs[:T]
+        if exists(self.media_time_embs):
+            x = x + self.media_time_embs[:T]
 
         # blocks
         latents = repeat(self.latents, "n d -> b T n d", b=b, T=T)
