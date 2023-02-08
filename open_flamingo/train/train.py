@@ -4,10 +4,16 @@ import argparse
 import glob
 import os
 import random
-
+import re
 import numpy as np
 import torch
 import wandb
+
+from functools import partial
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -135,7 +141,35 @@ def main():
         default="anas-awadalla",
         type=str,
     )
-
+    parser.add_argument(
+        "--fsdp",
+        default=False,
+        action="store_true"
+    )
+    parser.add_argument(
+        "--fsdp-layers-to-wrap",
+        default=(
+            # Match all sort of blocks
+            '.*Block.*',
+            'Bottleneck',
+            # CLIP
+            'VisionTransformer', 
+            'Transformer', 
+            # CLIP ModifiedResNet
+            'ModifiedResNet',
+            # HF Text
+            'HFTextEncoder',
+            # TIMM visual
+            'TimmModel',
+        ),
+        type=str,
+        nargs='+'
+    )
+    parser.add_argument(
+        "--fsdp-cpu-offload",
+        default=False,
+        action="store_true",
+    )
     # if torch.cuda.is_available():
     #   # This enables tf32 on Ampere GPUs which is only 8% slower than
     #   # float16 and almost as accurate as float32
@@ -191,7 +225,34 @@ def main():
     device_id = args.rank % torch.cuda.device_count()
     model = model.to(device_id)
 
-    ddp_model = DDP(model, device_ids=[device_id])
+    if args.fsdp:
+        print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+        print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+        mp = MixedPrecision(
+            reduce_dtype=torch.bfloat16,
+        )
+        layers = set()
+        for module in model.modules():
+            name = module.__class__.__name__
+            for layer in args.fsdp_layers_to_wrap:
+                if re.match(layer, name):
+                    layers.add(module.__class__)
+        print("Wrapped layers", layers)
+        wrapper_kwargs = dict(
+            mixed_precision=mp,
+            cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
+            auto_wrap_policy=partial(
+                transformer_auto_wrap_policy,
+                transformer_layer_cls=layers,
+            ),
+            device_id=device_id,
+        )
+        model = FSDP(model, **wrapper_kwargs)
+        print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+        print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+
+    else:
+        ddp_model = DDP(model, device_ids=[device_id])
 
     args.shards = args.laion_shards
     args.dataset_type = "image_text"

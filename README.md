@@ -52,22 +52,19 @@ Currently, we only support OPT models on the language side and CLIP on the visio
 
 To train a model, modify the following example command from the open_flamingo/train directory:
 ```
-torchrun --nnodes=1 --nproc_per_node=2
-train.py 
---run_name flamingo3B
---batch_size_pile 8
---batch_size_laion 16
---train_num_samples_pile 10000
---train_num_samples_laion 20000
---laion_shards s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar
---pile_shards /fsx/home-anasawadalla/pile/shard-{000000..000169}.tar
---mask_embedding_gradients
---vision_encoder_path openai/clip-vit-large-patch14
---lm_path facebook/opt-1.3b
+torchrun --nnodes=1 --nproc_per_node=2 train.py \
+--run_name flamingo3B \
+--batch_size_pile 6 \
+--batch_size_laion 12 \
+--train_num_samples_pile 10000 \
+--train_num_samples_laion 20000 \
+--laion_shards "pipe:aws s3 cp s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar -" \
+--pile_shards "/fsx/home-anasawadalla/pile/shard-{000000..000169}.tar" \
+--mask_embedding_gradients \
+--vision_encoder_path openai/clip-vit-large-patch14 \
+--lm_path facebook/opt-1.3b \
 --dataset_resampled
---num_epochs 10
 ```
-
 ## Additional arguments:
 
 ### Evaluation
