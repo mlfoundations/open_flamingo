@@ -14,6 +14,8 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload,
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 
+from torch.distributed.fsdp import flat_param
+
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -149,18 +151,10 @@ def main():
     parser.add_argument(
         "--fsdp-layers-to-wrap",
         default=(
-            # Match all sort of blocks
-            '.*Block.*',
-            'Bottleneck',
-            # CLIP
-            'VisionTransformer', 
-            'Transformer', 
-            # CLIP ModifiedResNet
-            'ModifiedResNet',
-            # HF Text
-            'HFTextEncoder',
-            # TIMM visual
-            'TimmModel',
+            'CLIPModel',
+            'OPTDecoderLayer',
+            'FlamingoLayer',
+            'AutoTokenizer',
         ),
         type=str,
         nargs='+'
@@ -224,8 +218,9 @@ def main():
 
     device_id = args.rank % torch.cuda.device_count()
     model = model.to(device_id)
-
+    
     if args.fsdp:
+        model = model.cpu()
         print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
         print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
         mp = MixedPrecision(
@@ -237,6 +232,7 @@ def main():
             for layer in args.fsdp_layers_to_wrap:
                 if re.match(layer, name):
                     layers.add(module.__class__)
+        print(layers)
         print("Wrapped layers", layers)
         wrapper_kwargs = dict(
             mixed_precision=mp,
@@ -246,8 +242,9 @@ def main():
                 transformer_layer_cls=layers,
             ),
             device_id=device_id,
+            flatten_parameters=False,
         )
-        model = FSDP(model, **wrapper_kwargs)
+        ddp_model = FSDP(model, **wrapper_kwargs)
         print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
         print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
 
@@ -268,7 +265,8 @@ def main():
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
-
+        # TODO check if this works with FSDP
+        # FIXME fix if this does not work with FSDP
         def apply_decay(x):
             return (
                 "gated_cross_attn_layer" in x
@@ -289,6 +287,14 @@ def main():
         ]
 
     optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
+
+    # TODO debug this fsdp issue.
+    # if args.fsdp:
+    #     if args.rank == 0:
+    #         import pdb; pdb.set_trace()
+    #     torch.distributed.barrier()
+    #     ddp_model.module.vision_encoder.vision_model.post_layernorm.weight
+    #     ddp_model.module.lang_encoder.lm_head.weight
 
     total_training_steps = (
         (args.train_num_samples) // (args.batch_size * args.world_size)

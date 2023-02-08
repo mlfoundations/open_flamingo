@@ -73,6 +73,8 @@ nltk.download('punkt')
 ```
 in a python shell before running training.
 
+(MW: I also had to run `export PYTHONPATH=$PWD:/fsx/home-mitchellw/open_flamingo`)
+
 ## Additional arguments:
 
 ### Evaluation
