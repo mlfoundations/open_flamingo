@@ -21,7 +21,6 @@ class Flamingo(nn.Module):
                 We assume a .last_hidden_state attribute from the encoder output
             lang_encoder (OPTForCausalLMFlamingo): An instance of OPTForCausalLMFlamingo
             use_perceiver (bool, optional): Whether to use PerceiverResampler.
-                If False, vision_encoder is expected to output 1 x d vectors for each image.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id

@@ -1,5 +1,5 @@
 """
-Based on https://github.com/lucidrains/flamingo-pytorch
+Taken from https://github.com/lucidrains/flamingo-pytorch
 """
 
 import torch
