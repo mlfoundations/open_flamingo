@@ -3,6 +3,7 @@ from einops import rearrange
 from torch import nn
 
 from .flamingo_lm import OPTForCausalLMFlamingo
+from .helpers import PerceiverResampler
 
 
 class Flamingo(nn.Module):
@@ -12,21 +13,28 @@ class Flamingo(nn.Module):
         lang_encoder: OPTForCausalLMFlamingo,
         eoc_token_id: int,
         media_token_id: int,
+        use_perceiver: bool = True,
     ):
         """
         Args:
-            vision_encoder (nn.Module): Any vision encoder
+            vision_encoder (nn.Module): HF vision encoder 
+                We assume a .last_hidden_state attribute from the encoder output
             lang_encoder (OPTForCausalLMFlamingo): An instance of OPTForCausalLMFlamingo
+            use_perceiver (bool, optional): Whether to use PerceiverResampler.
+                If False, vision_encoder is expected to output 1 x d vectors for each image.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
 
         self.vision_encoder = vision_encoder
+        self.perceiver = PerceiverResampler(
+            dim=self.vision_encoder.config.hidden_size,
+        ) if use_perceiver else None
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
-            vis_hidden_size=self.vision_encoder.config.projection_dim,
+            vis_hidden_size=self.vision_encoder.config.hidden_size,
         )
 
     def forward(
@@ -42,7 +50,11 @@ class Flamingo(nn.Module):
 
         Args:
             vision_x (torch.Tensor): Vision input
+                shape (B, T_img, F, C, H, W)
+                images in the same chunk are collated along T_img, and frames are collated along F
+                currently only F=1 is supported (single-frame videos)
             lang_x (torch.Tensor): Language input
+                shape (B, T_txt)
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             labels (torch.Tensor, optional): Labels. Defaults to None.
             is_vision_encoded (bool, optional): Whether vision input is already encoded. Defaults to False. This is useful
@@ -77,7 +89,11 @@ class Flamingo(nn.Module):
 
         Args:
             vision_x (torch.Tensor): Vision input
+                shape (B, T_img, F, C, H, W)
+                images in the same chunk are collated along T_img, and frames are collated along F
+                currently only F=1 is supported (single-frame videos)
             lang_x (torch.Tensor): Language input
+                shape (B, T_txt)
             max_length (int, optional): Maximum length of the output. Defaults to None.
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             num_beams (int, optional): Number of beams. Defaults to 1.
@@ -128,18 +144,19 @@ class Flamingo(nn.Module):
             in training when passing text projections as 'vision' input.
         """
         # rearrange code taken from https://github.com/dhansmair/flamingo-mini
-        b, N, T = vision_x.shape[:3]
+        b, T, F = vision_x.shape[:3]
+        assert F == 1, "Only single frame supported"
 
-        assert T == 1, "Only single frame supported"
         if not is_vision_encoded:
-            vision_x = rearrange(vision_x, "b N T c h w -> (b N T) c h w")
+            vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
             with torch.no_grad():
-                vision_x = self.vision_encoder.get_image_features(vision_x)
+                vision_x = self.vision_encoder(vision_x).last_hidden_state 
                 vision_x = vision_x / vision_x.norm(p=2, dim=-1, keepdim=True)
-                vision_x = vision_x.unsqueeze(1)
-            vision_x = rearrange(vision_x, "(b N 1) v d -> b N v d", b=b, N=N)
-        else:
-            vision_x = rearrange(vision_x, "b N 1 v d -> b N v d", b=b, N=N)
+            vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
+        
+        if self.perceiver is not None:
+            vision_x = self.perceiver(vision_x)
+        assert vision_x.ndim == 4, "vision_x should be of shape (b, T_img, n, D)"
 
         for layer in self.lang_encoder.get_decoder().layers:
             layer.condition_vis_x(vision_x)
