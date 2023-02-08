@@ -68,6 +68,13 @@ train.py
 --num_epochs 10
 ```
 
+If this is your first time running this command you will need to run:
+```
+import nltk
+nltk.download('punkt')
+```
+in a python shell before running training.
+
 ## Additional arguments:
 
 ### Evaluation
