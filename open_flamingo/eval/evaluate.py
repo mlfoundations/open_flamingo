@@ -1,28 +1,29 @@
 import argparse
-from collections import defaultdict
 import json
 import os
 import uuid
-from tqdm import tqdm
-import more_itertools
+from collections import defaultdict
 
+import more_itertools
 import numpy as np
 import torch
+from coco_metric import compute_cider, postprocess_captioning_generation
+from eval_datasets import COCODataset, VQAv2Dataset
+from tqdm import tqdm
+from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
 from open_flamingo.src.factory import create_model_and_transforms
 
-from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import COCODataset, VQAv2Dataset
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-
 parser = argparse.ArgumentParser()
 parser.add_argument("--lm_path", type=str, default="facebook/opt-1.3b")
-parser.add_argument("--lm_tokenizer_path", type=str, default="facebook/opt-30b")
-parser.add_argument("--clip_path", type=str, default="openai/clip-vit-large-patch14")
+parser.add_argument("--lm_tokenizer_path", type=str,
+                    default="facebook/opt-30b")
+parser.add_argument("--clip_path", type=str,
+                    default="openai/clip-vit-large-patch14")
 parser.add_argument("--checkpoint_path", type=str, required=True)
 
 # Trial arguments
-parser.add_argument("--shots", nargs="+", default=[4, 32])
+parser.add_argument("--shots", nargs="+", default=[0, 8])
 parser.add_argument(
     "--num_trials",
     type=int,
@@ -39,7 +40,7 @@ parser.add_argument(
     "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
 )
 
-parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--device", type=int, default=0)
 
 # Dataset arguments
@@ -69,6 +70,9 @@ parser.add_argument(
     default="/fsx/home-anasawadalla/data/vqav2/v2_mscoco_train2014_annotations.json",
 )
 
+parser.add_argument("--results_file", type=str, default=None,
+                    help="JSON file to save results")
+
 
 def main():
     args = parser.parse_args()
@@ -90,6 +94,8 @@ def main():
     flamingo.load_state_dict(checkpoint, strict=False)
     flamingo.to(args.device if args.device >= 0 else "cpu")
 
+    results = {"coco": [], "vqav2": []}  # results to be saved to file
+
     print("Evaluating on COCO...")
     for shot in args.shots:
         scores = []
@@ -109,6 +115,8 @@ def main():
             print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
             scores.append(cider_score)
         print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+        results["coco"].append(
+            {"shots": shot, "trials": scores, "mean": np.mean(scores)})
 
     print("Evaluating on VQAv2...")
     for shot in args.shots:
@@ -130,6 +138,12 @@ def main():
             print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
             scores.append(vqa_score)
         print(f"Shots {shot} Mean VQA score: {np.mean(scores)}")
+        results["vqav2"].append(
+            {"shots": shot, "trials": scores, "mean": np.mean(scores)})
+
+    if args.results_file is not None:
+        with open(args.results_file, "w") as f:
+            json.dump(results, f)
 
 
 def evaluate_coco(
@@ -174,7 +188,9 @@ def evaluate_coco(
         image_dir_path=image_dir_path, annotations_path=annotations_json_path
     )
 
-    if num_samples + num_shots > len(full_dataset):
+    effective_num_shots = num_shots if num_shots > 0 else 2
+
+    if num_samples + effective_num_shots > len(full_dataset):
         raise ValueError(
             f"num_samples + num_shots must be less than {len(full_dataset)}"
         )
@@ -182,12 +198,14 @@ def evaluate_coco(
     # get a random subset of the dataset
     np.random.seed(seed)
     random_indices = np.random.choice(
-        len(full_dataset), num_samples + num_shots, replace=False
+        len(full_dataset), num_samples + effective_num_shots, replace=False
     )
 
     # get in context samples
-    in_context_samples = [full_dataset[i] for i in random_indices[:num_shots]]
-    eval_dataset = torch.utils.data.Subset(full_dataset, random_indices[num_shots:])
+    in_context_samples = [full_dataset[i]
+                          for i in random_indices[:effective_num_shots]]
+    eval_dataset = torch.utils.data.Subset(
+        full_dataset, random_indices[effective_num_shots:])
 
     if num_shots > 0:
         context_images = image_processor(
@@ -201,11 +219,15 @@ def evaluate_coco(
     model.eval()
 
     def get_prompt(sample):
-        return f"<image>Output:{sample['caption']}<|endofchunk|>"
+        return f"<image>Output:{sample['caption'].strip()}<|endofchunk|>"
 
     context_text = (
-        " ".join([get_prompt(s) for s in in_context_samples]) if num_shots > 0 else ""
+        "".join([get_prompt(s) for s in in_context_samples]
+                ) if effective_num_shots > 0 else ""
     )
+
+    if num_shots == 0:
+        context_text = context_text.replace("<image>", "")
 
     predictions = defaultdict()
 
@@ -231,13 +253,14 @@ def evaluate_coco(
                 batch_images = torch.cat([batch_images, b_image], dim=0)
 
         batch_text = [context_text + "<image>Output:" for _ in batch]
+        print(batch_text)
         tokenizer.padding_side = "left"
         encodings = tokenizer(
             batch_text,
             padding=True,
             truncation=True,
             return_tensors="pt",
-            max_length=512,
+            max_length=128,
         )
         input_ids = encodings["input_ids"]
         attention_mask = encodings["attention_mask"]
@@ -246,17 +269,19 @@ def evaluate_coco(
             outputs = model.generate(
                 batch_images.to(device if device >= 0 else "cpu"),
                 input_ids.to(device if device >= 0 else "cpu"),
-                attention_mask=attention_mask.to(device if device >= 0 else "cpu"),
+                attention_mask=attention_mask.to(
+                    device if device >= 0 else "cpu"),
                 max_new_tokens=max_generation_length,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
             )
 
-        outputs = outputs[:, len(input_ids[0]) :]
+        outputs = outputs[:, len(input_ids[0]):]
         new_predictions = [
             postprocess_captioning_generation(out).replace('"', "")
             for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ]
+        print(new_predictions)
 
         for i, sample in enumerate(batch):
             predictions[sample["image_id"]] = {
@@ -333,21 +358,25 @@ def evaluate_vqa(
         annotations_path=annotations_json_path,
     )
 
-    if num_samples + num_shots > len(full_dataset):
+    effective_num_shots = num_shots if num_shots > 0 else 2
+
+    if num_samples + effective_num_shots > len(full_dataset):
         raise ValueError(
             f"num_samples + num_shots must be less than or equal to {len(full_dataset)}"
         )
 
     np.random.seed(seed)
     random_indices = np.random.choice(
-        len(full_dataset), num_samples + num_shots, replace=False
+        len(full_dataset), num_samples + effective_num_shots, replace=False
     )
 
     def get_prompt(sample, train=True):
-        return f"<image>Question:{sample['question']} Answer:{sample['answers'][0] if train else ''}{'<|endofchunk|>' if train else ''}"
+        return f"<image>Question:{sample['question'].strip()} Answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
 
-    in_context_samples = [full_dataset[i] for i in random_indices[:num_shots]]
-    eval_dataset = torch.utils.data.Subset(full_dataset, random_indices[num_shots:])
+    in_context_samples = [full_dataset[i]
+                          for i in random_indices[:effective_num_shots]]
+    eval_dataset = torch.utils.data.Subset(
+        full_dataset, random_indices[effective_num_shots:])
 
     model.eval()
     predictions = []
@@ -361,8 +390,12 @@ def evaluate_vqa(
         context_images = None
 
     context_text = (
-        " ".join([get_prompt(s) for s in in_context_samples]) if num_shots > 0 else ""
+        "".join([get_prompt(s) for s in in_context_samples]
+                ) if effective_num_shots > 0 else ""
     )
+
+    if num_shots == 0:
+        context_text = context_text.replace("<image>", "")
 
     for batch in more_itertools.chunked(
         tqdm(eval_dataset, desc="Running inference"), batch_size
@@ -386,6 +419,7 @@ def evaluate_vqa(
                 batch_images = torch.cat([batch_images, b_image], dim=0)
 
         batch_text = [context_text + get_prompt(s, train=False) for s in batch]
+        print(batch_text)
 
         tokenizer.padding_side = "left"
         encodings = tokenizer(
@@ -393,7 +427,7 @@ def evaluate_vqa(
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=512,
+            max_length=256,
         )
         input_ids = encodings["input_ids"].to(device if device >= 0 else "cpu")
         attention_mask = encodings["attention_mask"].to(
@@ -404,17 +438,19 @@ def evaluate_vqa(
             outputs = model.generate(
                 batch_images.to(device if device >= 0 else "cpu"),
                 input_ids.to(device if device >= 0 else "cpu"),
-                attention_mask=attention_mask.to(device if device >= 0 else "cpu"),
+                attention_mask=attention_mask.to(
+                    device if device >= 0 else "cpu"),
                 max_new_tokens=max_generation_length,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
             )
 
-        outputs = outputs[:, len(input_ids[0]) :]
+        outputs = outputs[:, len(input_ids[0]):]
         new_predictions = [
             postprocess_vqa_generation(out)
             for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ]
+        print(new_predictions)
 
         predictions.extend(
             [
