@@ -117,6 +117,7 @@ def train_one_epoch(
 
         vision_features = rearrange(vision_features, "(n h) w -> n h w", n=N, h=I)
         vision_features = vision_features.unsqueeze(2).unsqueeze(2)
+        vision_features = vision_features / vision_features.norm(p=2, dim=-1, keepdim=True)
 
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100

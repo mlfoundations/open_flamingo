@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, CLIPProcessor, CLIPVisionModel
+from transformers import AutoTokenizer, CLIPProcessor, CLIPModel
 
 from .flamingo import Flamingo
 from .flamingo_lm import OPTForCausalLMFlamingo
@@ -10,6 +10,7 @@ def create_model_and_transforms(
     lang_encoder_path: str,
     tokenizer_path: str,
     use_local_files: bool = False,
+    **flamingo_kwargs,
 ):
     """
     Initialize a Flamingo model from a pretrained vision encoder and language encoder.
@@ -17,6 +18,7 @@ def create_model_and_transforms(
 
     Args:
         clip_vision_encoder_path (str): path to pretrained clip vision encoder
+            NOTE: train_utils.py relies on vision_encoder to have a get_text_features() method
         clip_processor_path (str): path to pretrained clip processor
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
@@ -26,7 +28,7 @@ def create_model_and_transforms(
         Image processor: Pipeline to preprocess input images
         Tokenizer: A tokenizer for the language model
     """
-    vision_encoder = CLIPVisionModel.from_pretrained(
+    vision_encoder = CLIPModel.from_pretrained(
         clip_vision_encoder_path, local_files_only=use_local_files
     )
     image_processor = CLIPProcessor.from_pretrained(
@@ -54,6 +56,7 @@ def create_model_and_transforms(
         lang_encoder,
         text_tokenizer.encode("<|endofchunk|>")[-1],
         text_tokenizer.encode("<image>")[-1],
+        **flamingo_kwargs,
     )
 
     for p in lang_encoder.get_decoder().layers.parameters():

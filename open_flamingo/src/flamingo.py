@@ -13,27 +13,32 @@ class Flamingo(nn.Module):
         lang_encoder: OPTForCausalLMFlamingo,
         eoc_token_id: int,
         media_token_id: int,
-        use_perceiver: bool = True,
+        encoded_vis_dim: int = None,
     ):
         """
         Args:
-            vision_encoder (nn.Module): HF vision encoder 
-                We assume a .last_hidden_state attribute from the encoder output
+            vision_encoder (nn.Module): HF CLIP Model 
+                We assume vision_encoder has a vision_model whose forward() fn outputs 
+                something with a .last_hidden_state attribute
             lang_encoder (OPTForCausalLMFlamingo): An instance of OPTForCausalLMFlamingo
-            use_perceiver (bool, optional): Whether to use PerceiverResampler.
+            encoded_vis_dim (int, optional): In forward(), vision inputs are either passed
+                in pre-encoded or encoded using visual encoder into a final shape (..., D)
+                This parameter pre-specifies D, which needs to be the same across all datasets
+                (e.g. both Pile and LAION) in order to use one set of cross-attention layers.
+                Defaults to the vision_encoder's hidden_size.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
+        
+        self.vis_dim = encoded_vis_dim if encoded_vis_dim is not None else vision_encoder.config.vision_config.hidden_size
 
         self.vision_encoder = vision_encoder
-        self.perceiver = PerceiverResampler(
-            dim=self.vision_encoder.config.hidden_size,
-        ) if use_perceiver else None
+        self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
-            vis_hidden_size=self.vision_encoder.config.hidden_size,
+            vis_hidden_size=self.vis_dim,
         )
 
     def forward(
@@ -49,17 +54,17 @@ class Flamingo(nn.Module):
 
         Args:
             vision_x (torch.Tensor): Vision input
-                shape (B, T_img, F, C, H, W)
-                images in the same chunk are collated along T_img, and frames are collated along F
-                currently only F=1 is supported (single-frame videos)
+                shape (B, T_img, F, C, H, W) or (B, T_img, n, D) depending on is_vision_encoded
+                See _process_media() for more details
             lang_x (torch.Tensor): Language input
                 shape (B, T_txt)
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             labels (torch.Tensor, optional): Labels. Defaults to None.
-            is_vision_encoded (bool, optional): Whether vision input is already encoded. Defaults to False. This is useful
-            in training when passing text projections as 'vision' input for PILE input.
+            is_vision_encoded (bool, optional): Whether vision input has already been encoded outside
+                of the Flamingo model. Defaults to False. This is useful when training on the Pile.
+                See _process_media() for more details.
         """
-        self._process_media(vision_x, is_vision_encoded)
+        self._process_media(vision_x, is_vision_encoded=is_vision_encoded)
 
         output = self.lang_encoder(lang_x, attention_mask=attention_mask, labels=labels)
 
@@ -133,29 +138,39 @@ class Flamingo(nn.Module):
         self.lang_encoder.clear_conditioned_layers()
         return output
 
-    def _process_media(self, vision_x: torch.Tensor, is_vision_encoded: bool = False):
+    def _process_media(self, vision_x: torch.Tensor, is_vision_encoded: bool):
         """
         Compute media tokens from vision input by passing it through vision encoder and conditioning language model.
-
         Args:
             vision_x (torch.Tensor): Vision input
-            is_vision_encoded (bool, optional): Whether vision input is already encoded. Defaults to False. This is useful
-            in training when passing text projections as 'vision' input.
-        """
-        # rearrange code taken from https://github.com/dhansmair/flamingo-mini
-        b, T, F = vision_x.shape[:3]
-        assert F == 1, "Only single frame supported"
+                if not is_vision_encoded: shape (B, T_img, F, C, H, W)
+                else: shape (B, T_img, n, D)
+                Images in the same chunk are collated along T_img, and frames are collated along F
+                Currently only F=1 is supported (single-frame videos)
+            is_vision_encoded (bool, optional): Whether vision input has already been encoded outside
+                of the Flamingo model. Defaults to False. This is useful when training on the Pile
+                and passing in text projections as vision_x.
+                vision_x will NOT be passed through the PerceiverResampler if is_vision_encoded.
 
+        rearrange code based on https://github.com/dhansmair/flamingo-mini
+        """
+        # check shapes
+        if is_vision_encoded:
+            assert vision_x.ndim == 4, "vision_x should be of shape (b, T_img, n, D)"
+        else:
+            assert vision_x.ndim == 6, "vision_x should be of shape (b, T_img, F, C, H, W)"
+            b, T, F = vision_x.shape[:3]
+            assert F == 1, "Only single frame supported"
+
+        # encode images
         if not is_vision_encoded:
             vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
             with torch.no_grad():
-                vision_x = self.vision_encoder(vision_x).last_hidden_state 
-                vision_x = vision_x / vision_x.norm(p=2, dim=-1, keepdim=True)
+                vision_x = self.vision_encoder.vision_model(vision_x).last_hidden_state 
             vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
-        
-        if self.perceiver is not None:
-            vision_x = self.perceiver(vision_x)
-        assert vision_x.ndim == 4, "vision_x should be of shape (b, T_img, n, D)"
+            vision_x = self.perceiver(vision_x) # reshapes to (b, T, n, d)
+
+        assert vision_x.shape[-1] == self.vis_dim, f"Expected the last dim of vision_x to be {self.vis_dim} as passed to the constructor."
 
         for layer in self.lang_encoder.get_decoder().layers:
             layer.condition_vis_x(vision_x)

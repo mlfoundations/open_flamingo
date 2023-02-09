@@ -81,8 +81,8 @@ class PerceiverResampler(nn.Module):
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
-        self.frame_embs = nn.Parameter(torch.randn(max_num_frames, dim)) if not exists(max_num_frames) else None
-        self.media_time_embs = nn.Parameter(torch.randn(max_num_media, 1, dim)) if not exists (max_num_media) else None
+        self.frame_embs = nn.Parameter(torch.randn(max_num_frames, dim)) if exists(max_num_frames) else None
+        self.media_time_embs = nn.Parameter(torch.randn(max_num_media, 1, dim)) if exists (max_num_media) else None
 
         self.layers = nn.ModuleList([])
         for _ in range(depth):

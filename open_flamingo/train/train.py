@@ -47,10 +47,6 @@ def main():
         type=str,
         help="path to tokenizer",
     )
-    
-    # Flamingo architecture
-    parser.add_argument('--use_perceiver', action='store_true', default=False)
-
     parser.add_argument(
         "--run_name",
         type=str,
