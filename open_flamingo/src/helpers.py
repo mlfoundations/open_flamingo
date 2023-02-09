@@ -81,8 +81,16 @@ class PerceiverResampler(nn.Module):
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
-        self.frame_embs = nn.Parameter(torch.randn(max_num_frames, dim)) if exists(max_num_frames) else None
-        self.media_time_embs = nn.Parameter(torch.randn(max_num_media, 1, dim)) if exists (max_num_media) else None
+        self.frame_embs = (
+            nn.Parameter(torch.randn(max_num_frames, dim))
+            if exists(max_num_frames)
+            else None
+        )
+        self.media_time_embs = (
+            nn.Parameter(torch.randn(max_num_media, 1, dim))
+            if exists(max_num_media)
+            else None
+        )
 
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -100,7 +108,7 @@ class PerceiverResampler(nn.Module):
     def forward(self, x):
         """
         Args:
-            x (torch.Tensor): image features 
+            x (torch.Tensor): image features
                 shape (b, T, F, v, D)
         Returns:
             shape (b, T, n, D) where n is self.num_latents
@@ -109,9 +117,11 @@ class PerceiverResampler(nn.Module):
 
         # frame and media time embeddings
         if exists(self.frame_embs):
-            frame_embs = repeat(self.frame_embs[:F], 'F d -> b T F v d', b=b, T=T, v=v)
+            frame_embs = repeat(self.frame_embs[:F], "F d -> b T F v d", b=b, T=T, v=v)
             x = x + frame_embs
-        x = rearrange(x, 'b T F v d -> b T (F v) d') # flatten the frame and spatial dimensions
+        x = rearrange(
+            x, "b T F v d -> b T (F v) d"
+        )  # flatten the frame and spatial dimensions
         if exists(self.media_time_embs):
             x = x + self.media_time_embs[:T]
 
@@ -148,9 +158,9 @@ class MaskedCrossAttention(nn.Module):
     def forward(self, x, media, media_locations=None):
         """
         Args:
-            x (torch.Tensor): text features 
+            x (torch.Tensor): text features
                 shape (B, T_txt, D_txt)
-            media (torch.Tensor): image features 
+            media (torch.Tensor): image features
                 shape (B, T_img, n, D_img) where n is the dim of the latents
             media_locations: boolean mask identifying the media tokens in x
                 shape (B, T_txt)
