@@ -99,26 +99,8 @@ def train_one_epoch(
         clip_text_attention_mask = torch.stack([x[1] for x in batch_pile[0]]).to(
             device_id, dtype=cast_dtype, non_blocking=True
         )
-
-        N = clip_text_input_ids.shape[0]
-        I = clip_text_input_ids.shape[1]
-        clip_text_input_ids = rearrange(clip_text_input_ids, "n h w -> (n h) w")
-        clip_text_attention_mask = rearrange(
-            clip_text_attention_mask, "n h w -> (n h) w"
-        )
-
-        with torch.no_grad():
-            vision_features = model.module.vision_encoder.get_text_features(
-                input_ids=clip_text_input_ids, attention_mask=clip_text_attention_mask
-            )
-            vision_features = vision_features / vision_features.norm(
-                p=2, dim=-1, keepdim=True
-            )
-
-        vision_features = rearrange(vision_features, "(n h) w -> n h w", n=N, h=I)
-        vision_features = vision_features.unsqueeze(2).unsqueeze(2)
-        vision_features = vision_features / vision_features.norm(p=2, dim=-1, keepdim=True)
-
+        # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
+        
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
         labels[:, 0] = -100
@@ -137,11 +119,12 @@ def train_one_epoch(
 
         with autocast():
             loss_pile = model(
-                vision_features,
+                None,
                 input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                is_vision_encoded=True,
+                pseudovision_x=clip_text_input_ids,
+                pseudovision_mask=clip_text_attention_mask,
             )[0]
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
