@@ -253,7 +253,6 @@ def evaluate_coco(
                 batch_images = torch.cat([batch_images, b_image], dim=0)
 
         batch_text = [context_text + "<image>Output:" for _ in batch]
-        print(batch_text)
         tokenizer.padding_side = "left"
         encodings = tokenizer(
             batch_text,
@@ -281,7 +280,6 @@ def evaluate_coco(
             postprocess_captioning_generation(out).replace('"', "")
             for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ]
-        print(new_predictions)
 
         for i, sample in enumerate(batch):
             predictions[sample["image_id"]] = {
@@ -419,7 +417,6 @@ def evaluate_vqa(
                 batch_images = torch.cat([batch_images, b_image], dim=0)
 
         batch_text = [context_text + get_prompt(s, train=False) for s in batch]
-        print(batch_text)
 
         tokenizer.padding_side = "left"
         encodings = tokenizer(
@@ -450,7 +447,6 @@ def evaluate_vqa(
             postprocess_vqa_generation(out)
             for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ]
-        print(new_predictions)
 
         predictions.extend(
             [
