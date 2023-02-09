@@ -3,6 +3,7 @@ from einops import rearrange
 from torch import nn
 
 from .flamingo_lm import OPTForCausalLMFlamingo
+from .helpers import PerceiverResampler
 
 
 class Flamingo(nn.Module):
@@ -12,21 +13,33 @@ class Flamingo(nn.Module):
         lang_encoder: OPTForCausalLMFlamingo,
         eoc_token_id: int,
         media_token_id: int,
+        vis_dim: int = None,
     ):
         """
         Args:
-            vision_encoder (nn.Module): Any vision encoder
+            vision_encoder (nn.Module): HF CLIPModel
             lang_encoder (OPTForCausalLMFlamingo): An instance of OPTForCausalLMFlamingo
+            vis_dim (int, optional): Dimension of the visual features. Defaults to CLIP's vision_encoder's hiden size.
+                Visual features are projected to match this shape along the last dimension.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
+        
+        self.vis_dim = vis_dim if vis_dim is not None else vision_encoder.config.vision_config.hidden_size
+        self.vis_projection = nn.Linear(vision_encoder.config.vision_config.hidden_size, self.vis_dim) \
+            if self.vis_dim != vision_encoder.config.vision_config.hidden_size \
+                else nn.Identity()
+        self.pseudovis_projection = nn.Linear(vision_encoder.config.text_config.projection_dim, self.vis_dim) \
+            if self.vis_dim != vision_encoder.config.text_config.projection_dim \
+                else nn.Identity()
 
         self.vision_encoder = vision_encoder
+        self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
-            vis_hidden_size=self.vision_encoder.config.projection_dim,
+            vis_hidden_size=self.vis_dim,
         )
 
     def forward(
@@ -35,20 +48,26 @@ class Flamingo(nn.Module):
         lang_x: torch.Tensor,
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
-        is_vision_encoded: bool = False,
+        pseudovision_x: torch.Tensor = None,
+        pseudovision_attention_mask: torch.Tensor = None,
     ):
         """
         Forward pass of Flamingo.
 
         Args:
             vision_x (torch.Tensor): Vision input
-            lang_x (torch.Tensor): Language input
+                shape (B, T_img, F, C, H, W) with F=1
+            lang_x (torch.Tensor): Language input ids
+                shape (B, T_txt)
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             labels (torch.Tensor, optional): Labels. Defaults to None.
-            is_vision_encoded (bool, optional): Whether vision input is already encoded. Defaults to False. This is useful
-            in training when passing text projections as 'vision' input for PILE input.
+            pseudovision_x (torch.Tensor, optional): Input ids for text to be used as pseudoimages.
+                When training on the Pile, we use text as "pseudoimages" by encoding with the CLIP text encoder.
+                shape (B, T_img, m) where m is the sequence length
+            pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
-        self._process_media(vision_x, is_vision_encoded)
+        assert (vision_x is not None) ^ (pseudovision_x is not None), "Must provide either vision_x or pseudovision_x"
+        self._process_media(vision_x=vision_x, pseudovision_x=pseudovision_x, pseudovision_attention_mask=pseudovision_attention_mask)
 
         output = self.lang_encoder(lang_x, attention_mask=attention_mask, labels=labels)
 
@@ -77,7 +96,11 @@ class Flamingo(nn.Module):
 
         Args:
             vision_x (torch.Tensor): Vision input
+                shape (B, T_img, F, C, H, W)
+                images in the same chunk are collated along T_img, and frames are collated along F
+                currently only F=1 is supported (single-frame videos)
             lang_x (torch.Tensor): Language input
+                shape (B, T_txt)
             max_length (int, optional): Maximum length of the output. Defaults to None.
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             num_beams (int, optional): Number of beams. Defaults to 1.
@@ -96,7 +119,7 @@ class Flamingo(nn.Module):
         if num_beams > 1:
             vision_x = vision_x.repeat_interleave(num_beams, dim=0)
 
-        self._process_media(vision_x)
+        self._process_media(vision_x=vision_x)
 
         output = self.lang_encoder.generate(
             lang_x,
@@ -118,28 +141,59 @@ class Flamingo(nn.Module):
         self.lang_encoder.clear_conditioned_layers()
         return output
 
-    def _process_media(self, vision_x: torch.Tensor, is_vision_encoded: bool = False):
+    def _process_media(self, vision_x: torch.Tensor, pseudovision_x: torch.Tensor = None, pseudovision_attention_mask: torch.Tensor = None):
         """
         Compute media tokens from vision input by passing it through vision encoder and conditioning language model.
-
         Args:
             vision_x (torch.Tensor): Vision input
-            is_vision_encoded (bool, optional): Whether vision input is already encoded. Defaults to False. This is useful
-            in training when passing text projections as 'vision' input.
+                shape (B, T_img, F, C, H, W)
+                Images in the same chunk are collated along T_img, and frames are collated along F
+                Currently only F=1 is supported (single-frame videos)
+            pseudovision_x (torch.Tensor, optional): Input ids for text to be used as pseudoimages.
+                shape (B, T_img, m) where m is the sequence length
+            pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
-        # rearrange code taken from https://github.com/dhansmair/flamingo-mini
-        b, N, T = vision_x.shape[:3]
-
-        assert T == 1, "Only single frame supported"
-        if not is_vision_encoded:
-            vision_x = rearrange(vision_x, "b N T c h w -> (b N T) c h w")
-            with torch.no_grad():
-                vision_x = self.vision_encoder.get_image_features(vision_x)
-                vision_x = vision_x / vision_x.norm(p=2, dim=-1, keepdim=True)
-                vision_x = vision_x.unsqueeze(1)
-            vision_x = rearrange(vision_x, "(b N 1) v d -> b N v d", b=b, N=N)
-        else:
-            vision_x = rearrange(vision_x, "b N 1 v d -> b N v d", b=b, N=N)
+        if vision_x is not None: 
+            vision_features  = self._encode_vision_x(vision_x)
+        elif pseudovision_x is not None: 
+            vision_features = self._encode_pseudovision_x(pseudovision_x, pseudovision_attention_mask)
 
         for layer in self.lang_encoder.get_decoder().layers:
-            layer.condition_vis_x(vision_x)
+            layer.condition_vis_x(vision_features)
+    
+    def _encode_vision_x(self, vision_x: torch.Tensor):
+        """
+        Encode real vision inputs
+        rearrange code based on https://github.com/dhansmair/flamingo-mini
+        """
+        assert vision_x.ndim == 6, "vision_x should be of shape (b, T_img, F, C, H, W)"
+        b, T, F = vision_x.shape[:3]
+        assert F == 1, "Only single frame supported"
+
+        vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
+        with torch.no_grad():
+            vision_x = self.vision_encoder.vision_model(vision_x).last_hidden_state 
+        vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
+
+        vision_x = self.vis_projection(vision_x) # reshapes s.t. d matches self.vis_dim
+        vision_x = self.perceiver(vision_x) # reshapes to (b, T, n, d)
+        return vision_x
+    
+    def _encode_pseudovision_x(self, pseudovision_x: torch.Tensor, pseudovision_attention_mask: torch.Tensor):
+        """
+        Encode text inputs as pseudoimages
+        """
+        assert pseudovision_x.ndim == 3, "pseudovision_x should be of shape (b, T_img, m)"
+        b, T = pseudovision_x.shape [:2]
+
+        pseudovision_x = rearrange(pseudovision_x, "b T m -> (b T) m")
+        pseudovision_attention_mask = rearrange(pseudovision_attention_mask, "b T m -> (b T) m")
+        with torch.no_grad():
+            pseudovision_x = self.vision_encoder.get_text_features(
+                input_ids=pseudovision_x, attention_mask=pseudovision_attention_mask
+            )
+            pseudovision_x = pseudovision_x / pseudovision_x.norm(p=2, dim=-1, keepdim=True)
+        
+        pseudovision_x = rearrange(pseudovision_x, "(b T) d -> b T 1 d", b=b, T=T)
+        pseudovision_x = self.pseudovis_projection(pseudovision_x) # reshapes s.t. d matches self.vis_dim
+        return pseudovision_x

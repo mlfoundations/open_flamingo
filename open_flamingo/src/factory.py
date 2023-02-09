@@ -10,13 +10,14 @@ def create_model_and_transforms(
     lang_encoder_path: str,
     tokenizer_path: str,
     use_local_files: bool = False,
+    **flamingo_kwargs,
 ):
     """
     Initialize a Flamingo model from a pretrained vision encoder and language encoder.
     Appends special tokens to the tokenizer and freezes backbones.
 
     Args:
-        clip_vision_encoder_path (str): path to pretrained clip vision encoder
+        clip_vision_encoder_path (str): path to pretrained clip model
         clip_processor_path (str): path to pretrained clip processor
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
@@ -54,6 +55,7 @@ def create_model_and_transforms(
         lang_encoder,
         text_tokenizer.encode("<|endofchunk|>")[-1],
         text_tokenizer.encode("<image>")[-1],
+        **flamingo_kwargs,
     )
 
     for p in lang_encoder.get_decoder().layers.parameters():
