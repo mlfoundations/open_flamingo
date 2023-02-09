@@ -25,14 +25,22 @@ class Flamingo(nn.Module):
         super().__init__()
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
-        
-        self.vis_dim = vis_dim if vis_dim is not None else vision_encoder.config.vision_config.hidden_size
-        self.vis_projection = nn.Linear(vision_encoder.config.vision_config.hidden_size, self.vis_dim) \
-            if self.vis_dim != vision_encoder.config.vision_config.hidden_size \
-                else nn.Identity()
-        self.pseudovis_projection = nn.Linear(vision_encoder.config.text_config.projection_dim, self.vis_dim) \
-            if self.vis_dim != vision_encoder.config.text_config.projection_dim \
-                else nn.Identity()
+
+        self.vis_dim = (
+            vis_dim
+            if vis_dim is not None
+            else vision_encoder.config.vision_config.hidden_size
+        )
+        self.vis_projection = (
+            nn.Linear(vision_encoder.config.vision_config.hidden_size, self.vis_dim)
+            if self.vis_dim != vision_encoder.config.vision_config.hidden_size
+            else nn.Identity()
+        )
+        self.pseudovis_projection = (
+            nn.Linear(vision_encoder.config.text_config.projection_dim, self.vis_dim)
+            if self.vis_dim != vision_encoder.config.text_config.projection_dim
+            else nn.Identity()
+        )
 
         self.vision_encoder = vision_encoder
         self.perceiver = PerceiverResampler(dim=self.vis_dim)
@@ -66,8 +74,14 @@ class Flamingo(nn.Module):
                 shape (B, T_img, m) where m is the sequence length
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
-        assert (vision_x is not None) ^ (pseudovision_x is not None), "Must provide either vision_x or pseudovision_x"
-        self._process_media(vision_x=vision_x, pseudovision_x=pseudovision_x, pseudovision_attention_mask=pseudovision_attention_mask)
+        assert (vision_x is not None) ^ (
+            pseudovision_x is not None
+        ), "Must provide either vision_x or pseudovision_x"
+        self._process_media(
+            vision_x=vision_x,
+            pseudovision_x=pseudovision_x,
+            pseudovision_attention_mask=pseudovision_attention_mask,
+        )
 
         output = self.lang_encoder(lang_x, attention_mask=attention_mask, labels=labels)
 
@@ -141,7 +155,12 @@ class Flamingo(nn.Module):
         self.lang_encoder.clear_conditioned_layers()
         return output
 
-    def _process_media(self, vision_x: torch.Tensor, pseudovision_x: torch.Tensor = None, pseudovision_attention_mask: torch.Tensor = None):
+    def _process_media(
+        self,
+        vision_x: torch.Tensor,
+        pseudovision_x: torch.Tensor = None,
+        pseudovision_attention_mask: torch.Tensor = None,
+    ):
         """
         Compute media tokens from vision input by passing it through vision encoder and conditioning language model.
         Args:
@@ -153,14 +172,16 @@ class Flamingo(nn.Module):
                 shape (B, T_img, m) where m is the sequence length
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
-        if vision_x is not None: 
-            vision_features  = self._encode_vision_x(vision_x)
-        elif pseudovision_x is not None: 
-            vision_features = self._encode_pseudovision_x(pseudovision_x, pseudovision_attention_mask)
+        if vision_x is not None:
+            vision_features = self._encode_vision_x(vision_x)
+        elif pseudovision_x is not None:
+            vision_features = self._encode_pseudovision_x(
+                pseudovision_x, pseudovision_attention_mask
+            )
 
         for layer in self.lang_encoder.get_decoder().layers:
             layer.condition_vis_x(vision_features)
-    
+
     def _encode_vision_x(self, vision_x: torch.Tensor):
         """
         Encode real vision inputs
@@ -172,28 +193,38 @@ class Flamingo(nn.Module):
 
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         with torch.no_grad():
-            vision_x = self.vision_encoder.vision_model(vision_x).last_hidden_state 
+            vision_x = self.vision_encoder.vision_model(vision_x).last_hidden_state
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
 
-        vision_x = self.vis_projection(vision_x) # reshapes s.t. d matches self.vis_dim
-        vision_x = self.perceiver(vision_x) # reshapes to (b, T, n, d)
+        vision_x = self.vis_projection(vision_x)  # reshapes s.t. d matches self.vis_dim
+        vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
         return vision_x
-    
-    def _encode_pseudovision_x(self, pseudovision_x: torch.Tensor, pseudovision_attention_mask: torch.Tensor):
+
+    def _encode_pseudovision_x(
+        self, pseudovision_x: torch.Tensor, pseudovision_attention_mask: torch.Tensor
+    ):
         """
         Encode text inputs as pseudoimages
         """
-        assert pseudovision_x.ndim == 3, "pseudovision_x should be of shape (b, T_img, m)"
-        b, T = pseudovision_x.shape [:2]
+        assert (
+            pseudovision_x.ndim == 3
+        ), "pseudovision_x should be of shape (b, T_img, m)"
+        b, T = pseudovision_x.shape[:2]
 
         pseudovision_x = rearrange(pseudovision_x, "b T m -> (b T) m")
-        pseudovision_attention_mask = rearrange(pseudovision_attention_mask, "b T m -> (b T) m")
+        pseudovision_attention_mask = rearrange(
+            pseudovision_attention_mask, "b T m -> (b T) m"
+        )
         with torch.no_grad():
             pseudovision_x = self.vision_encoder.get_text_features(
                 input_ids=pseudovision_x, attention_mask=pseudovision_attention_mask
             )
-            pseudovision_x = pseudovision_x / pseudovision_x.norm(p=2, dim=-1, keepdim=True)
-        
+            pseudovision_x = pseudovision_x / pseudovision_x.norm(
+                p=2, dim=-1, keepdim=True
+            )
+
         pseudovision_x = rearrange(pseudovision_x, "(b T) d -> b T 1 d", b=b, T=T)
-        pseudovision_x = self.pseudovis_projection(pseudovision_x) # reshapes s.t. d matches self.vis_dim
+        pseudovision_x = self.pseudovis_projection(
+            pseudovision_x
+        )  # reshapes s.t. d matches self.vis_dim
         return pseudovision_x

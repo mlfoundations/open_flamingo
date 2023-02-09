@@ -134,19 +134,6 @@ def train_one_epoch(
         )
         loss.backward()
 
-        if args.mask_embedding_gradients:
-            #### MASK EMBEDDING GRADIENTS ####
-            zero_mask = torch.zeros_like(
-                model.module.lang_encoder.get_input_embeddings().weight.grad
-            )
-            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-            zero_mask[endofchunk_token_id] = torch.ones_like(
-                zero_mask[endofchunk_token_id]
-            )
-            model.module.lang_encoder.get_input_embeddings().weight.grad = (
-                model.module.lang_encoder.get_input_embeddings().weight.grad * zero_mask
-            )
-
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
