@@ -17,8 +17,7 @@ def create_model_and_transforms(
     Appends special tokens to the tokenizer and freezes backbones.
 
     Args:
-        clip_vision_encoder_path (str): path to pretrained clip vision encoder
-            NOTE: train_utils.py relies on vision_encoder to have a get_text_features() method
+        clip_vision_encoder_path (str): path to pretrained clip model
         clip_processor_path (str): path to pretrained clip processor
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer

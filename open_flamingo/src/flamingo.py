@@ -17,9 +17,7 @@ class Flamingo(nn.Module):
     ):
         """
         Args:
-            vision_encoder (nn.Module): HF CLIP Model 
-                We assume vision_encoder has a vision_model whose forward() fn outputs 
-                something with a .last_hidden_state attribute
+            vision_encoder (nn.Module): HF CLIPModel
             lang_encoder (OPTForCausalLMFlamingo): An instance of OPTForCausalLMFlamingo
             vis_dim (int, optional): Dimension of the visual features. Defaults to CLIP's vision_encoder's hiden size.
                 Visual features are projected to match this shape along the last dimension.
@@ -58,15 +56,13 @@ class Flamingo(nn.Module):
 
         Args:
             vision_x (torch.Tensor): Vision input
-                shape (B, T_img, F, C, H, W) or (B, T_img, n, D) depending on is_vision_encoded
-                See _process_media() for more details
+                shape (B, T_img, F, C, H, W) with F=1
             lang_x (torch.Tensor): Language input ids
                 shape (B, T_txt)
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             labels (torch.Tensor, optional): Labels. Defaults to None.
             pseudovision_x (torch.Tensor, optional): Input ids for text to be used as pseudoimages.
-                When training on the Pile, we use text as "pseudoimages" by encoding with the 
-                CLIP text encoder.
+                When training on the Pile, we use text as "pseudoimages" by encoding with the CLIP text encoder.
                 shape (B, T_img, m) where m is the sequence length
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
