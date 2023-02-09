@@ -86,7 +86,6 @@ def train_one_epoch(
                 input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                is_vision_encoded=False,
             )[0]
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
@@ -100,7 +99,7 @@ def train_one_epoch(
             device_id, dtype=cast_dtype, non_blocking=True
         )
         # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
-        
+
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
         labels[:, 0] = -100
