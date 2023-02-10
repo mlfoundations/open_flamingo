@@ -234,5 +234,7 @@ class Flamingo(nn.Module):
             )
 
         pseudovision_x = rearrange(
-            pseudovision_x, "(b T) d -> b T 1 d", b=b, T=T)
+            pseudovision_x, "(b T) d -> b T 1 1 d", b=b, T=T)
+        
+        pseudovision_x = self.perceiver(pseudovision_x)
         return pseudovision_x
