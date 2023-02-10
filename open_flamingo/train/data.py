@@ -276,9 +276,9 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     if len(sentences) == 0:
         raise ValueError("No sentences in sample")
 
-    # replace sentences 70% of the time
     indices_replaced = torch.zeros(len(sentences), dtype=torch.bool)
-    indices_replaced[torch.rand(len(sentences)) <= 0.7] = True
+    # replace 100% of sentences this is bad code atm and should be changed
+    indices_replaced[torch.rand(len(sentences)) <= 1.0] = True 
 
     if indices_replaced.sum() == 0:
         raise ValueError("No sentences to mask")
