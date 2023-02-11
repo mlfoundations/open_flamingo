@@ -44,9 +44,9 @@ class FlamingoLayer(nn.Module):
         )
         return lang_x
 
-class FlamingoLangMixin(nn.Module):
+class FlamingoLMMixin(nn.Module):
     """
-    Mixin that adds in Flamingo cross-attention layers to the LM.
+    Mixin to add cross-attention layers to a language model.
     """
     def set_decoder_layers_attr_name(self, decoder_layers_attr_name):
         self.decoder_layers_attr_name = decoder_layers_attr_name
