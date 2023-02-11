@@ -61,7 +61,6 @@ train.py
 --train_num_samples_laion 20000
 --laion_shards s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar
 --pile_shards /fsx/home-anasawadalla/pile/shard-{000000..000169}.tar
---mask_embedding_gradients
 --vision_encoder_path openai/clip-vit-large-patch14
 --lm_path facebook/opt-1.3b
 --dataset_resampled
