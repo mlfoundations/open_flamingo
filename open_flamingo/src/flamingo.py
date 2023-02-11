@@ -2,7 +2,7 @@ import torch
 from einops import rearrange
 from torch import nn
 
-from .flamingo_lm import OPTForCausalLMFlamingo
+from .flamingo_lm import FlamingoLangMixin
 from .helpers import PerceiverResampler
 
 
@@ -10,7 +10,7 @@ class Flamingo(nn.Module):
     def __init__(
         self,
         vision_encoder: nn.Module,
-        lang_encoder: OPTForCausalLMFlamingo,
+        lang_encoder: nn.Module,
         eoc_token_id: int,
         media_token_id: int,
         vis_dim: int = None,
@@ -18,7 +18,7 @@ class Flamingo(nn.Module):
         """
         Args:
             vision_encoder (nn.Module): HF CLIPModel
-            lang_encoder (OPTForCausalLMFlamingo): An instance of OPTForCausalLMFlamingo
+            lang_encoder (nn.Module): HF causal language model
             vis_dim (int, optional): Dimension of the visual features. Defaults to CLIP's vision_encoder's hiden size.
                 Visual features are projected to match this shape along the last dimension.
         """
@@ -179,7 +179,7 @@ class Flamingo(nn.Module):
                 pseudovision_x, pseudovision_attention_mask
             )
 
-        for layer in self.lang_encoder.get_decoder().layers:
+        for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_features)
 
     def _encode_vision_x(self, vision_x: torch.Tensor):
