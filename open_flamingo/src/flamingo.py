@@ -2,7 +2,7 @@ import torch
 from einops import rearrange
 from torch import nn
 
-from .flamingo_lm import FlamingoLangMixin
+from .flamingo_lm import FlamingoLMMixin
 from .helpers import PerceiverResampler
 
 

@@ -1,7 +1,7 @@
 from transformers import AutoTokenizer, CLIPProcessor, CLIPModel, AutoModelForCausalLM
 
 from .flamingo import Flamingo
-from .flamingo_lm import FlamingoLangMixin
+from .flamingo_lm import FlamingoLMMixin
 from .utils import extend_instance
 
 def create_model_and_transforms(
@@ -54,7 +54,7 @@ def create_model_and_transforms(
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path, local_files_only=use_local_files
     )
-    extend_instance(lang_encoder, FlamingoLangMixin)
+    extend_instance(lang_encoder, FlamingoLMMixin)
 
     if decoder_layers_attr_name is None:
         decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
