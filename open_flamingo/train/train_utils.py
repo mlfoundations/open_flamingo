@@ -123,7 +123,7 @@ def train_one_epoch(
                 attention_mask=attention_mask,
                 labels=labels,
                 pseudovision_x=clip_text_input_ids,
-                pseudovision_mask=clip_text_attention_mask,
+                pseudovision_attention_mask=clip_text_attention_mask,
             )[0]
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
