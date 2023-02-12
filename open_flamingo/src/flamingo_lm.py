@@ -85,13 +85,13 @@ class FlamingoLMMixin(nn.Module):
         self.initalized_flamingo = True
         self.register_forward_pre_hook(self._compute_media_locations)
 
-    def _compute_media_locations(self, module, input):
+    def _compute_media_locations(self, module, args):
         if not self.initalized_flamingo:
             raise ValueError(
                 "Flamingo layers are not initialized. Please call `init_flamingo` first."
             )
         # we always pass in 1 positional argument (input_ids)        
-        input_ids = input[0]
+        input_ids = args[0]
         media_locations = input_ids == self.media_token_id
         for layer in self._get_decoder_layers():
             layer.condition_media_locations(media_locations)

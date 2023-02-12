@@ -48,8 +48,7 @@ def create_model_and_transforms(
     if text_tokenizer.pad_token is None:
         # Issue: GPT models don't have a pad token, which we use to
         # modify labels for the loss.
-        text_tokenizer.pad_token = text_tokenizer.eos_token
-
+        text_tokenizer.add_special_tokens({'pad_token': '<PAD>'})
 
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path, local_files_only=use_local_files
