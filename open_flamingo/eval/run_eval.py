@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 import torch
-from evaluate import evaluate_coco, evaluate_vqa
+from testbed import evaluate_coco, evaluate_vqa
 
 import wandb
 from open_flamingo.src.factory import create_model_and_transforms
@@ -182,7 +182,7 @@ def main():
                 # evaluate the model
                 args.checkpoint_path = checkpoint
                 results = run_evaluation_suite(args)
-                evaluated_checkpoints.add(checkpoint)
+                evaluated_checkpoints.add(path)
 
                 if args.report_to_wandb:
                     for dataset in results:
