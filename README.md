@@ -82,10 +82,11 @@ Before evaluating the model, you will need to download the COCO and VQAv2 datase
 pip install pycocoevalcap
 ```
 
-To evaluate the model, use script open_flamingo/eval/evaluate.py with the following arguments:
+To evaluate models, use script open_flamingo/eval/online_evaluate.py with the following arguments:
 
 ```
-python evaluate.py
+python online_evaluate.py
+--model_dir model_checkpoints
 --lm_path facebook/opt-1.3b
 --lm_tokenizer_path facebook/opt-1.3b
 --clip_path openai/clip-vit-large-patch14
@@ -96,8 +97,11 @@ python evaluate.py
 --vqav2_image_dir_path path/to/vqav2/images
 --vqav2_annotation_path path/to/vqav2/v2_mscoco_train2014_annotations.json
 --vqav2_question_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json
+--report_to_wandb
+--wandb_run_name online-eval
 ``` 
 
+This script will evaluate checkpoints in the model_dir directory as they are saved and push results to wandb.
 
 ### Wandb
 To log to wandb, use the --report_to wandb flag. The run name will be specified using the --run_name argument. To specify the wandb project, use the --wandb_project argument and use wandb_entity to specify the wandb entity.
