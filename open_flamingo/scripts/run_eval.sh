@@ -35,7 +35,7 @@ python open_flamingo/eval/evaluate.py \
     --eval_vqav2 \
     --results_file $RESULTS_FILE
     # use the below flags to run faster eval during development.
-    # --num_samples 16
+    # --num_samples 16 --shots 0 --num_trials 1
 
 
 echo "evaluation complete! results written to ${RESULTS_FILE}"
