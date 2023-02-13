@@ -30,6 +30,6 @@ if __name__ == "__main__":
             "Intended Audience :: Developers",
             "Topic :: Scientific/Engineering :: Artificial Intelligence",
             "License :: OSI Approved :: MIT License",
-            "Programming Language :: Python :: 3.8",
+            "Programming Language :: Python :: 3.9",
         ],
     )
