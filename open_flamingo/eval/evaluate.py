@@ -146,6 +146,21 @@ def main():
             json.dump(results, f)
 
 
+def get_random_indices(num_samples, effective_num_shots, full_dataset, seed):
+
+
+    if num_samples + effective_num_shots > len(full_dataset):
+        raise ValueError(
+            f"num_samples + num_shots must be less than {len(full_dataset)}"
+        )
+
+    # get a random subset of the dataset
+    np.random.seed(seed)
+    random_indices = np.random.choice(
+        len(full_dataset), num_samples + effective_num_shots, replace=False
+    )
+    return random_indices
+
 def evaluate_coco(
     model,
     tokenizer,
@@ -187,19 +202,9 @@ def evaluate_coco(
     full_dataset = COCODataset(
         image_dir_path=image_dir_path, annotations_path=annotations_json_path
     )
-
     effective_num_shots = num_shots if num_shots > 0 else 2
-
-    if num_samples + effective_num_shots > len(full_dataset):
-        raise ValueError(
-            f"num_samples + num_shots must be less than {len(full_dataset)}"
-        )
-
-    # get a random subset of the dataset
-    np.random.seed(seed)
-    random_indices = np.random.choice(
-        len(full_dataset), num_samples + effective_num_shots, replace=False
-    )
+    random_indices = get_random_indices(num_samples, effective_num_shots,
+                                        full_dataset, seed)
 
     # get in context samples
     in_context_samples = [full_dataset[i]
@@ -363,10 +368,8 @@ def evaluate_vqa(
             f"num_samples + num_shots must be less than or equal to {len(full_dataset)}"
         )
 
-    np.random.seed(seed)
-    random_indices = np.random.choice(
-        len(full_dataset), num_samples + effective_num_shots, replace=False
-    )
+    random_indices = get_random_indices(num_samples, effective_num_shots,
+                                        full_dataset, seed)
 
     def get_prompt(sample, train=True):
         return f"<image>Question:{sample['question'].strip()} Answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
