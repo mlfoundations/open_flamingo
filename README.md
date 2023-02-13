@@ -100,6 +100,8 @@ python evaluate.py
 --vqav2_image_dir_path path/to/vqav2/images
 --vqav2_annotations_json_path path/to/vqav2/v2_mscoco_train2014_annotations.json
 --vqav2_questions_json_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json
+--eval_coco
+--eval_vqav2
 ``` 
 
 
