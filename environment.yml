@@ -3,6 +3,7 @@ channels:
   - defaults
 dependencies:
   - python=3.9
+  - conda-forge::openjdk
   - pip
   - pip:
     - -r requirements.txt
