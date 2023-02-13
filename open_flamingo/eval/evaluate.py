@@ -23,7 +23,7 @@ parser.add_argument("--clip_path", type=str,
 parser.add_argument("--checkpoint_path", type=str, required=True)
 
 # Trial arguments
-parser.add_argument("--shots", nargs="+", default=[0, 8])
+parser.add_argument("--shots", nargs="+", default=[0, 8], type=int)
 parser.add_argument(
     "--num_trials",
     type=int,
