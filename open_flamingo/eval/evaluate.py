@@ -22,6 +22,9 @@ parser.add_argument("--clip_path", type=str,
                     default="openai/clip-vit-large-patch14")
 parser.add_argument("--checkpoint_path", type=str, required=True)
 
+parser.add_argument("--results_file", type=str, default=None,
+                    help="JSON file to save results")
+
 # Trial arguments
 parser.add_argument("--shots", nargs="+", default=[0, 8])
 parser.add_argument(
@@ -43,7 +46,16 @@ parser.add_argument(
 parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--device", type=int, default=0)
 
+# Per-dataset evaluation flags
+parser.add_argument("--eval_coco", action="store_true", default=False,
+        help="Whether to evaluate on COCO.")
+
+parser.add_argument("--eval_vqav2", action="store_true", default=False,
+        help="Whether to evaluate on VQAV2.")
+
 # Dataset arguments
+
+## COCO Dataset
 parser.add_argument(
     "--coco_image_dir_path",
     type=str,
@@ -54,6 +66,8 @@ parser.add_argument(
     type=str,
     default="/fsx/home-anasawadalla/data/coco/annotations/captions_train2017.json",
 )
+
+## VQAV2 Dataset
 parser.add_argument(
     "--vqav2_image_dir_path",
     type=str,
@@ -69,9 +83,6 @@ parser.add_argument(
     type=str,
     default="/fsx/home-anasawadalla/data/vqav2/v2_mscoco_train2014_annotations.json",
 )
-
-parser.add_argument("--results_file", type=str, default=None,
-                    help="JSON file to save results")
 
 
 def main():
@@ -96,50 +107,54 @@ def main():
 
     results = {"coco": [], "vqav2": []}  # results to be saved to file
 
-    print("Evaluating on COCO...")
-    for shot in args.shots:
-        scores = []
-        for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-            cider_score = evaluate_coco(
-                model=flamingo,
-                tokenizer=tokenizer,
-                image_processor=image_processor,
-                batch_size=args.batch_size,
-                image_dir_path=args.coco_image_dir_path,
-                annotations_json_path=args.coco_annotations_json_path,
-                num_samples=args.num_samples,
-                num_shots=shot,
-                device=args.device,
-                seed=seed,
-            )
-            print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
-            scores.append(cider_score)
-        print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
-        results["coco"].append(
-            {"shots": shot, "trials": scores, "mean": np.mean(scores)})
-
-    print("Evaluating on VQAv2...")
-    for shot in args.shots:
-        scores = []
-        for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-            vqa_score = evaluate_vqa(
-                model=flamingo,
-                tokenizer=tokenizer,
-                image_processor=image_processor,
-                batch_size=args.batch_size,
-                num_samples=args.num_samples,
-                num_shots=shot,
-                device=args.device,
-                seed=seed,
-                image_dir_path=args.vqav2_image_dir_path,
-                questions_json_path=args.vqav2_questions_json_path,
-                annotations_json_path=args.vqav2_annotations_json_path,
-            )
-            print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
-            scores.append(vqa_score)
-        print(f"Shots {shot} Mean VQA score: {np.mean(scores)}")
-        results["vqav2"].append(
-            {"shots": shot, "trials": scores, "mean": np.mean(scores)})
+    if args.eval_coco:
+        
+        print("Evaluating on COCO...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                cider_score = evaluate_coco(
+                    model=flamingo,
+                    tokenizer=tokenizer,
+                    image_processor=image_processor,
+                    batch_size=args.batch_size,
+                    image_dir_path=args.coco_image_dir_path,
+                    annotations_json_path=args.coco_annotations_json_path,
+                    num_samples=args.num_samples,
+                    num_shots=shot,
+                    device=args.device,
+                    seed=seed,
+                )
+                print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
+                scores.append(cider_score)
+            print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+            results["coco"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)})
+    
+    if args.eval_vqav2:
+    
+        print("Evaluating on VQAv2...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                vqa_score = evaluate_vqa(
+                    model=flamingo,
+                    tokenizer=tokenizer,
+                    image_processor=image_processor,
+                    batch_size=args.batch_size,
+                    num_samples=args.num_samples,
+                    num_shots=shot,
+                    device=args.device,
+                    seed=seed,
+                    image_dir_path=args.vqav2_image_dir_path,
+                    questions_json_path=args.vqav2_questions_json_path,
+                    annotations_json_path=args.vqav2_annotations_json_path,
+                )
+                print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
+                scores.append(vqa_score)
+            print(f"Shots {shot} Mean VQA score: {np.mean(scores)}")
+            results["vqav2"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)})
 
     if args.results_file is not None:
         with open(args.results_file, "w") as f:
