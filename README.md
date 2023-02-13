@@ -3,10 +3,14 @@
 An open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model.
 
 # Installation
-To install the package, run the following command:
+
+To create a conda environment for running OpenFlamingo, run
+
 ```
-pip install -e .
+conda env create -f environment.yml
 ```
+
+Alternatively, to install the package in an existing environment, run `pip install -e .`.
 
 # API
 You can load a model using the following code:
