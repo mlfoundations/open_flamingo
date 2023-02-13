@@ -26,7 +26,7 @@ parser.add_argument("--results_file", type=str, default=None,
                     help="JSON file to save results")
 
 # Trial arguments
-parser.add_argument("--shots", nargs="+", default=[0, 8])
+parser.add_argument("--shots", nargs="+", default=[0, 8], type=int)
 parser.add_argument(
     "--num_trials",
     type=int,
