@@ -10,7 +10,7 @@ CLIP_PATH="openai/clip-vit-large-patch14"
 CKPT_PATH="/mmfs1/gscratch/efml/anasa2/latest_checkpoint.pt"
 DEVICE="0"
 
-# Default values for running on klone/hayk; change to override.
+# Default values for running on klone/hyak; change to override.
 COCO_IMG_PATH="/data/yfcc-tmp/data/mscoco/train2017/"
 COCO_ANNO_PATH="/data/yfcc-tmp/data/mscoco/annotations/captions_train2017.json"
 VQAV2_IMG_PATH="/mmfs1/gscratch/efml/anasa2/data/vqav2/train2014"
