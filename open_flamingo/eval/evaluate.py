@@ -115,7 +115,7 @@ def main():
     flamingo.load_state_dict(checkpoint, strict=False)
     flamingo.to(args.device if args.device >= 0 else "cpu")
 
-    results = {"coco": [], "vqav2": []}  # results to be saved to file
+    results = defaultdict(list)
 
     if args.eval_coco:
 
