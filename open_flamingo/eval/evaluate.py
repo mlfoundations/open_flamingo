@@ -657,7 +657,7 @@ def evaluate_imagenet(
     print("[DEBUG] sample of predictions and labels for debugging:")
     for p in predictions[:16]:
         print(f"\t prediction: {p['prediction']}")
-        print(f"\t label: {p['class_name']}")
+        print(f"\t label: {p['class_label']}")
     return compute_classification_accuracy(predictions)
 
 
