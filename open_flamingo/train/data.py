@@ -528,12 +528,182 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
+def preprocess_documents(samples, image_processor, tokenizer):
+    images = None
+    input_ids = None
+    attention_mask = None
+    doc_texts, doc_images = samples
+
+    for doc_text, imgs in zip(doc_texts, doc_images):
+        imgs = list(json.loads(imgs).values())[:5]
+
+        sentences = json.loads(doc_text)["sentences"]
+
+        ## image processing ##
+        doc_images = [Image.open(io.BytesIO(base64.b64decode(x["base64_image"]))) for x in imgs]
+
+        image_tensors = preprocess_image(doc_images, image_processor=image_processor)
+        # add time and batch dimensions
+        image_tensors = image_tensors.unsqueeze(1).unsqueeze(0)
+
+        # tensor is of shape (1, x, 1, 3, 224, 224)
+        # pad x to 5 images
+        if image_tensors.shape[1] < 5:
+            padding = torch.zeros(
+                (
+                    1,
+                    5 - image_tensors.shape[1],
+                    image_tensors.shape[2],
+                    image_tensors.shape[3],
+                    image_tensors.shape[4],
+                    image_tensors.shape[5],
+                )
+            )
+            image_tensors = torch.cat((image_tensors, padding), dim=1)
+
+        # all docs can only have 5 images max
+        image_tensors = image_tensors[:, :5, :, :, :, :]
+
+        if images is None:
+            images = image_tensors
+        else:
+            images = torch.cat((images, image_tensors), dim=0)
+
+        ## text processing ##
+        media_locations = [x["sentence_index"] for x in imgs]
+
+        # add media locations to sentences
+        for media_idx in media_locations:
+            sentences[media_idx] = (
+                f"<image>{sentences[media_idx]}"
+                if media_idx == len(sentences) - 1 or random.random() < 0.5
+                else f"{sentences[media_idx]}<image>"
+            )
+
+        # remove first sentence if it doesn't contain any image
+        if not "<image>" in sentences[0]:
+            sentences = sentences[1:]
+
+        # merge sentences into one string
+        text = " ".join(sentences)
+
+        # add end of chunk token after each image token except for first one
+        text = text.replace("<image>", "<|endofchunk|><image>")
+        # remove first end of chunk token
+        text = text.replace("<|endofchunk|>", "", 1)
+        # add end of chunk token and eos token to end of text
+        text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
+
+        tokenizer.padding_side = "right"
+        text_tensors = tokenizer(text, return_tensors="pt", max_length=256, truncation=True, padding="max_length")
+
+        if input_ids is None:
+            input_ids = text_tensors["input_ids"]
+        else:
+            input_ids = torch.cat((input_ids, text_tensors["input_ids"]), dim=0)
+
+        if attention_mask is None:
+            attention_mask = text_tensors["attention_mask"]
+        else:
+            attention_mask = torch.cat((attention_mask, text_tensors["attention_mask"]), dim=0)
+
+    return images, (input_ids, attention_mask)
+
+
+def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
+    input_shards = args.shards
+    assert input_shards is not None
+    resampled = getattr(args, "dataset_resampled", False)
+
+    num_samples, num_shards = get_dataset_size(input_shards)
+    num_samples = None
+    if not num_samples:
+        num_samples = args.train_num_samples
+        if not num_samples:
+            raise RuntimeError(
+                "Currently, number of dataset samples must be specified for training dataset. "
+                "Please specify via `--train-num-samples` if no dataset length info present."
+            )
+
+    # create a shared epoch store to sync epoch to dataloader worker proc
+    shared_epoch = SharedEpoch(epoch=epoch)
+    if resampled:
+        pipeline = [ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)]
+    else:
+        pipeline = [wds.SimpleShardList(input_shards)]
+
+    # create two preprocess functions that take in the passed in image_processor and tokenizer
+    preprocess = functools.partial(preprocess_documents, image_processor=image_processor, tokenizer=tokenizer)
+
+    # at this point we have an iterator over all the shards
+    if not resampled:
+        pipeline.extend(
+            [
+                detshuffle2(
+                    bufsize=_SHARD_SHUFFLE_SIZE,
+                    initial=_SHARD_SHUFFLE_INITIAL,
+                    seed=args.seed,
+                    epoch=shared_epoch,
+                ),
+                wds.split_by_node,
+                wds.split_by_worker,
+            ]
+        )
+    pipeline.extend(
+        [
+            # at this point, we have an iterator over the shards assigned to each worker at each node
+            # wds.tarfile_to_samples(handler=log_and_continue),
+            tarfile_to_samples_nothrow,
+            wds.shuffle(
+                bufsize=_SAMPLE_SHUFFLE_SIZE,
+                initial=_SAMPLE_SHUFFLE_INITIAL,
+            ),
+        ]
+    )
+
+    pipeline.extend(
+        [
+            wds.to_tuple("txt.json", "image.json", handler=log_and_continue),
+            wds.batched(args.batch_size, partial=False),
+            wds.map(preprocess),
+        ]
+    )
+
+    dataset = wds.DataPipeline(*pipeline)
+    if not resampled:
+        assert num_shards >= args.workers * args.world_size, "number of shards must be >= total workers"
+    # roll over and repeat a few samples to get same number of full batches on each node
+    round_fn = math.floor if floor else math.ceil
+    global_batch_size = args.batch_size * args.world_size
+    num_batches = round_fn(num_samples / global_batch_size)
+    num_workers = max(1, args.workers)
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+    num_batches = num_worker_batches * num_workers
+    num_samples = num_batches * global_batch_size
+    # each worker is iterating over this
+    dataset = dataset.with_epoch(num_worker_batches)
+
+    dataloader = wds.WebLoader(
+        dataset,
+        batch_size=None,
+        shuffle=False,
+        num_workers=args.workers,
+        persistent_workers=True,
+    )
+
+    # add meta-data to dataloader instance for convenience
+    dataloader.num_batches = num_batches
+    dataloader.num_samples = num_samples
+
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 def get_dataset_fn(dataset_type):
     if dataset_type == "image_text":
         return get_wds_dataset
     elif dataset_type == "pile":
         return get_pile_dataset
+    elif dataset_type == "interleaved":
+        return get_interleaved_dataset
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
