@@ -591,8 +591,8 @@ def evaluate_imagenet(
                                         full_dataset, seed)
 
     def get_prompt(sample: dict) -> str:
-        return f"<image>Prompt: A photo of a " \
-               f"Completion:{sample['class_name'].strip()}<|endofchunk|>"
+        return f"<image>Output: A photo of a " \
+               f"{sample['class_name'].strip()}<|endofchunk|>"
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset, random_indices=random_indices,
@@ -618,7 +618,7 @@ def evaluate_imagenet(
                                             context_images=context_images,
                                             num_shots=num_shots)
 
-        batch_text = [context_text + get_prompt(s) for s in batch]
+        batch_text = [context_text + "<image>Output:" for _ in batch]
 
         tokenizer.padding_side = "left"
         encodings = tokenizer(
