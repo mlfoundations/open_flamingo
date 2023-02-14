@@ -48,13 +48,13 @@ parser.add_argument("--device", type=int, default=0)
 
 # Per-dataset evaluation flags
 parser.add_argument("--eval_coco", action="store_true", default=False,
-                    help="Whether to evaluate on COCO.")
+        help="Whether to evaluate on COCO.")
+
+parser.add_argument("--eval_vqav2", action="store_true", default=False,
+        help="Whether to evaluate on VQAV2.")
 
 parser.add_argument("--eval_flickr30", action="store_true", default=False,
                     help="Whether to evaluate on Flickr30.")
-
-parser.add_argument("--eval_vqav2", action="store_true", default=False,
-                    help="Whether to evaluate on VQAV2.")
 
 # Dataset arguments
 
@@ -102,7 +102,6 @@ parser.add_argument(
 
 def main():
     args = parser.parse_args()
-    print(f'Running evaluation. cuda available: {torch.cuda.is_available()} device count: {torch.cuda.device_count()}')
 
     # load model
     flamingo, image_processor, tokenizer = create_model_and_transforms(
@@ -201,6 +200,8 @@ def main():
 
 
 def get_random_indices(num_samples, effective_num_shots, full_dataset, seed):
+
+
     if num_samples + effective_num_shots > len(full_dataset):
         raise ValueError(
             f"num_samples + num_shots must be less than {len(full_dataset)}"
@@ -213,22 +214,21 @@ def get_random_indices(num_samples, effective_num_shots, full_dataset, seed):
     )
     return random_indices
 
-
 def evaluate_coco_flickr(
-        model,
-        tokenizer,
-        image_processor,
-        batch_size,
-        image_dir_path,
-        annotations_json_path,
-        seed=42,
-        max_generation_length=10,
-        num_beams=3,
-        length_penalty=-2.0,
-        num_samples=5000,
-        num_shots=8,
-        device=-1,
-        is_flickr=False,
+    model,
+    tokenizer,
+    image_processor,
+    batch_size,
+    image_dir_path,
+    annotations_json_path,
+    seed=42,
+    max_generation_length=10,
+    num_beams=3,
+    length_penalty=-2.0,
+    num_samples=5000,
+    num_shots=8,
+    device=-1,
+    is_flickr=False,
 ):
     """Evaluate a model on COCO dataset.
 
@@ -375,20 +375,20 @@ def evaluate_coco_flickr(
 
 
 def evaluate_vqa(
-        model,
-        tokenizer,
-        image_processor,
-        batch_size,
-        image_dir_path,
-        questions_json_path,
-        annotations_json_path,
-        seed=42,
-        max_generation_length=5,
-        num_beams=3,
-        length_penalty=-2.0,
-        num_samples=5000,
-        num_shots=8,
-        device=-1,
+    model,
+    tokenizer,
+    image_processor,
+    batch_size,
+    image_dir_path,
+    questions_json_path,
+    annotations_json_path,
+    seed=42,
+    max_generation_length=5,
+    num_beams=3,
+    length_penalty=-2.0,
+    num_samples=5000,
+    num_shots=8,
+    device=-1,
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0.
@@ -458,7 +458,7 @@ def evaluate_vqa(
         context_text = context_text.replace("<image>", "")
 
     for batch in more_itertools.chunked(
-            tqdm(eval_dataset, desc="Running inference"), batch_size
+        tqdm(eval_dataset, desc="Running inference"), batch_size
     ):
         batch_images = None
 
