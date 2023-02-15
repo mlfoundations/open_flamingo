@@ -83,18 +83,20 @@ class FlamingoLMMixin(nn.Module):
         ))
         self.media_token_id = media_token_id
         self.initalized_flamingo = True
-        self.register_forward_pre_hook(self._compute_media_locations)
 
-    def _compute_media_locations(self, module, args):
+    def forward(self, *input, **kwargs):
+        """Condition the Flamingo layers on the media locations before forward()"""
         if not self.initalized_flamingo:
             raise ValueError(
                 "Flamingo layers are not initialized. Please call `init_flamingo` first."
             )
-        # we always pass in 1 positional argument (input_ids)        
-        input_ids = args[0]
+
+        input_ids = kwargs["input_ids"] if "input_ids" in kwargs else input[0]
         media_locations = input_ids == self.media_token_id
         for layer in self._get_decoder_layers():
             layer.condition_media_locations(media_locations)
+
+        return super().forward(*input, **kwargs) # Call the other parent's forward method
             
     def clear_conditioned_layers(self):
         for layer in self._get_decoder_layers():
