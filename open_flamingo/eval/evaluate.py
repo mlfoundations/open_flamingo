@@ -619,7 +619,7 @@ def evaluate_imagenet(
                                             context_images=context_images,
                                             num_shots=num_shots)
 
-        batch_text = [context_text + "<image>Output:" for _ in batch]
+        batch_text = [f"{context_text}<image>Output:{tokenizer.eos_token}"] * batch_size
 
         tokenizer.padding_side = "left"
         encodings = tokenizer(
