@@ -16,6 +16,7 @@ from open_flamingo.eval.classification import \
     postprocess_classification_generation, compute_classification_accuracy
 
 from open_flamingo.src.factory import create_model_and_transforms
+from open_flamingo.src.flamingo import Flamingo
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--lm_path", type=str, default="facebook/opt-1.3b")
@@ -543,18 +544,18 @@ def evaluate_vqa(
 
 
 def evaluate_imagenet(
-    model,
+    model: Flamingo,
     tokenizer,
     image_processor,
-    batch_size,
-    imagenet_root,
-    seed=42,
-    max_generation_length=5,
-    num_beams=3,
-    length_penalty=-2.0,
-    num_samples=5000,
-    num_shots=8,
-    device=-1,
+    batch_size: int,
+    imagenet_root: str,
+    seed: int = 42,
+    max_generation_length: int = 5,
+    num_beams: int = 3,
+    length_penalty: float = -2.0,
+    num_samples: int = 5000,
+    num_shots: int = 8,
+    device: int = -1,
 ):
     """
     Evaluate a model on ImageNet dataset.
@@ -564,7 +565,7 @@ def evaluate_imagenet(
         tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
         image_processor (transformers.ImageProcessor): image processor for the model
         batch_size (int): batch size
-        image_dir_path (str): path to image directory
+        imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
         max_generation_length (int, optional): max generation length. Defaults to 5.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
@@ -628,37 +629,71 @@ def evaluate_imagenet(
             truncation=True,
             max_length=256,
         )
-        input_ids = encodings["input_ids"].to(device if device >= 0 else "cpu")
-        attention_mask = encodings["attention_mask"].to(
-            device if device >= 0 else "cpu"
-        )
+        device = device if device >= 0 else "cpu"
+        input_ids = encodings["input_ids"].to(device)
+        attention_mask = encodings["attention_mask"].to(device)
 
-        outputs = get_outputs(model=model,
-                              batch_images=batch_images,
-                              device=device,
-                              attention_mask=attention_mask,
-                              max_generation_length=max_generation_length,
-                              num_beams=num_beams,
-                              length_penalty=length_penalty,
-                              input_ids=input_ids)
+        logits = model(batch_images, input_ids, attention_mask)
 
-        new_predictions = [
-            postprocess_classification_generation(out).replace('"', "")
-            for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        ]
+        labels = encodings["input_ids"].clone()
+        # convert padding tokens to -100 so they are ignored in loss
+        labels[labels == tokenizer.pad_token_id] = -100
 
-        predictions.extend(
-            [
-                {"prediction": p, "class_label": sample["class_name"]}
-                for p, sample in zip(new_predictions, batch)
-            ]
-        )
+        # Convert all tokens in prefix until separator to -100 so they are
+        # ignored in loss (loss is only computed on token IDs >= 0)
+        for idx in range(len(labels)):
+            end_of_prefix = labels[idx][1:].tolist().index(
+                tokenizer.eos_token_id) + 1
+            labels[idx, :end_of_prefix + 1] = -100
 
-    print("[DEBUG] sample of predictions and labels for debugging:")
-    for p in predictions[:16]:
-        print(f"\t prediction: {p['prediction']}")
-        print(f"\t label: {p['class_label']}")
-    return compute_classification_accuracy(predictions)
+        # Loss computation from OPT code:
+        # Compute per instance loss
+        # Shift so that tokens < n predict n
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
+        loss = loss_fn(logits.view(-1, logits.size(-1)), shift_labels.view(-1))
+        # loss = loss.view(logits.size(0), logits.size(1))
+
+        # sum loss over all tokens and divide by number of variable tokens
+        loss = loss.sum(dim=1) / (labels != -100).sum(dim=1).float()
+
+        import ipdb;ipdb.set_trace()
+
+
+
+    ##############################################################
+    ##### Compute "strict" accuracy based on generated text ######
+    ##############################################################
+    #
+    #
+    #     outputs = get_outputs(model=model,
+    #                           batch_images=batch_images,
+    #                           device=device,
+    #                           attention_mask=attention_mask,
+    #                           max_generation_length=max_generation_length,
+    #                           num_beams=num_beams,
+    #                           length_penalty=length_penalty,
+    #                           input_ids=input_ids)
+    #
+    #     new_predictions = [
+    #         postprocess_classification_generation(out).replace('"', "")
+    #         for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    #     ]
+    #
+    #     predictions.extend(
+    #         [
+    #             {"prediction": p, "class_label": sample["class_name"]}
+    #             for p, sample in zip(new_predictions, batch)
+    #         ]
+    #     )
+    #
+    # print("[DEBUG] sample of predictions and labels for debugging:")
+    # for p in predictions[:16]:
+    #     print(f"\t prediction: {p['prediction']}")
+    #     print(f"\t label: {p['class_label']}")
+    # return compute_classification_accuracy(predictions)
 
 
 if __name__ == "__main__":
