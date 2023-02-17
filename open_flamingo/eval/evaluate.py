@@ -591,9 +591,10 @@ def evaluate_imagenet(
     random_indices = get_random_indices(num_samples, effective_num_shots,
                                         full_dataset, seed)
 
-    def get_prompt(sample: dict) -> str:
-        return f"<image>Output: A photo of a " \
-               f"{sample['class_name'].strip()}<|endofchunk|>"
+    eoc_token = "<|endofchunk|>"
+
+    def get_prompt(x: dict) -> str:
+        return f"<image>A photo of a {x['class_name'].strip()}{eoc_token}"
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset, random_indices=random_indices,
@@ -619,7 +620,7 @@ def evaluate_imagenet(
                                             context_images=context_images,
                                             num_shots=num_shots)
 
-        batch_text = [f"{context_text}<image>Output:{tokenizer.eos_token}"] * batch_size
+        batch_text = [context_text + get_prompt(x) for x in batch]
 
         tokenizer.padding_side = "left"
         encodings = tokenizer(
@@ -647,15 +648,14 @@ def evaluate_imagenet(
                 tokenizer.eos_token_id) + 1
             labels[idx, :end_of_prefix + 1] = -100
 
-        # Loss computation from OPT code:
         # Compute per instance loss
         # Shift so that tokens < n predict n
-        # shift_logits = outputs.logits[..., :-1, :].contiguous()
+        shift_logits = outputs.logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
         loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
-        logits = outputs.logits
-        loss = loss_fn(logits.view(-1, logits.size(-1)), shift_labels.view(-1))
+        loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)),
+                       shift_labels.view(-1).to(device))
         # loss = loss.view(outputs.size(0), outputs.size(1))
 
         # sum loss over all tokens and divide by number of variable tokens
@@ -670,14 +670,14 @@ def evaluate_imagenet(
     ##############################################################
     #
     #
-        outputs = get_outputs(model=model,
-                              batch_images=batch_images,
-                              device=device,
-                              attention_mask=attention_mask,
-                              max_generation_length=max_generation_length,
-                              num_beams=num_beams,
-                              length_penalty=length_penalty,
-                              input_ids=input_ids)
+        # outputs = get_outputs(model=model,
+        #                       batch_images=batch_images,
+        #                       device=device,
+        #                       attention_mask=attention_mask,
+        #                       max_generation_length=max_generation_length,
+        #                       num_beams=num_beams,
+        #                       length_penalty=length_penalty,
+        #                       input_ids=input_ids)
     #
     #     new_predictions = [
     #         postprocess_classification_generation(out).replace('"', "")
@@ -686,12 +686,12 @@ def evaluate_imagenet(
     #
     #     predictions.extend(
     #         [
-    #             {"prediction": p, "class_label": sample["class_name"]}
-    #             for p, sample in zip(new_predictions, batch)
+    #             {"prediction": p, "class_label": x["class_name"]}
+    #             for p, x in zip(new_predictions, batch)
     #         ]
     #     )
     #
-    # print("[DEBUG] sample of predictions and labels for debugging:")
+    # print("[DEBUG] x of predictions and labels for debugging:")
     # for p in predictions[:16]:
     #     print(f"\t prediction: {p['prediction']}")
     #     print(f"\t label: {p['class_label']}")
