@@ -632,8 +632,9 @@ def evaluate_imagenet(
         device = device if device >= 0 else "cpu"
         input_ids = encodings["input_ids"].to(device)
         attention_mask = encodings["attention_mask"].to(device)
+        batch_images = batch_images.to(device)
 
-        logits = model(batch_images, input_ids, attention_mask)
+        outputs = model(batch_images, input_ids, attention_mask)
 
         labels = encodings["input_ids"].clone()
         # convert padding tokens to -100 so they are ignored in loss
@@ -649,12 +650,13 @@ def evaluate_imagenet(
         # Loss computation from OPT code:
         # Compute per instance loss
         # Shift so that tokens < n predict n
-        shift_logits = logits[..., :-1, :].contiguous()
+        # shift_logits = outputs.logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
         loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
+        logits = outputs.logits
         loss = loss_fn(logits.view(-1, logits.size(-1)), shift_labels.view(-1))
-        # loss = loss.view(logits.size(0), logits.size(1))
+        # loss = loss.view(outputs.size(0), outputs.size(1))
 
         # sum loss over all tokens and divide by number of variable tokens
         loss = loss.sum(dim=1) / (labels != -100).sum(dim=1).float()
@@ -668,14 +670,14 @@ def evaluate_imagenet(
     ##############################################################
     #
     #
-    #     outputs = get_outputs(model=model,
-    #                           batch_images=batch_images,
-    #                           device=device,
-    #                           attention_mask=attention_mask,
-    #                           max_generation_length=max_generation_length,
-    #                           num_beams=num_beams,
-    #                           length_penalty=length_penalty,
-    #                           input_ids=input_ids)
+        outputs = get_outputs(model=model,
+                              batch_images=batch_images,
+                              device=device,
+                              attention_mask=attention_mask,
+                              max_generation_length=max_generation_length,
+                              num_beams=num_beams,
+                              length_penalty=length_penalty,
+                              input_ids=input_ids)
     #
     #     new_predictions = [
     #         postprocess_classification_generation(out).replace('"', "")
