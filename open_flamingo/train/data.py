@@ -352,7 +352,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         image = image.convert("RGB")
         
         # remove tiny images as they are likely meaningless rss icons
-        if image.size[0] < 30 or image.size[1] < 30:
+        if image.size[0] <= 10 or image.size[1] <= 10:
             continue
         
         images.append(image)
