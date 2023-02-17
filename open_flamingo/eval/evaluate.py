@@ -44,7 +44,8 @@ parser.add_argument(
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
-    "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
+    "--num_samples", type=int, default=5000,
+    help="Number of samples to evaluate on"
 )
 
 parser.add_argument("--batch_size", type=int, default=8)
@@ -52,10 +53,10 @@ parser.add_argument("--device", type=int, default=0)
 
 # Per-dataset evaluation flags
 parser.add_argument("--eval_coco", action="store_true", default=False,
-        help="Whether to evaluate on COCO.")
+                    help="Whether to evaluate on COCO.")
 
 parser.add_argument("--eval_vqav2", action="store_true", default=False,
-        help="Whether to evaluate on VQAV2.")
+                    help="Whether to evaluate on VQAV2.")
 parser.add_argument("--eval_imagenet", action="store_true", default=False,
                     help="Whether to evaluate on ImageNet.")
 
@@ -197,8 +198,6 @@ def main():
 
 
 def get_random_indices(num_samples, effective_num_shots, full_dataset, seed):
-
-
     if num_samples + effective_num_shots > len(full_dataset):
         raise ValueError(
             f"num_samples + num_shots must be less than {len(full_dataset)}"
@@ -283,20 +282,21 @@ def get_outputs(model, batch_images, device, attention_mask,
     outputs = outputs[:, len(input_ids[0]):]
     return outputs
 
+
 def evaluate_coco(
-    model,
-    tokenizer,
-    image_processor,
-    batch_size,
-    image_dir_path,
-    annotations_json_path,
-    seed=42,
-    max_generation_length=10,
-    num_beams=3,
-    length_penalty=-2.0,
-    num_samples=5000,
-    num_shots=8,
-    device=-1,
+        model,
+        tokenizer,
+        image_processor,
+        batch_size,
+        image_dir_path,
+        annotations_json_path,
+        seed=42,
+        max_generation_length=10,
+        num_beams=3,
+        length_penalty=-2.0,
+        num_samples=5000,
+        num_shots=8,
+        device=-1,
 ):
     """Evaluate a model on COCO dataset.
 
@@ -349,7 +349,7 @@ def evaluate_coco(
     predictions = defaultdict()
 
     for batch in more_itertools.chunked(
-        tqdm(eval_dataset, desc="Running inference"), batch_size
+            tqdm(eval_dataset, desc="Running inference"), batch_size
     ):
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
@@ -412,20 +412,20 @@ def evaluate_coco(
 
 
 def evaluate_vqa(
-    model,
-    tokenizer,
-    image_processor,
-    batch_size,
-    image_dir_path,
-    questions_json_path,
-    annotations_json_path,
-    seed=42,
-    max_generation_length=5,
-    num_beams=3,
-    length_penalty=-2.0,
-    num_samples=5000,
-    num_shots=8,
-    device=-1,
+        model,
+        tokenizer,
+        image_processor,
+        batch_size,
+        image_dir_path,
+        questions_json_path,
+        annotations_json_path,
+        seed=42,
+        max_generation_length=5,
+        num_beams=3,
+        length_penalty=-2.0,
+        num_samples=5000,
+        num_shots=8,
+        device=-1,
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0.
@@ -487,7 +487,7 @@ def evaluate_vqa(
                                     num_shots=num_shots)
 
     for batch in more_itertools.chunked(
-        tqdm(eval_dataset, desc="Running inference"), batch_size
+            tqdm(eval_dataset, desc="Running inference"), batch_size
     ):
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
@@ -534,7 +534,8 @@ def evaluate_vqa(
         f.write(json.dumps(predictions, indent=4))
 
     acc = compute_vqa_accuracy(
-        f"vqaresults_{random_uuid}.json", questions_json_path, annotations_json_path
+        f"vqaresults_{random_uuid}.json", questions_json_path,
+        annotations_json_path
     )
 
     # delete the temporary file
@@ -544,18 +545,18 @@ def evaluate_vqa(
 
 
 def evaluate_imagenet(
-    model: Flamingo,
-    tokenizer,
-    image_processor,
-    batch_size: int,
-    imagenet_root: str,
-    seed: int = 42,
-    max_generation_length: int = 5,
-    num_beams: int = 3,
-    length_penalty: float = -2.0,
-    num_samples: int = 5000,
-    num_shots: int = 8,
-    device: int = -1,
+        model: Flamingo,
+        tokenizer,
+        image_processor,
+        batch_size: int,
+        imagenet_root: str,
+        seed: int = 42,
+        max_generation_length: int = 5,
+        num_beams: int = 3,
+        length_penalty: float = -2.0,
+        num_samples: int = 5000,
+        num_shots: int = 8,
+        device: int = -1,
 ):
     """
     Evaluate a model on ImageNet dataset.
@@ -593,8 +594,14 @@ def evaluate_imagenet(
 
     eoc_token = "<|endofchunk|>"
 
-    def get_prompt(x: dict) -> str:
-        return f"<image>A photo of a {x['class_name'].strip()}"
+    def get_prompt(x: dict, is_context: bool = True) -> str:
+        prefix = "<image>A photo of a "
+        if is_context:
+            return prefix + x['class_name'].strip()
+        else:
+            # Not a context example; insert EOS token before the class name
+            # so that we can compute the loss on the class name tokens only.
+            return prefix + tokenizer.eos_token + x['class_name'].strip()
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset, random_indices=random_indices,
@@ -620,7 +627,8 @@ def evaluate_imagenet(
                                             context_images=context_images,
                                             num_shots=num_shots)
 
-        batch_text = [context_text + get_prompt(x) + eoc_token for x in batch]
+        batch_text = [context_text + get_prompt(x, is_context=False) + eoc_token
+                      for x in batch]
 
         tokenizer.padding_side = "left"
         encodings = tokenizer(
@@ -644,6 +652,7 @@ def evaluate_imagenet(
         # Convert all tokens in prefix until separator to -100 so they are
         # ignored in loss (loss is only computed on token IDs >= 0)
         for idx in range(len(labels)):
+            import ipdb;ipdb.set_trace()
             end_of_prefix = labels[idx][1:].tolist().index(
                 tokenizer.eos_token_id) + 1
             labels[idx, :end_of_prefix + 1] = -100
@@ -661,23 +670,22 @@ def evaluate_imagenet(
         # sum loss over all tokens and divide by number of variable tokens
         loss = loss.sum(dim=1) / (labels != -100).sum(dim=1).float()
 
-        import ipdb;ipdb.set_trace()
-
-
+        import ipdb;
+        ipdb.set_trace()
 
     ##############################################################
     ##### Compute "strict" accuracy based on generated text ######
     ##############################################################
     #
     #
-        # outputs = get_outputs(model=model,
-        #                       batch_images=batch_images,
-        #                       device=device,
-        #                       attention_mask=attention_mask,
-        #                       max_generation_length=max_generation_length,
-        #                       num_beams=num_beams,
-        #                       length_penalty=length_penalty,
-        #                       input_ids=input_ids)
+    # outputs = get_outputs(model=model,
+    #                       batch_images=batch_images,
+    #                       device=device,
+    #                       attention_mask=attention_mask,
+    #                       max_generation_length=max_generation_length,
+    #                       num_beams=num_beams,
+    #                       length_penalty=length_penalty,
+    #                       input_ids=input_ids)
     #
     #     new_predictions = [
     #         postprocess_classification_generation(out).replace('"', "")
