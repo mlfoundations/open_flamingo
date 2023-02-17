@@ -56,7 +56,7 @@ def main():
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     # Sum of gradient optimization batch size
-    parser.add_argument("--batch_size_pile", type=int, default=128)
+    parser.add_argument("--batch_size_c4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
@@ -68,12 +68,12 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
+        default="/data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar",
     )
     parser.add_argument(
-        "--pile_shards",
+        "--c4_shards",
         type=str,
-        default="/fsx/home-anasawadalla/pile/shard-{000000..000169}.tar",
+        default="/mmfs1/gscratch/efml/anasa2/data/c4/c4-interleaved-shard-{000000..000100}.tar",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
@@ -90,7 +90,7 @@ def main():
     )
     # data args
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--train_num_samples_pile", type=int, default=10000)
+    parser.add_argument("--train_num_samples_c4", type=int, default=10000)
     parser.add_argument("--train_num_samples_laion", type=int, default=10000)
     parser.add_argument("--dataset_resampled", action="store_true")
     # distributed training args
@@ -148,7 +148,7 @@ def main():
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
-        args.train_num_samples_pile // args.batch_size_pile
+        args.train_num_samples_c4 // args.batch_size_c4
     ), "number of samples per epoch must be equal for pile and laion"
 
     if args.offline:
@@ -194,10 +194,10 @@ def main():
     args.train_num_samples = args.train_num_samples_laion
     laion_dataset = get_data(args, image_processor, tokenizer)
 
-    args.shards = args.pile_shards
-    args.dataset_type = "pile"
-    args.batch_size = args.batch_size_pile
-    args.train_num_samples = args.train_num_samples_pile
+    args.shards = args.c4_shards
+    args.dataset_type = "c4"
+    args.batch_size = args.batch_size_c4
+    args.train_num_samples = args.train_num_samples_c4
     pile_dataset = get_data(args, image_processor, tokenizer)
 
     def get_grouped_params(model):

@@ -90,16 +90,11 @@ def train_one_epoch(
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
         #### PILE FORWARD PASS ####
+        images = batch_pile[0].to(device_id, dtype=cast_dtype, non_blocking=True).unsqueeze(2)
         input_ids = torch.stack([x[0] for x in batch_pile[1]]).squeeze(1)
         attention_mask = torch.stack([x[1] for x in batch_pile[1]]).squeeze(1)
-        clip_text_input_ids = torch.stack([x[0] for x in batch_pile[0]]).to(
-            device_id, dtype=cast_dtype, non_blocking=True
-        )
-        clip_text_attention_mask = torch.stack([x[1] for x in batch_pile[0]]).to(
-            device_id, dtype=cast_dtype, non_blocking=True
-        )
+        
         # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
-
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
         labels[:, 0] = -100
@@ -118,12 +113,10 @@ def train_one_epoch(
 
         with autocast():
             loss_pile = model(
-                None,
+                images,
                 input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                pseudovision_x=clip_text_input_ids,
-                pseudovision_attention_mask=clip_text_attention_mask,
             )[0]
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
