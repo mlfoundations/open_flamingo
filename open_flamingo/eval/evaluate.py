@@ -652,9 +652,11 @@ def evaluate_imagenet(
         # Convert all tokens in prefix until separator to -100 so they are
         # ignored in loss (loss is only computed on token IDs >= 0)
         for idx in range(len(labels)):
-            import ipdb;ipdb.set_trace()
-            end_of_prefix = labels[idx][1:].tolist().index(
-                tokenizer.eos_token_id) + 1
+            # Find the location of the last token of prefix *from right*,
+            # since the first non-padding token of the sequence will also be
+            # eos_token (because bos_token and eos_token are the same for
+            # the tokenizer).
+            end_of_prefix = -labels[idx].tolist()[::-1].index(tokenizer.eos_token_id) - 1
             labels[idx, :end_of_prefix + 1] = -100
 
         # Compute per instance loss
