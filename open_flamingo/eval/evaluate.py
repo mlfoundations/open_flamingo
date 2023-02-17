@@ -594,7 +594,7 @@ def evaluate_imagenet(
     eoc_token = "<|endofchunk|>"
 
     def get_prompt(x: dict) -> str:
-        return f"<image>A photo of a {x['class_name'].strip()}{eoc_token}"
+        return f"<image>A photo of a {x['class_name'].strip()}"
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset, random_indices=random_indices,
@@ -620,7 +620,7 @@ def evaluate_imagenet(
                                             context_images=context_images,
                                             num_shots=num_shots)
 
-        batch_text = [context_text + get_prompt(x) for x in batch]
+        batch_text = [context_text + get_prompt(x) + eoc_token for x in batch]
 
         tokenizer.padding_side = "left"
         encodings = tokenizer(
