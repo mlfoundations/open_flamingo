@@ -623,9 +623,7 @@ def evaluate_imagenet(
                                     effective_num_shots=effective_num_shots,
                                     num_shots=num_shots)
 
-    for batch in more_itertools.chunked(
-            tqdm(eval_dataset, desc="Running inference"), batch_size
-    ):
+    for batch in more_itertools.chunked(eval_dataset, batch_size):
         batch_per_class_losses = []
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
@@ -635,7 +633,7 @@ def evaluate_imagenet(
         # For each ImageNet class, construct the output prompt, compute its
         # completion 'loss'. The class with the lowest completion loss would
         # be the predicted label.
-        for imagenet_class_name in openai_imagenet_classnames:
+        for imagenet_class_name in tqdm(openai_imagenet_classnames):
             batch_text = [context_text
                           + _imagenet_prompt(imagenet_class_name, False)
                           + eoc_token] * batch_size
@@ -669,42 +667,9 @@ def evaluate_imagenet(
         predictions.extend(torch.argmax(tmp, 1).detach().tolist())
         labels.extend(x['class_id'] for x in batch)
 
-        import ipdb;
-        ipdb.set_trace()
-
-
-
-    ##############################################################
-    ##### Compute "strict" accuracy based on generated text ######
-    ##############################################################
-    #
-    #
-    # outputs = get_outputs(model=model,
-    #                       batch_images=batch_images,
-    #                       device=device,
-    #                       attention_mask=attention_mask,
-    #                       max_generation_length=max_generation_length,
-    #                       num_beams=num_beams,
-    #                       length_penalty=length_penalty,
-    #                       input_ids=input_ids)
-    #
-    #     new_predictions = [
-    #         postprocess_classification_generation(out).replace('"', "")
-    #         for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    #     ]
-    #
-    #     predictions.extend(
-    #         [
-    #             {"prediction": p, "class_label": x["class_name"]}
-    #             for p, x in zip(new_predictions, batch)
-    #         ]
-    #     )
-    #
-    # print("[DEBUG] x of predictions and labels for debugging:")
-    # for p in predictions[:16]:
-    #     print(f"\t prediction: {p['prediction']}")
-    #     print(f"\t label: {p['class_label']}")
-    # return compute_classification_accuracy(predictions)
+    acc = (np.array(predictions) == np.array(labels)).mean()
+    print(f"[DEBUG] ImageNet accuracy is {acc}")
+    return acc
 
 
 if __name__ == "__main__":
