@@ -3,6 +3,7 @@ import re
 import numpy as np
 import torch
 
+
 def postprocess_classification_generation(predictions) -> str:
     return re.split("Prompt|Completion", predictions, 1)[0]
 
@@ -28,6 +29,7 @@ def compute_per_sample_loss(encodings, tokenizer, outputs):
     Assumes <eos token> is used to separate inputs from targets in the
     prompt text
     """
+    device = outputs.logits.device
     labels = encodings["input_ids"].clone()
     # convert padding tokens to -100 so they are ignored in loss
     labels[labels == tokenizer.pad_token_id] = -100
