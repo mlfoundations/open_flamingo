@@ -30,6 +30,7 @@ def train_one_epoch(
     epoch,
     laion_loader,
     pile_loader,
+    interleaved_loader,
     tokenizer,
     optimizer,
     lr_scheduler,
@@ -38,9 +39,11 @@ def train_one_epoch(
 ):
     num_batches_per_epoch_laion = laion_loader.num_batches
     num_batches_per_epoch_pile = pile_loader.num_batches
+    num_batches_per_epoch_interleaved = interleaved_loader.num_batches
 
     print(f"Number of batches per epoch in laion: {num_batches_per_epoch_laion}")
     print(f"Number of batches per epoch in pile: {num_batches_per_epoch_pile}")
+    print(f"Number of batches per epoch in interleaved: {num_batches_per_epoch_interleaved}")
 
     # assert num_batches_per_epoch_laion == num_batches_per_epoch_pile, "Number of batches in laion and pile datasets must be the same"
     num_batches_per_epoch = num_batches_per_epoch_pile
@@ -56,9 +59,9 @@ def train_one_epoch(
     ][-1]
 
     model.train()
-    for num_steps, (batch_laion, batch_pile) in tqdm(
-        enumerate(zip(laion_loader, pile_loader)), disable=args.rank != 0
-    ):
+    for num_steps, (batch_laion, batch_pile, batch_interleaved) in tqdm(
+        enumerate(zip(laion_loader, pile_loader,interleaved_loader)), disable=args.rank != 0
+    ): 
         global_step = num_steps + epoch * num_batches_per_epoch
 
         #### LAION FORWARD PASS ####

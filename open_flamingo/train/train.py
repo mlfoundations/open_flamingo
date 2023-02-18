@@ -19,7 +19,6 @@ from transformers import (
 
 from open_flamingo import create_model_and_transforms
 
-
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
     np.random.seed(seed + rank)
@@ -58,6 +57,7 @@ def main():
     # Sum of gradient optimization batch size
     parser.add_argument("--batch_size_pile", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
+    parser.add_argument("--batch_size_interleaved", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument(
@@ -74,6 +74,11 @@ def main():
         "--pile_shards",
         type=str,
         default="/fsx/home-anasawadalla/pile/shard-{000000..000169}.tar",
+    )
+    parser.add_argument(
+        "--interleaved_shards",
+        type=str,
+        default = "/mmfs1/gscratch/efml/anasa2/data/c4/c4-interleaved-shard-{000000..000009}.tar",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
@@ -97,6 +102,9 @@ def main():
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--train_num_samples_pile", type=int, default=10000)
     parser.add_argument("--train_num_samples_laion", type=int, default=10000)
+    parser.add_argument("--train_num_samples_interleaved", type=int, default=10000)
+
+
     parser.add_argument("--dataset_resampled", action="store_true")
     # distributed training args
     parser.add_argument(
@@ -193,6 +201,12 @@ def main():
 
     ddp_model = DDP(model, device_ids=[device_id])
 
+    args.shards = args.interleaved_shards
+    args.dataset_type = "interleaved"
+    args.batch_size = args.batch_size_interleaved
+    args.train_num_samples = args.train_num_samples_interleaved
+    interleaved_dataset = get_data(args, image_processor, tokenizer)
+
     args.shards = args.laion_shards
     args.dataset_type = "image_text"
     args.batch_size = args.batch_size_laion
@@ -204,6 +218,7 @@ def main():
     args.batch_size = args.batch_size_pile
     args.train_num_samples = args.train_num_samples_pile
     pile_dataset = get_data(args, image_processor, tokenizer)
+
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -273,6 +288,9 @@ def main():
         laion_loader = laion_dataset.dataloader
         pile_dataset.set_epoch(epoch)
         pile_loader = pile_dataset.dataloader
+        interleaved_dataset.set_epoch(epoch)
+        interleaved_loader = interleaved_dataset.dataloader
+
 
         train_one_epoch(
             args=args,
@@ -283,6 +301,7 @@ def main():
             lr_scheduler=lr_scheduler,
             laion_loader=laion_loader,
             pile_loader=pile_loader,
+            interleaved_loader=interleaved_loader,
             device_id=device_id,
             wandb=wandb,
         )
