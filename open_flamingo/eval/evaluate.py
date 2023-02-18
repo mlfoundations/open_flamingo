@@ -8,7 +8,7 @@ import more_itertools
 import numpy as np
 import torch
 from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import COCODataset, VQAv2Dataset
+from eval_datasets import COCOFlickrDataset, VQAv2Dataset
 from tqdm import tqdm
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
@@ -53,6 +53,9 @@ parser.add_argument("--eval_coco", action="store_true", default=False,
 parser.add_argument("--eval_vqav2", action="store_true", default=False,
         help="Whether to evaluate on VQAV2.")
 
+parser.add_argument("--eval_flickr30", action="store_true", default=False,
+                    help="Whether to evaluate on Flickr30.")
+
 # Dataset arguments
 
 ## COCO Dataset
@@ -65,6 +68,18 @@ parser.add_argument(
     "--coco_annotations_json_path",
     type=str,
     default="/fsx/home-anasawadalla/data/coco/annotations/captions_train2017.json",
+)
+
+## Flickr30 Dataset
+parser.add_argument(
+    "--flickr_image_dir_path",
+    type=str,
+    default='/cs/snapless/roys/yonatanbitton/open_flamingo_data/flickr30/flickr30k_images'
+)
+parser.add_argument(
+    "--flickr_annotations_json_path",
+    type=str,
+    default='/cs/snapless/roys/yonatanbitton/open_flamingo_data/flickr30/dataset_flickr30k_coco_style.json'
 )
 
 ## VQAV2 Dataset
@@ -105,15 +120,38 @@ def main():
     flamingo.load_state_dict(checkpoint, strict=False)
     flamingo.to(args.device if args.device >= 0 else "cpu")
 
-    results = {"coco": [], "vqav2": []}  # results to be saved to file
+    results = {"coco": [], 'flickr30': [], "vqav2": []}  # results to be saved to file
+
+    if args.eval_flickr30:
+        print("Evaluating on Flickr30...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                cider_score = evaluate_coco_flickr(
+                    model=flamingo,
+                    tokenizer=tokenizer,
+                    image_processor=image_processor,
+                    batch_size=args.batch_size,
+                    image_dir_path=args.flickr_image_dir_path,
+                    annotations_json_path=args.flickr_annotations_json_path,
+                    num_samples=args.num_samples,
+                    num_shots=shot,
+                    device=args.device,
+                    seed=seed,
+                    is_flickr=True
+                )
+                print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
+                scores.append(cider_score)
+            print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+            results["flickr30"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)})
 
     if args.eval_coco:
-        
         print("Evaluating on COCO...")
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_coco(
+                cider_score = evaluate_coco_flickr(
                     model=flamingo,
                     tokenizer=tokenizer,
                     image_processor=image_processor,
@@ -130,9 +168,9 @@ def main():
             print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
             results["coco"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)})
-    
+
     if args.eval_vqav2:
-    
+
         print("Evaluating on VQAv2...")
         for shot in args.shots:
             scores = []
@@ -176,7 +214,7 @@ def get_random_indices(num_samples, effective_num_shots, full_dataset, seed):
     )
     return random_indices
 
-def evaluate_coco(
+def evaluate_coco_flickr(
     model,
     tokenizer,
     image_processor,
@@ -190,6 +228,7 @@ def evaluate_coco(
     num_samples=5000,
     num_shots=8,
     device=-1,
+    is_flickr=False,
 ):
     """Evaluate a model on COCO dataset.
 
@@ -208,14 +247,15 @@ def evaluate_coco(
         num_shots (int, optional): number of in-context samples to use. Defaults to 8.
         device (int, optional): device to use. Defaults to -1.
         num_workers (int, optional): number of workers to use for dataloader. Defaults to 4.
+        is_flickr (bool): defines if that data is COCO or Flickr. Defaults to False (COCO).
 
     Returns:
         float: CIDEr score
 
     """
 
-    full_dataset = COCODataset(
-        image_dir_path=image_dir_path, annotations_path=annotations_json_path
+    full_dataset = COCOFlickrDataset(
+        image_dir_path=image_dir_path, annotations_path=annotations_json_path, is_flickr=is_flickr,
     )
     effective_num_shots = num_shots if num_shots > 0 else 2
     random_indices = get_random_indices(num_samples, effective_num_shots,
@@ -251,8 +291,10 @@ def evaluate_coco(
 
     predictions = defaultdict()
 
+    desc = 'Running inference Flickr30' if is_flickr else 'Running inference COCO'
+
     for batch in more_itertools.chunked(
-        tqdm(eval_dataset, desc="Running inference"), batch_size
+            tqdm(eval_dataset, desc=desc), batch_size
     ):
         batch_images = None
 
@@ -306,9 +348,11 @@ def evaluate_coco(
                 "caption": new_predictions[i],
             }
 
+
     # save the predictions to a temporary file
     random_uuid = str(uuid.uuid4())
-    with open(f"cocoresults_{random_uuid}.json", "w") as f:
+    results_path = f"flickrresults_{random_uuid}.json" if is_flickr else f"cocoresults_{random_uuid}.json"
+    with open(results_path, "w") as f:
         f.write(
             json.dumps(
                 [
@@ -320,12 +364,12 @@ def evaluate_coco(
         )
 
     metrics = compute_cider(
-        result_path=f"cocoresults_{random_uuid}.json",
+        result_path=results_path,
         annotations_path=annotations_json_path,
     )
 
     # delete the temporary file
-    os.remove(f"cocoresults_{random_uuid}.json")
+    os.remove(results_path)
 
     return metrics["CIDEr"] * 100.0
 
