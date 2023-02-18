@@ -13,7 +13,8 @@ from eval_datasets import COCODataset, VQAv2Dataset, ImageNetDataset
 from tqdm import tqdm
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 from open_flamingo.eval.classification import compute_per_sample_loss
-from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames
+from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames, \
+    IMAGENET_1K_CLASS_ID_TO_LABEL
 
 from open_flamingo.src.factory import create_model_and_transforms
 from open_flamingo.src.flamingo import Flamingo
@@ -565,13 +566,9 @@ def evaluate_imagenet(
         batch_size (int): batch size
         imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
-        max_generation_length (int, optional): max generation length. Defaults to 5.
-        num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
-        length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_samples (int, optional): number of samples to evaluate on. Defaults to 5000 samples.
         num_shots (int, optional): number of shots to use. Defaults to 8.
         device (int, optional): device to use. Defaults to -1 (cpu).
-        num_workers (int, optional): number of workers to use. Defaults to 4.
 
     Returns:
         float: accuracy score
@@ -612,7 +609,6 @@ def evaluate_imagenet(
     model.eval()
     predictions = []
     labels = []
-    eval_losses = []
 
     context_images = get_context_images(image_processor=image_processor,
                                         in_context_samples=in_context_samples,
@@ -623,7 +619,8 @@ def evaluate_imagenet(
                                     effective_num_shots=effective_num_shots,
                                     num_shots=num_shots)
 
-    for batch in more_itertools.chunked(eval_dataset, batch_size):
+    for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
+        print(f"processing batch {i} of {len(eval_dataset)}")
         batch_per_class_losses = []
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
@@ -669,6 +666,10 @@ def evaluate_imagenet(
 
     acc = (np.array(predictions) == np.array(labels)).mean()
     print(f"[DEBUG] ImageNet accuracy is {acc}")
+    print(f"[DEBUG] printing ImageNet predictions and labels:")
+    for yhat, y in zip(predictions, labels):
+        print(f"\t prediction: {IMAGENET_1K_CLASS_ID_TO_LABEL[yhat]} // "
+              f"label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}")
     return acc
 
 
