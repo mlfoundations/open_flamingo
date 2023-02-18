@@ -118,7 +118,7 @@ def main():
     checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
 
     flamingo.load_state_dict(checkpoint, strict=False)
-    flamingo.to(args.device if args.device > 0 else "cpu")
+    flamingo.to(args.device if args.device >= 0 else "cpu")
 
     results = {"coco": [], 'flickr30': [], "vqav2": []}  # results to be saved to file
 
@@ -328,10 +328,10 @@ def evaluate_coco_flickr(
 
         with torch.inference_mode():
             outputs = model.generate(
-                batch_images.to(device if device > 0 else "cpu"),
-                input_ids.to(device if device > 0 else "cpu"),
+                batch_images.to(device if device >= 0 else "cpu"),
+                input_ids.to(device if device >= 0 else "cpu"),
                 attention_mask=attention_mask.to(
-                    device if device > 0 else "cpu"),
+                    device if device >= 0 else "cpu"),
                 max_new_tokens=max_generation_length,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
@@ -488,17 +488,17 @@ def evaluate_vqa(
             truncation=True,
             max_length=256,
         )
-        input_ids = encodings["input_ids"].to(device if device > 0 else "cpu")
+        input_ids = encodings["input_ids"].to(device if device >= 0 else "cpu")
         attention_mask = encodings["attention_mask"].to(
-            device if device > 0 else "cpu"
+            device if device >= 0 else "cpu"
         )
 
         with torch.inference_mode():
             outputs = model.generate(
-                batch_images.to(device if device > 0 else "cpu"),
-                input_ids.to(device if device > 0 else "cpu"),
+                batch_images.to(device if device >= 0 else "cpu"),
+                input_ids.to(device if device >= 0 else "cpu"),
                 attention_mask=attention_mask.to(
-                    device if device > 0 else "cpu"),
+                    device if device >= 0 else "cpu"),
                 max_new_tokens=max_generation_length,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
