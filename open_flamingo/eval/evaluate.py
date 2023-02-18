@@ -3,7 +3,7 @@ import json
 import os
 import uuid
 from collections import defaultdict
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 
 import more_itertools
 import numpy as np
@@ -12,8 +12,8 @@ from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import COCODataset, VQAv2Dataset, ImageNetDataset
 from tqdm import tqdm
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.eval.classification import \
-    postprocess_classification_generation, compute_classification_accuracy
+from open_flamingo.eval.classification import compute_per_sample_loss
+from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames
 
 from open_flamingo.src.factory import create_model_and_transforms
 from open_flamingo.src.flamingo import Flamingo
@@ -551,9 +551,6 @@ def evaluate_imagenet(
         batch_size: int,
         imagenet_root: str,
         seed: int = 42,
-        max_generation_length: int = 5,
-        num_beams: int = 3,
-        length_penalty: float = -2.0,
         num_samples: int = 5000,
         num_shots: int = 8,
         device: int = -1,
@@ -594,14 +591,19 @@ def evaluate_imagenet(
 
     eoc_token = "<|endofchunk|>"
 
-    def get_prompt(x: dict, is_context: bool = True) -> str:
+    def _imagenet_prompt(class_name, is_context: bool = True):
+        """Construct an imagenet prompt for a given label."""
         prefix = "<image>A photo of a "
         if is_context:
-            return prefix + x['class_name'].strip()
+            return prefix + class_name.strip()
         else:
             # Not a context example; insert EOS token before the class name
             # so that we can compute the loss on the class name tokens only.
-            return prefix + tokenizer.eos_token + x['class_name'].strip()
+            return prefix + tokenizer.eos_token + class_name.strip()
+
+    def get_imagenet_prompt(x: dict, is_context: bool = True) -> str:
+        """Construct an ImageNet prompt for an example, using its label."""
+        return _imagenet_prompt(x['class_name'], is_context=is_context)
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset, random_indices=random_indices,
@@ -609,12 +611,14 @@ def evaluate_imagenet(
 
     model.eval()
     predictions = []
+    labels = []
+    eval_losses = []
 
     context_images = get_context_images(image_processor=image_processor,
                                         in_context_samples=in_context_samples,
                                         num_shots=num_shots)
 
-    context_text = get_context_text(get_prompt,
+    context_text = get_context_text(get_imagenet_prompt,
                                     in_context_samples=in_context_samples,
                                     effective_num_shots=effective_num_shots,
                                     num_shots=num_shots)
@@ -622,58 +626,53 @@ def evaluate_imagenet(
     for batch in more_itertools.chunked(
             tqdm(eval_dataset, desc="Running inference"), batch_size
     ):
+        batch_per_class_losses = []
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
                                             context_images=context_images,
                                             num_shots=num_shots)
 
-        batch_text = [context_text + get_prompt(x, is_context=False) + eoc_token
-                      for x in batch]
+        # For each ImageNet class, construct the output prompt, compute its
+        # completion 'loss'. The class with the lowest completion loss would
+        # be the predicted label.
+        for imagenet_class_name in openai_imagenet_classnames:
+            batch_text = [context_text
+                          + _imagenet_prompt(imagenet_class_name, False)
+                          + eoc_token] * batch_size
 
-        tokenizer.padding_side = "left"
-        encodings = tokenizer(
-            batch_text,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=256,
-        )
-        device = device if device >= 0 else "cpu"
-        input_ids = encodings["input_ids"].to(device)
-        attention_mask = encodings["attention_mask"].to(device)
-        batch_images = batch_images.to(device)
+            tokenizer.padding_side = "left"
+            encodings = tokenizer(
+                batch_text,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=256,
+            )
+            device = device if device >= 0 else "cpu"
 
-        outputs = model(batch_images, input_ids, attention_mask)
+            # input_ids has shape [batch_size, seq_len]
+            input_ids = encodings["input_ids"].to(device)
+            attention_mask = encodings["attention_mask"].to(device)
+            batch_images = batch_images.to(device)
 
-        labels = encodings["input_ids"].clone()
-        # convert padding tokens to -100 so they are ignored in loss
-        labels[labels == tokenizer.pad_token_id] = -100
+            outputs = model(batch_images, input_ids, attention_mask)
 
-        # Convert all tokens in prefix until separator to -100 so they are
-        # ignored in loss (loss is only computed on token IDs >= 0)
-        for idx in range(len(labels)):
-            # Find the location of the last token of prefix *from right*,
-            # since the first non-padding token of the sequence will also be
-            # eos_token (because bos_token and eos_token are the same for
-            # the tokenizer).
-            end_of_prefix = -labels[idx].tolist()[::-1].index(tokenizer.eos_token_id) - 1
-            labels[idx, :end_of_prefix + 1] = -100
+            per_sample_loss = compute_per_sample_loss(encodings=encodings,
+                                                      tokenizer=tokenizer,
+                                                      outputs=outputs)
+            batch_per_class_losses.append(per_sample_loss.detach())
 
-        # Compute per instance loss
-        # Shift so that tokens < n predict n
-        shift_logits = outputs.logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
+        # Tensor of shape [batch_size, 1000] where the [i,j]th element is
+        # the loss for batch element i on imagenet class j.
+        tmp = torch.stack(batch_per_class_losses, 1)
 
-        loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
-        loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)),
-                       shift_labels.view(-1).to(device))
-        # loss = loss.view(outputs.size(0), outputs.size(1))
-
-        # sum loss over all tokens and divide by number of variable tokens
-        loss = loss.sum(dim=1) / (labels != -100).sum(dim=1).float()
+        predictions.extend(torch.argmax(tmp, 1).detach().tolist())
+        labels.extend(x['class_id'] for x in batch)
 
         import ipdb;
         ipdb.set_trace()
+
+
 
     ##############################################################
     ##### Compute "strict" accuracy based on generated text ######
