@@ -1,5 +1,5 @@
 # classnames via https://github.com/mlfoundations/wise-ft/blob/master/src/datasets/imagenet_classnames.py#L1
-openai_classnames = [
+openai_imagenet_classnames = [
     "tench", "goldfish", "great white shark", "tiger shark", "hammerhead shark", "electric ray",
     "stingray", "rooster", "hen", "ostrich", "brambling", "goldfinch", "house finch", "junco",
     "indigo bunting", "American robin", "bulbul", "jay", "magpie", "chickadee", "American dipper",
@@ -167,5 +167,5 @@ openai_classnames = [
     "earth star fungus", "hen of the woods mushroom", "bolete", "corn cob", "toilet paper"
 ]
 # Maps numeric class ids to labels
-IMAGENET_1K_CLASS_ID_TO_LABEL = dict(zip(range(len(openai_classnames)),
-                                         openai_classnames))
+IMAGENET_1K_CLASS_ID_TO_LABEL = dict(zip(range(len(openai_imagenet_classnames)),
+                                         openai_imagenet_classnames))
