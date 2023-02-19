@@ -4,6 +4,7 @@ import argparse
 import glob
 import os
 import random
+import braceexpand
 
 import numpy as np
 import torch
@@ -68,7 +69,7 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        default="/data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar",
+        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
     )
     parser.add_argument(
         "--c4_shards",
@@ -188,13 +189,27 @@ def main():
 
     ddp_model = DDP(model, device_ids=[device_id])
 
-    args.shards = args.laion_shards
+    args.shards = list(braceexpand.braceexpand(args.laion_shards))
     args.dataset_type = "image_text"
     args.batch_size = args.batch_size_laion
     args.train_num_samples = args.train_num_samples_laion
     laion_dataset = get_data(args, image_processor, tokenizer)
 
-    args.shards = args.c4_shards
+    # load the name of the first 9200 shards of c4 from /fsx/home-anasawadalla/shard_url_list.txt
+    c4_shard_urls = []
+    with open("/fsx/home-anasawadalla/shard_url_list.txt", "r") as f:
+        for idx, line in enumerate(f):
+            c4_shard_urls.append(line.strip())
+            if idx == 13250:
+                break
+    
+    # remove everything from the shard urls except the shard name
+    c4_shard_urls = [shard_url.split("/")[-1] for shard_url in c4_shard_urls]
+    # add the s3 prefix
+    c4_shard_urls = [f"pipe:aws s3 cp s3://s-laion/flamingo/c4/{shard_url} -" for shard_url in c4_shard_urls]
+            
+    args.shards = c4_shard_urls
+
     args.dataset_type = "c4"
     args.batch_size = args.batch_size_c4
     args.train_num_samples = args.train_num_samples_c4
@@ -213,10 +228,11 @@ def main():
             )
 
         for n, p in model.named_parameters():
-            if apply_decay(n):
-                params_with_wd.append(p)
-            else:
-                params_without_wd.append(p)
+            if p.requires_grad:
+                if apply_decay(n):
+                    params_with_wd.append(p)
+                else:
+                    params_without_wd.append(p)
         return [
             {"params": params_with_wd, "weight_decay": args.weight_decay},
             {"params": params_without_wd, "weight_decay": 0.0},

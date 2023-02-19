@@ -11,7 +11,6 @@ import sys
 from dataclasses import dataclass
 from multiprocessing import Value
 import tarfile
-from time import sleep
 
 import braceexpand
 import torch
@@ -62,8 +61,9 @@ class DataInfo:
 
 
 def get_dataset_size(shards):
-    shards_list = list(braceexpand.braceexpand(shards))
-    dir_path = os.path.dirname(shards)
+    # shards_list = list(braceexpand.braceexpand(shards))
+    shards_list = shards
+    dir_path = os.path.dirname(shards[0])
     sizes_filename = os.path.join(dir_path, "sizes.json")
     len_filename = os.path.join(dir_path, "__len__")
     if os.path.exists(sizes_filename):
@@ -352,12 +352,12 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         image = image.convert("RGB")
         
         # remove tiny images as they are likely meaningless rss icons
-        if image.size[0] <= 10 or image.size[1] <= 10:
+        if image.size[0] <= 1 or image.size[1] <= 1:
             continue
         
         images.append(image)
         image_idx = info["image_info"][image_path]["matched_text_index"]
-        sentences[image_idx] = f"<|endofchunk|><image>{sentences[image_idx]}"
+        sentences[image_idx] = f"<image>{sentences[image_idx]}"
         
         # use at most 5 images
         if len(images) == 5:
@@ -366,13 +366,16 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
     if len(images) == 0:
         raise ValueError("No images in sample")
         
+    # add a single end of chunk token to the start of any sentence with an image
+    sentences = [f"<|endofchunk|>{s}" if "<image>" in s else s for s in sentences]
+        
     text = " ".join(sentences)
     text = text.replace("<|endofchunk|>", "", 1)
     text = text.replace(" <|endofchunk|>", "<|endofchunk|>")
     text = text.replace("<image> ", "<image>")
     text = text.replace(" <image>", "<image>")
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
-    
+            
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
         text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"

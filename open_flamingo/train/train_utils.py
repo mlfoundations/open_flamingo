@@ -118,6 +118,16 @@ def train_one_epoch(
                 attention_mask=attention_mask,
                 labels=labels,
             )[0]
+            
+            # if loss is nan, skip this batch
+            if torch.isnan(loss_pile):
+                print("loss is nan, skipping this batch")
+                print("input_ids: ", tokenizer.batch_decode(input_ids))
+                print("labels: ", labels)
+                print("images: ", images)
+                optimizer.zero_grad()
+                continue
+            
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
         #### BACKWARD PASS ####
