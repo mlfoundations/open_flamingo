@@ -69,7 +69,7 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
+        default="/data/yfcc-tmp/cah/shards/shard_{000000..053008}.tar" #"s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
     )
     parser.add_argument(
         "--c4_shards",
@@ -197,16 +197,16 @@ def main():
 
     # load the name of the first 9200 shards of c4 from /fsx/home-anasawadalla/shard_url_list.txt
     c4_shard_urls = []
-    with open("/fsx/home-anasawadalla/shard_url_list.txt", "r") as f:
+    with open("/mmfs1/gscratch/efml/anasa2/data/shard_url_list.txt", "r") as f:
         for idx, line in enumerate(f):
             c4_shard_urls.append(line.strip())
-            if idx == 13250:
+            if idx == 1000:
                 break
     
     # remove everything from the shard urls except the shard name
     c4_shard_urls = [shard_url.split("/")[-1] for shard_url in c4_shard_urls]
     # add the s3 prefix
-    c4_shard_urls = [f"pipe:aws s3 cp s3://s-laion/flamingo/c4/{shard_url} -" for shard_url in c4_shard_urls]
+    c4_shard_urls = [f"/mmfs1/gscratch/efml/anasa2/data/c4/{shard_url}" for shard_url in c4_shard_urls]
             
     args.shards = c4_shard_urls
 
