@@ -32,22 +32,29 @@ from open_flamingo.eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
 #         return {"image": image, "question": question, "answers": answers}
 
 
-class COCODataset(Dataset):
+class COCOFlickrDataset(Dataset):
     def __init__(
         self,
         image_dir_path="/mmfs1/gscratch/efml/anasa2/data/coco/train2017/",
         annotations_path="/mmfs1/gscratch/efml/anasa2/data/coco/annotations/captions_train2017.json",
+        is_flickr=False,
     ):
         self.image_dir_path = image_dir_path
         self.annotations = json.load(open(annotations_path))["annotations"]
+        self.is_flickr = is_flickr
 
     def __len__(self):
         return len(self.annotations)
 
+    def get_img_path(self, idx):
+        if self.is_flickr:
+            return f"{self.image_dir_path}/{self.annotations[idx]['image_id']}.jpg"
+        else:
+            return f"{self.image_dir_path}/{self.annotations[idx]['image_id']:012d}.jpg"
+
+
     def __getitem__(self, idx):
-        image = Image.open(
-            f"{self.image_dir_path}/{self.annotations[idx]['image_id']:012d}.jpg"
-        )
+        image = Image.open(self.get_img_path(idx))
         caption = self.annotations[idx]["caption"]
         return {
             "image": image,
