@@ -132,6 +132,7 @@ dmypy.json
 
 *.out
 src/wandb
+wandb
 
 # Pyre type checker
 .pyre/

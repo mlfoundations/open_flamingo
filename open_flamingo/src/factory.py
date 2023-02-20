@@ -68,13 +68,14 @@ def create_model_and_transforms(
         **flamingo_kwargs,
     )
 
-    for p in lang_encoder._get_decoder_layers().parameters():
-        p.requires_grad = False
-
-    for p in lang_encoder.gated_cross_attn_layers.parameters():
-        p.requires_grad = True
-
-    lang_encoder.get_input_embeddings().weight.requires_grad = True
+    # Freeze all parameters
+    model.requires_grad_(False)
+    assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+    
+    # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
+    model.perceiver.requires_grad_(True)
+    model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
+    model.lang_encoder.get_input_embeddings().requires_grad_(True)
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
