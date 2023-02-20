@@ -740,9 +740,9 @@ def evaluate_imagenet(
                                        predictions_min_loss,
                                        labels):
         print(f"\t prediction (max prob method): "
-              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]} // "
+              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]:40} // "
               f"\t prediction (min loss method): "
-              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]} // "
+              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]:40} // "
               f"label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}")
     return acc_max_prob
 

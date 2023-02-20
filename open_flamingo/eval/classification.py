@@ -68,7 +68,7 @@ def compute_per_sample_probs(encodings, tokenizer, outputs) -> torch.Tensor:
         "At least one element in batch has no unmasked target tokens."
 
     # Renormalize over tokens to make sure they are proper probabilities via
-    # LogSoftMax over the token dimension.
+    # softmax over the token dimension.
     shift_probs = torch.nn.functional.softmax(shift_logits, 2)
 
     # Compute the probability of the target sequence (as the product of the
@@ -107,8 +107,8 @@ def compute_per_sample_loss(encodings, tokenizer, outputs) -> torch.Tensor:
     shift_logits = outputs.logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
 
-    # renormalize over tokens to make sure they are proper
-    #  probabilities via LogSoftMax over the token dimension.
+    # Renormalize over tokens to make sure they are proper probabilities via
+    # softmax over the token dimension.
     shift_probs = torch.nn.functional.softmax(shift_logits, 2)
 
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
