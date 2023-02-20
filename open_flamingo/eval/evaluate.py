@@ -718,7 +718,7 @@ def evaluate_imagenet(
                                                       tokenizer=tokenizer,
                                                       outputs=outputs)
             batch_per_class_probs.append(per_sample_probs.detach())
-            batch_per_class_losses.append(per_sample_loss.detatch())
+            batch_per_class_losses.append(per_sample_loss.detach())
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
         # the (probability or loss) for batch element i on imagenet class j.

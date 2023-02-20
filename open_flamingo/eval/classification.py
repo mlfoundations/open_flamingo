@@ -23,7 +23,7 @@ def compute_classification_accuracy(
     return np.mean(is_correct).item()
 
 
-def compute_per_sample_probs(encodings, tokenizer, outputs):
+def compute_per_sample_probs(encodings, tokenizer, outputs) -> torch.Tensor:
     """Helper function to compute per-sample probability of the input sequence.
 
     Assumes <eos token> is used to separate inputs from targets in the
@@ -80,7 +80,7 @@ def compute_per_sample_probs(encodings, tokenizer, outputs):
     return target_probs
 
 
-def compute_per_sample_loss(encodings, tokenizer, outputs):
+def compute_per_sample_loss(encodings, tokenizer, outputs) -> torch.Tensor:
     """Helper function to compute per-sample classification loss.
 
     Assumes <eos token> is used to separate inputs from targets in the
