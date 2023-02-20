@@ -60,13 +60,13 @@ def compute_per_sample_probs(encodings, tokenizer, outputs):
 
     # 3d tensor of [batch_idx, sequence_position, token_id] for unmasked tokens.
     target_idxs = torch.column_stack([*unmasked_indices, unmasked_token_ids])
-    target_idxs = target_idxs.to(shift_logits.device)
+    target_idxs = target_idxs.to(device)
 
     # Renormalize over tokens to make sure they are proper probabilities via
     # LogSoftMax over the token dimension.
-    shift_probs = torch.nn.functional.log_softmax(shift_logits, 2).to(shift_logits.device)
+    shift_probs = torch.nn.functional.log_softmax(shift_logits, 2)
 
-    target_probs = torch.zeros(len(labels))
+    target_probs = torch.zeros(len(labels), device=device)
     for i, j, k in target_idxs:
         target_probs[i] += shift_probs[i, j, k]
     import ipdb;ipdb.set_trace()
