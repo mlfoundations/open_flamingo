@@ -12,7 +12,8 @@ from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import COCOFlickrDataset, VQAv2Dataset, ImageNetDataset
 from tqdm import tqdm
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.eval.classification import compute_per_sample_probs
+from open_flamingo.eval.classification import compute_per_sample_probs, \
+    compute_per_sample_loss
 from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames, \
     IMAGENET_1K_CLASS_ID_TO_LABEL
 
@@ -661,7 +662,10 @@ def evaluate_imagenet(
         effective_num_shots=effective_num_shots)
 
     model.eval()
-    predictions = []
+    # Predictions based on the class target sequence with the maximal predicted probability
+    predictions_max_prob = []
+    # Predictions based on the class target sequence with the minimal loss on the model logits
+    predictions_min_loss = []
     labels = []
 
     context_images = get_context_images(image_processor=image_processor,
@@ -675,6 +679,7 @@ def evaluate_imagenet(
 
     for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
         print(f"processing batch {i} of {len(eval_dataset)}")
+        batch_per_class_probs = []
         batch_per_class_losses = []
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
@@ -706,25 +711,40 @@ def evaluate_imagenet(
 
             outputs = model(batch_images, input_ids, attention_mask)
 
-            per_sample_loss = compute_per_sample_probs(encodings=encodings,
-                                                       tokenizer=tokenizer,
-                                                       outputs=outputs)
-            batch_per_class_losses.append(per_sample_loss.detach())
+            per_sample_probs = compute_per_sample_probs(encodings=encodings,
+                                                        tokenizer=tokenizer,
+                                                        outputs=outputs)
+            per_sample_loss = compute_per_sample_loss(encodings=encodings,
+                                                      tokenizer=tokenizer,
+                                                      outputs=outputs)
+            batch_per_class_probs.append(per_sample_probs.detach())
+            batch_per_class_losses.append(per_sample_loss.detatch())
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
-        # the loss for batch element i on imagenet class j.
-        tmp = torch.stack(batch_per_class_losses, 1)
+        # the (probability or loss) for batch element i on imagenet class j.
+        batch_probs = torch.stack(batch_per_class_probs, 1)
+        batch_losses = torch.stack(batch_per_class_losses, 1)
 
-        predictions.extend(torch.argmax(tmp, 1).detach().tolist())
+        predictions_max_prob.extend(
+            torch.argmax(batch_probs, 1).detach().tolist())
+        predictions_min_loss.extend(
+            torch.argmin(batch_losses, 1).detach().tolist())
         labels.extend(x['class_id'] for x in batch)
 
-    acc = (np.array(predictions) == np.array(labels)).mean()
-    print(f"[DEBUG] ImageNet accuracy is {acc}")
+    acc_max_prob = (np.array(predictions_max_prob) == np.array(labels)).mean()
+    acc_min_loss = (np.array(predictions_min_loss) == np.array(labels)).mean()
+    print(f"[DEBUG] ImageNet accuracy with max prob method is {acc_max_prob}")
+    print(f"[DEBUG] ImageNet accuracy with min loss method is {acc_min_loss}")
     print(f"[DEBUG] printing ImageNet predictions and labels:")
-    for yhat, y in zip(predictions, labels):
-        print(f"\t prediction: {IMAGENET_1K_CLASS_ID_TO_LABEL[yhat]} // "
+    for yhat_prob, yhat_loss, y in zip(predictions_max_prob,
+                                       predictions_min_loss,
+                                       labels):
+        print(f"\t prediction (max prob method): "
+              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]} // "
+              f"\t prediction (min loss method): "
+              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]} // "
               f"label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}")
-    return acc
+    return acc_max_prob
 
 
 if __name__ == "__main__":

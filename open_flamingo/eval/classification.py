@@ -62,14 +62,21 @@ def compute_per_sample_probs(encodings, tokenizer, outputs):
     target_idxs = torch.column_stack([*unmasked_indices, unmasked_token_ids])
     target_idxs = target_idxs.to(device)
 
+    # Sanity check that every element in batch has at least one unmasked
+    # target token
+    assert torch.all(torch.bincount(target_idxs[:, 0]) != 0), \
+        "At least one element in batch has no unmasked target tokens."
+
     # Renormalize over tokens to make sure they are proper probabilities via
     # LogSoftMax over the token dimension.
     shift_probs = torch.nn.functional.softmax(shift_logits, 2)
 
-    target_probs = torch.zeros(len(labels), device=device)
+    # Compute the probability of the target sequence (as the product of the
+    # probability of the individual tokens in the sequence).
+    target_probs = torch.ones(len(labels), device=device)
     for i, j, k in target_idxs:
-        target_probs[i] += shift_probs[i, j, k]
-    import ipdb;ipdb.set_trace()
+        target_probs[i] *= shift_probs[i, j, k]
+
     return target_probs
 
 
@@ -102,9 +109,7 @@ def compute_per_sample_loss(encodings, tokenizer, outputs):
 
     # renormalize over tokens to make sure they are proper
     #  probabilities via LogSoftMax over the token dimension.
-    shift_probs = torch.nn.functional.log_softmax(shift_logits, 2)
-
-    target_probs = torch.gather(shift_probs, 2, shift_labels)
+    shift_probs = torch.nn.functional.softmax(shift_logits, 2)
 
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
 
