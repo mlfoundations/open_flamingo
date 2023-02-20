@@ -64,7 +64,7 @@ def compute_per_sample_probs(encodings, tokenizer, outputs):
 
     # Renormalize over tokens to make sure they are proper probabilities via
     # LogSoftMax over the token dimension.
-    shift_probs = torch.nn.functional.log_softmax(shift_logits, 2)
+    shift_probs = torch.nn.functional.log_softmax(shift_logits, 2).to(shift_logits.device)
 
     target_probs = torch.zeros(len(labels))
     for i, j, k in target_idxs:
