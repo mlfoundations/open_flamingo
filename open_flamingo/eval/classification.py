@@ -23,6 +23,56 @@ def compute_classification_accuracy(
     return np.mean(is_correct).item()
 
 
+def compute_per_sample_probs(encodings, tokenizer, outputs):
+    """Helper function to compute per-sample probability of the input sequence.
+
+    Assumes <eos token> is used to separate inputs from targets in the
+    prompt text
+    """
+    device = outputs.logits.device
+    labels = encodings["input_ids"].clone()
+    # convert padding tokens to -100 so they are ignored in loss
+    labels[labels == tokenizer.pad_token_id] = -100
+
+    # Convert all tokens in prefix until separator to -100 so they are
+    # ignored in loss (loss is only computed on token IDs >= 0)
+    for idx in range(len(labels)):
+        # Find the location of the last token of prefix *from right*,
+        # since the first non-padding token of the sequence will also be
+        # eos_token (because bos_token and eos_token are the same for
+        # the tokenizer).
+        end_of_prefix = -labels[idx].tolist()[::-1].index(
+            tokenizer.eos_token_id) - 1
+        labels[idx, :end_of_prefix + 1] = -100
+
+    # Shift so that tokens < n predict n. The shifted tensors both have
+    # shape [batch_size, seq_len - 1].
+    shift_logits = outputs.logits[..., :-1, :].contiguous()
+    shift_labels = labels[..., 1:].contiguous()
+
+    # Tuple of tensors for unmasked label tokens. The first element of the
+    # tuple contains the batch indices; the second element contains the
+    # sequence indices.
+    unmasked_indices = torch.nonzero(shift_labels != -100, as_tuple=True)
+    # Tensor where the i^th element is the token_id corresponding to the i^th
+    # element of unmasked_indices
+    unmasked_token_ids = shift_labels[unmasked_indices]
+
+    # 3d tensor of [batch_idx, sequence_position, token_id] for unmasked tokens.
+    target_idxs = torch.column_stack([*unmasked_indices, unmasked_token_ids])
+    target_idxs = target_idxs.to(shift_logits.device)
+
+    # Renormalize over tokens to make sure they are proper probabilities via
+    # LogSoftMax over the token dimension.
+    shift_probs = torch.nn.functional.log_softmax(shift_logits, 2)
+
+    target_probs = torch.zeros(len(labels))
+    for i, j, k in target_idxs:
+        target_probs[i] += shift_probs[i, j, k]
+    import ipdb;ipdb.set_trace()
+    return target_probs
+
+
 def compute_per_sample_loss(encodings, tokenizer, outputs):
     """Helper function to compute per-sample classification loss.
 
@@ -50,9 +100,10 @@ def compute_per_sample_loss(encodings, tokenizer, outputs):
     shift_logits = outputs.logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
 
-    # TODO(jpgard): renormalize over tokens to make sure they are proper
+    # renormalize over tokens to make sure they are proper
     #  probabilities via LogSoftMax over the token dimension.
-    shift_probs = torch.nn.functional.log_softmax(shift_logits, 1)
+    shift_probs = torch.nn.functional.log_softmax(shift_logits, 2)
+
     target_probs = torch.gather(shift_probs, 2, shift_labels)
 
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")

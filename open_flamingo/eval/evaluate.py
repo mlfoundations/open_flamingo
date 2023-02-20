@@ -12,7 +12,7 @@ from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import COCOFlickrDataset, VQAv2Dataset, ImageNetDataset
 from tqdm import tqdm
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.eval.classification import compute_per_sample_loss
+from open_flamingo.eval.classification import compute_per_sample_probs
 from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames, \
     IMAGENET_1K_CLASS_ID_TO_LABEL
 
@@ -331,22 +331,21 @@ def get_outputs(model, batch_images, device, attention_mask,
     return outputs
 
 
-
 def evaluate_coco_flickr(
-    model,
-    tokenizer,
-    image_processor,
-    batch_size,
-    image_dir_path,
-    annotations_json_path,
-    seed=42,
-    max_generation_length=10,
-    num_beams=3,
-    length_penalty=-2.0,
-    num_samples=5000,
-    num_shots=8,
-    device=-1,
-    is_flickr=False,
+        model,
+        tokenizer,
+        image_processor,
+        batch_size,
+        image_dir_path,
+        annotations_json_path,
+        seed=42,
+        max_generation_length=10,
+        num_beams=3,
+        length_penalty=-2.0,
+        num_samples=5000,
+        num_shots=8,
+        device=-1,
+        is_flickr=False,
 ):
     """Evaluate a model on COCO dataset.
 
@@ -373,7 +372,8 @@ def evaluate_coco_flickr(
     """
 
     full_dataset = COCOFlickrDataset(
-        image_dir_path=image_dir_path, annotations_path=annotations_json_path, is_flickr=is_flickr,
+        image_dir_path=image_dir_path, annotations_path=annotations_json_path,
+        is_flickr=is_flickr,
     )
     effective_num_shots = num_shots if num_shots > 0 else 2
     random_indices = get_random_indices(num_samples, effective_num_shots,
@@ -706,9 +706,9 @@ def evaluate_imagenet(
 
             outputs = model(batch_images, input_ids, attention_mask)
 
-            per_sample_loss = compute_per_sample_loss(encodings=encodings,
-                                                      tokenizer=tokenizer,
-                                                      outputs=outputs)
+            per_sample_loss = compute_per_sample_probs(encodings=encodings,
+                                                       tokenizer=tokenizer,
+                                                       outputs=outputs)
             batch_per_class_losses.append(per_sample_loss.detach())
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
