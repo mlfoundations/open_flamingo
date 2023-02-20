@@ -70,41 +70,48 @@ parser.add_argument("--eval_flickr30", action="store_true", default=False,
 parser.add_argument(
     "--coco_image_dir_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/coco/train2017",
+    help="Path to the coco/train2017 directory.",
+    default=None,
 )
 parser.add_argument(
     "--coco_annotations_json_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/coco/annotations/captions_train2017.json",
+    help="Path to the coco/annotations/captions_train2017.json file.",
+    default=None,
 )
 
 ## Flickr30 Dataset
 parser.add_argument(
     "--flickr_image_dir_path",
     type=str,
-    default='/cs/snapless/roys/yonatanbitton/open_flamingo_data/flickr30/flickr30k_images'
+    help="Path to the flickr30/flickr30k_images directory.",
+    default=None
 )
 parser.add_argument(
     "--flickr_annotations_json_path",
     type=str,
-    default='/cs/snapless/roys/yonatanbitton/open_flamingo_data/flickr30/dataset_flickr30k_coco_style.json'
+    help="Path to the dataset_flickr30k_coco_style.json file.",
+    default=None,
 )
 
 ## VQAV2 Dataset
 parser.add_argument(
     "--vqav2_image_dir_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/vqav2/train2014",
+    help="Path to the vqav2/train2014 directory.",
+    default=None,
 )
 parser.add_argument(
     "--vqav2_questions_json_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/vqav2/v2_OpenEnded_mscoco_train2014_questions.json",
+    help="Path to the v2_OpenEnded_mscoco_train2014_questions.json file.",
+    default=None,
 )
 parser.add_argument(
     "--vqav2_annotations_json_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/vqav2/v2_mscoco_train2014_annotations.json",
+    help="Path to the v2_mscoco_train2014_annotations.json file.",
+    default=None,
 )
 
 ## Imagenet dataset
