@@ -34,10 +34,7 @@ def create_model_and_transforms(
     image_processor = CLIPProcessor.from_pretrained(
         clip_processor_path, local_files_only=use_local_files
     )
-
-    for p in vision_encoder.parameters():
-        p.requires_grad = False
-
+    
     text_tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, local_files_only=use_local_files
     )
