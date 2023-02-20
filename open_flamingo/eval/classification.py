@@ -50,6 +50,11 @@ def compute_per_sample_loss(encodings, tokenizer, outputs):
     shift_logits = outputs.logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
 
+    # TODO(jpgard): renormalize over tokens to make sure they are proper
+    #  probabilities via LogSoftMax over the token dimension.
+    shift_probs = torch.nn.functional.log_softmax(shift_logits, 1)
+    target_probs = torch.gather(shift_probs, 2, shift_labels)
+
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
 
     # Loss is computed token-wise, on Tensors of shape
@@ -57,11 +62,11 @@ def compute_per_sample_loss(encodings, tokenizer, outputs):
     # and returns a loss tensor of shape
     # [batch_size * (seq_len - 1)]. Most of the tokens will be masked
     # in this computation.
-    loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)),
+    loss = loss_fn(shift_probs.view(-1, shift_probs.size(-1)),
                    shift_labels.view(-1).to(device))
 
     # Reshape to [batch_size, seq_len - 1]
-    loss = loss.view(shift_logits.size(0), shift_logits.size(1)).cpu()
+    loss = loss.view(shift_probs.size(0), shift_probs.size(1)).cpu()
 
     # Compute per-element loss : sum loss over all tokens and divide by
     # number of variable tokens to obtain tensor of shape [batch_size,]
