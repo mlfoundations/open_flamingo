@@ -126,14 +126,14 @@ def compute_per_sample_loss(encodings, tokenizer, outputs) -> torch.Tensor:
         shift_labels.view(-1).to(device),
         reduction="none")
 
-    # loss_mask is 1 for tokens we want included in the loss, and 0 for tokens
-    # that should be ignored in the loss.
-    loss_mask = (shift_labels != -100).int().to(device)
-
-    loss *= loss_mask
-
     # Reshape to [batch_size, seq_len - 1]
     loss = loss.view(shift_probs.size(0), shift_probs.size(1)).cpu()
+
+    # loss_mask is 1 for tokens we want included in the loss, and 0 for tokens
+    # that should be ignored in the loss.
+    loss_mask = (shift_labels != -100).int().cpu()
+
+    loss *= loss_mask
 
     # Compute per-element loss : sum loss over all (unmasked) tokens and
     # divide by number of variable tokens to obtain tensor of
