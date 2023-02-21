@@ -82,8 +82,8 @@ def train_one_epoch(
 
         with autocast():
             loss_laion = model(
-                images,
-                input_ids,
+                vision_x=images,
+                lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
             )[0]
@@ -113,8 +113,8 @@ def train_one_epoch(
 
         with autocast():
             loss_pile = model(
-                images,
-                input_ids,
+                vision_x=images,
+                lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
             )[0]

@@ -34,7 +34,7 @@ class Flamingo(nn.Module):
         self.vis_dim = (
             vis_dim
             if vis_dim is not None
-            else vision_encoder.config.projection_dim
+            else vision_encoder.config.vision_config.hidden_size
         )
 
         self.vision_encoder = vision_encoder
@@ -129,8 +129,7 @@ class Flamingo(nn.Module):
         if num_beams > 1:
             vision_x = vision_x.repeat_interleave(num_beams, dim=0)
 
-        self._process_media(vision_x=vision_x,
-                            use_projection_vector=self.use_projection_vector)
+        self._process_media(vision_x=vision_x)
 
         output = self.lang_encoder.generate(
             lang_x,
@@ -157,7 +156,6 @@ class Flamingo(nn.Module):
         vision_x: torch.Tensor = None,
         pseudovision_x: torch.Tensor = None,
         pseudovision_attention_mask: torch.Tensor = None,
-        use_projection_vector: bool = True,
     ):
         """
         Compute media tokens from vision input by passing it through vision encoder and conditioning language model.
@@ -169,14 +167,12 @@ class Flamingo(nn.Module):
             pseudovision_x (torch.Tensor, optional): Input ids for text to be used as pseudoimages.
                 shape (B, T_img, m) where m is the sequence length
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
-            use_projection_vector (bool, optional): Whether to use projection vector for vision_x input. Defaults to True.
         """
         assert (vision_x is None) ^ (
             pseudovision_x is None), "Must provide either vision_x or pseudovision_x"
 
         if vision_x is not None:
-            vision_features = self._encode_vision_x(
-                vision_x, use_projection_vector)
+            vision_features = self._encode_vision_x(vision_x)
         elif pseudovision_x is not None:
             vision_features = self._encode_pseudovision_x(
                 pseudovision_x, pseudovision_attention_mask
@@ -185,7 +181,7 @@ class Flamingo(nn.Module):
         for layer in self.lang_encoder.get_decoder().layers:
             layer.condition_vis_x(vision_features)
 
-    def _encode_vision_x(self, vision_x: torch.Tensor, use_projection_vector: bool):
+    def _encode_vision_x(self, vision_x: torch.Tensor):
         """
         Encode real vision inputs
         rearrange code based on https://github.com/dhansmair/flamingo-mini
@@ -196,7 +192,7 @@ class Flamingo(nn.Module):
 
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         with torch.no_grad():
-            if use_projection_vector:
+            if self.use_projection_vector:
                 vision_x = self.vision_encoder.get_image_features(vision_x)
                 vision_x = vision_x / vision_x.norm(p=2, dim=-1, keepdim=True)
                 # add a dimension v to match perceiver input

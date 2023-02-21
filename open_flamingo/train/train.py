@@ -171,6 +171,8 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
     )
+    
+    assert model.use_projection_vector is False, "projection vector not desired"
 
     random_seed(args.seed, args.rank)
 
