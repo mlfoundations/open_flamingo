@@ -34,7 +34,7 @@ class Flamingo(nn.Module):
         self.vis_dim = (
             vis_dim
             if vis_dim is not None
-            else vision_encoder.config.projection_dim
+            else vision_encoder.config.vision_config.hidden_size
         )
 
         self.vision_encoder = vision_encoder
