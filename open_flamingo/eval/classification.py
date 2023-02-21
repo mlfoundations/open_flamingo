@@ -112,22 +112,18 @@ def compute_per_sample_loss(encodings, tokenizer, outputs) -> torch.Tensor:
 
     device = shift_logits.device
 
-    # Renormalize over tokens to make sure they are proper probabilities via
-    # softmax over the token dimension.
-    shift_probs = torch.nn.functional.softmax(shift_logits, 2)
-
     # Loss is computed token-wise, on Tensors of shape
     # [batch_size * (seq_len - 1), vocab_size]
     # and returns a loss tensor of shape
     # [batch_size * (seq_len - 1)]. Most of the tokens will be masked
     # in this computation.
     loss = torch.nn.functional.cross_entropy(
-        shift_probs.view(-1, shift_probs.size(-1)),
+        shift_logits.view(-1, shift_logits.size(-1)),
         shift_labels.view(-1).to(device),
         reduction="none")
 
     # Reshape to [batch_size, seq_len - 1]
-    loss = loss.view(shift_probs.size(0), shift_probs.size(1)).cpu()
+    loss = loss.view(shift_logits.size(0), shift_logits.size(1)).cpu()
 
     # loss_mask is 1 for tokens we want included in the loss, and 0 for tokens
     # that should be ignored in the loss.
