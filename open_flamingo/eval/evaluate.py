@@ -739,11 +739,12 @@ def evaluate_imagenet(
     for yhat_prob, yhat_loss, y in zip(predictions_max_prob,
                                        predictions_min_loss,
                                        labels):
-        print(f"\t prediction (max prob method): "
-              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]:40} // "
-              f"\t prediction (min loss method): "
-              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]:40} // "
-              f"label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}")
+        print(f"\t label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}"
+              f"\nprediction (max prob method): "
+              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]}"
+              f"\nprediction (min loss method): "
+              f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]}",
+              "#" * 25)
     return acc_max_prob
 
 
