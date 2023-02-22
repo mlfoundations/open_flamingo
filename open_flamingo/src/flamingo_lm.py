@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers import OPTForCausalLM, OPTModel, OPTPreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
+import random
 
 from .helpers import GatedCrossAttentionBlock
 
@@ -28,6 +29,9 @@ class FlamingoLayer(nn.Module):
     def condition_media_locations(self, media_locations):
         self.media_locations = media_locations
 
+    def condition_attend_previous(self, attend_previous):
+        self.attend_previous = attend_previous
+
     def forward(
         self,
         lang_x,
@@ -45,7 +49,7 @@ class FlamingoLayer(nn.Module):
             raise ValueError("media_locations must be conditioned before forward pass")
 
         lang_x = self.gated_cross_attn_layer(
-            lang_x, self.vis_x, media_locations=self.media_locations
+            lang_x, self.vis_x, media_locations=self.media_locations, attend_previous=self.attend_previous,
         )
         lang_x = self.decoder_layer(
             lang_x,
@@ -216,9 +220,11 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         )
 
         media_locations = input_ids == self.media_token_id
+        attend_previous = (random.random() < 0.5)
 
         for layer in self.get_decoder().layers:
             layer.condition_media_locations(media_locations)
+            layer.condition_attend_previous(attend_previous)
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -262,6 +268,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         for layer in self.model.decoder.layers:
             layer.condition_vis_x(None)
             layer.condition_media_locations(None)
+            layer.condition_attend_previous(None)
 
     def prepare_inputs_for_generation(
         self, input_ids, past=None, attention_mask=None, use_cache=None, **kwargs
