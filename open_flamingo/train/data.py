@@ -360,9 +360,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
 
     # filter out images that are exact duplicates
     images_tensors = preprocess_image(images, clip_processor)    
-    images_tensors, unique = unique_ixs(images_tensors, dim=0)
-    images_tensors = images_tensors[:MAX_NUM_IMAGES]
-    image_idxs = [image_idxs[ix] for ix in unique[:MAX_NUM_IMAGES]]
+    _, unique = unique_ixs(images_tensors, dim=0)
+    keep_ixs = unique[:MAX_NUM_IMAGES]
+    images_tensors = images_tensors[keep_ixs]
+    images = [images[ix] for ix in keep_ixs]
+    image_idxs = [image_idxs[ix] for ix in keep_ixs]
     
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
