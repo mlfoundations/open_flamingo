@@ -138,7 +138,7 @@ class PerceiverResampler(nn.Module):
 
 class MaskedCrossAttention(nn.Module):
     def __init__(
-        self, *, dim, dim_visual, dim_head=64, heads=8, only_attend_immediate_media=True
+        self, *, dim, dim_visual, dim_head=64, heads=8, only_attend_immediate_media=True,
     ):
         super().__init__()
         self.scale = dim_head**-0.5
@@ -151,11 +151,10 @@ class MaskedCrossAttention(nn.Module):
         self.to_kv = nn.Linear(dim_visual, inner_dim * 2, bias=False)
         self.to_out = nn.Linear(inner_dim, dim, bias=False)
 
-        # whether for text to only attend to immediate preceding image, or all images
-
+        # whether for text to only attend to immediate preceding image, or all previous images
         self.only_attend_immediate_media = only_attend_immediate_media
 
-    def forward(self, x, media, media_locations=None):
+    def forward(self, x, media, media_locations=None, attend_previous=False):
         """
         Args:
             x (torch.Tensor): text features
@@ -164,6 +163,9 @@ class MaskedCrossAttention(nn.Module):
                 shape (B, T_img, n, D_img) where n is the dim of the latents
             media_locations: boolean mask identifying the media tokens in x
                 shape (B, T_txt)
+            attend_previous: bool
+                If true, attends to immediately preceding image (and ensuing ones,
+                depending on self.only_attend_immediate_media)
         """
         _, T_img, n = media.shape[:3]
         h = self.heads
@@ -184,6 +186,8 @@ class MaskedCrossAttention(nn.Module):
             # at each boolean of True, increment the time counter (relative to media time)
             text_time = media_locations.cumsum(dim=-1)
             media_time = torch.arange(T_img, device=x.device) + 1
+
+            if attend_previous: text_time[~media_locations] += 1
 
             # text time must equal media time if only attending to most immediate image
             # otherwise, as long as text time is greater than media time (if attending to all previous images / media)
@@ -240,9 +244,10 @@ class GatedCrossAttentionBlock(nn.Module):
         x,
         media,
         media_locations=None,
+        attend_previous=False,
     ):
         x = (
-            self.attn(x, media, media_locations=media_locations) * self.attn_gate.tanh()
+            self.attn(x, media, media_locations=media_locations, attend_previous=attend_previous) * self.attn_gate.tanh()
             + x
         )
         x = self.ff(x) * self.ff_gate.tanh() + x

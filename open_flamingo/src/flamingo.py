@@ -15,6 +15,7 @@ class Flamingo(nn.Module):
         media_token_id: int,
         vis_dim: int = None,
         use_projection_vector: bool = False,
+        use_media_placement_augmentation: bool = False,
     ):
         """
         Args:
@@ -30,6 +31,7 @@ class Flamingo(nn.Module):
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
         self.use_projection_vector = use_projection_vector
+        self.use_media_placement_augmentation = use_media_placement_augmentation
 
         self.vis_dim = (
             vis_dim
@@ -43,6 +45,7 @@ class Flamingo(nn.Module):
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
             vis_hidden_size=self.vis_dim,
+            use_media_placement_augmentation=self.use_media_placement_augmentation
         )
 
     def forward(

@@ -357,13 +357,16 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
 
         images.append(image)
         image_idxs.append(info["image_info"][image_path]["matched_text_index"])
+    
+    if len(images) == 0:
+        raise ValueError("No images in sample")
 
     # filter out images that are exact duplicates
     images_tensors = preprocess_image(images, clip_processor)   
     _, unique = unique_ixs(images_tensors, dim=0)
     keep_ixs = unique[:MAX_NUM_IMAGES]
     images_tensors = images_tensors[keep_ixs]
-    images = [images[ix] for ix in keep_ixs]
+    # images = [images[ix] for ix in keep_ixs] # useful for debugging, but otherwise not used
     image_idxs = [image_idxs[ix] for ix in keep_ixs]
     
     # pad to 5 images
