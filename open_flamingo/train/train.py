@@ -54,6 +54,7 @@ def main():
         default="large model test",
         help="used to name saving directory and wandb run",
     )
+    parser.add_argument("--use_media_placement_augmentation", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     # Sum of gradient optimization batch size
@@ -170,6 +171,7 @@ def main():
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
+        use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
     
     assert model.use_projection_vector is False, "projection vector not desired"

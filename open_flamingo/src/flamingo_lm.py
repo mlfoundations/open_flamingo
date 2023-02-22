@@ -82,7 +82,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         self.initalized_flamingo = False
         self.media_token_id = None
 
-    def init_flamingo(self, media_token_id, vis_hidden_size):
+    def init_flamingo(self, media_token_id, vis_hidden_size, use_media_placement_augmentation):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
 
@@ -108,6 +108,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         )
         self.media_token_id = media_token_id
         self.initalized_flamingo = True
+        self.use_media_placement_augmentation = use_media_placement_augmentation
 
     def get_input_embeddings(self):
         return self.model.decoder.embed_tokens
@@ -220,7 +221,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         )
 
         media_locations = input_ids == self.media_token_id
-        attend_previous = (random.random() < 0.5)
+        attend_previous = (random.random() < 0.5) if self.use_media_placement_augmentation else False
 
         for layer in self.get_decoder().layers:
             layer.condition_media_locations(media_locations)
