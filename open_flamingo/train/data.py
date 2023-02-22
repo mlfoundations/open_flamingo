@@ -28,6 +28,8 @@ from webdataset.tariterators import (
     valid_sample,
 )
 
+from utils import unique_ixs
+
 Image.MAX_IMAGE_PIXELS = 1000000000
 
 try:
@@ -337,57 +339,61 @@ def preprocess_pile(sample, tokenizer, clip_processor):
         text_tensor["attention_mask"],
     )
 
+MIN_KB = 10
+MAX_NUM_IMAGES = 5
 def preprocess_interleaved(sample, tokenizer, clip_processor):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
-
     sentences = info["text_list"]
     
-    images = []
-    
+    images, image_idxs = [], []
     for image_path in info["image_info"]:
-        image = image_tar.extractfile(os.path.join(image_tar.getnames()[0], image_path)).read()
-        image = Image.open(io.BytesIO(image))
-        image = image.convert("RGB")
-        
-        # remove tiny images as they are likely meaningless rss icons
-        if image.size[0] <= 1 or image.size[1] <= 1:
-            continue
-        
+        rawbytes = image_tar.extractfile(os.path.join(image_tar.getnames()[0], image_path)).read()
+
+        # filter to images >= 10KB
+        if len(rawbytes) // 1000 <= MIN_KB: continue
+        image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
+
         images.append(image)
-        image_idx = info["image_info"][image_path]["matched_text_index"]
-        sentences[image_idx] = f"<image>{sentences[image_idx]}"
-        
-        # use at most 5 images
-        if len(images) == 5:
-            break
+        image_idxs.append(info["image_info"][image_path]["matched_text_index"])
+
+    # filter out images that are exact duplicates
+    images_tensors = preprocess_image(images, clip_processor)    
+    images_tensors, unique = unique_ixs(images_tensors, dim=0)
+    images_tensors = images_tensors[:MAX_NUM_IMAGES]
+    image_idxs = [image_idxs[ix] for ix in unique[:MAX_NUM_IMAGES]]
     
-    if len(images) == 0:
-        raise ValueError("No images in sample")
+    # pad to 5 images
+    if len(images_tensors) < MAX_NUM_IMAGES:
+        zero_padding = torch.zeros((MAX_NUM_IMAGES - len(images), 3, 224, 224), dtype=torch.float)
+        images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
+
+    # add in <image> tokens
+    for ix in image_idxs: sentences[ix] = f"<image>{sentences[ix]}"
         
     # add a single end of chunk token to the start of any sentence with an image
     sentences = [f"<|endofchunk|>{s}" if "<image>" in s else s for s in sentences]
-        
     text = " ".join(sentences)
-    text = text.replace("<|endofchunk|>", "", 1)
-    text = text.replace(" <|endofchunk|>", "<|endofchunk|>")
-    text = text.replace("<image> ", "<image>")
-    text = text.replace(" <image>", "<image>")
+    text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
+    # whitespace cleanup
+    text = text.replace(" <|endofchunk|>", "<|endofchunk|>").replace("<image> ", "<image>").replace(" <image>", "<image>")
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
-            
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
         text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
     )
-    
-    images_tensors = preprocess_image(images, clip_processor)    
-    
-    # pad to 5 images
-    if len(images) < 5:
-        zero_padding = torch.zeros((5 - len(images), 3, 224, 224), dtype=torch.float)
-        images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
-    
+
+    # reject sequences with too few images (after truncation)
+    num_images = torch.count_nonzero(
+        text_tensor["input_ids"] == \
+        tokenizer.additional_special_tokens_ids[tokenizer.additional_special_tokens.index("<image>")]
+    )
+    if num_images == 0:
+        raise ValueError("No images in sample")
+    elif num_images == 1 and random.random() <= 0.5:
+        raise ValueError("Only one image in sample")
+
     return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"])
     
 
