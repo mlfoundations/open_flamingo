@@ -366,7 +366,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
     
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
-        zero_padding = torch.zeros((MAX_NUM_IMAGES - len(images), 3, 224, 224), dtype=torch.float)
+        zero_padding = torch.zeros((MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float)
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
     # add in <image> tokens
