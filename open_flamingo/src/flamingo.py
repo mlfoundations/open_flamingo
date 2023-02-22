@@ -205,8 +205,9 @@ class Flamingo(nn.Module):
                     vision_x).last_hidden_state
         vision_x = rearrange(
             vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
-
+        
         vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
+            
         return vision_x
 
     def _encode_pseudovision_x(

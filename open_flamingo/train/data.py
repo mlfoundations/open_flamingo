@@ -362,7 +362,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         raise ValueError("No images in sample")
 
     # filter out images that are exact duplicates
-    images_tensors = preprocess_image(images, clip_processor)    
+    images_tensors = preprocess_image(images, clip_processor)   
     _, unique = unique_ixs(images_tensors, dim=0)
     keep_ixs = unique[:MAX_NUM_IMAGES]
     images_tensors = images_tensors[keep_ixs]
@@ -394,6 +394,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         text_tensor["input_ids"] == \
         tokenizer.additional_special_tokens_ids[tokenizer.additional_special_tokens.index("<image>")]
     )
+    print("num images", num_images)
     if num_images == 0:
         raise ValueError("No images in sample")
     elif num_images == 1 and random.random() <= 0.5:
