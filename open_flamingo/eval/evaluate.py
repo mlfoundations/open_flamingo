@@ -9,8 +9,10 @@ import more_itertools
 import numpy as np
 import torch
 from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import COCOFlickrDataset, VQAv2Dataset, ImageNetDataset
+from eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
+
+from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 from open_flamingo.eval.classification import compute_per_sample_probs, \
     compute_per_sample_loss
@@ -56,9 +58,10 @@ parser.add_argument("--device", type=int, default=0)
 # Per-dataset evaluation flags
 parser.add_argument("--eval_coco", action="store_true", default=False,
                     help="Whether to evaluate on COCO.")
-
 parser.add_argument("--eval_vqav2", action="store_true", default=False,
                     help="Whether to evaluate on VQAV2.")
+parser.add_argument("--eval_ok_vqa", action="store_true", default=False,
+                    help="Whether to evaluate on OK-VQA.")
 parser.add_argument("--eval_imagenet", action="store_true", default=False,
                     help="Whether to evaluate on ImageNet.")
 
@@ -110,6 +113,26 @@ parser.add_argument(
 )
 parser.add_argument(
     "--vqav2_annotations_json_path",
+    type=str,
+    help="Path to the v2_mscoco_train2014_annotations.json file.",
+    default=None,
+)
+
+## OK-VQA Dataset
+parser.add_argument(
+    "--ok_vqa_image_dir_path",
+    type=str,
+    help="Path to the vqav2/train2014 directory.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_questions_json_path",
+    type=str,
+    help="Path to the v2_OpenEnded_mscoco_train2014_questions.json file.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_annotations_json_path",
     type=str,
     help="Path to the v2_mscoco_train2014_annotations.json file.",
     default=None,
@@ -192,6 +215,32 @@ def main():
             results["coco"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)})
 
+    if args.eval_ok_vqa:
+
+        print("Evaluating on OK-VQA...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                ok_vqa_score = evaluate_vqa(
+                    model=flamingo,
+                    tokenizer=tokenizer,
+                    image_processor=image_processor,
+                    batch_size=args.batch_size,
+                    num_samples=args.num_samples,
+                    num_shots=shot,
+                    device=args.device,
+                    seed=seed,
+                    image_dir_path=args.ok_vqa_image_dir_path,
+                    questions_json_path=args.ok_vqa_questions_json_path,
+                    annotations_json_path=args.ok_vqa_annotations_json_path,
+                    vqa_dataset='ok_vqa'
+                )
+                print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
+                scores.append(ok_vqa_score)
+            print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
+            results["ok_vqa"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)})
+
     if args.eval_vqav2:
 
         print("Evaluating on VQAv2...")
@@ -210,6 +259,7 @@ def main():
                     image_dir_path=args.vqav2_image_dir_path,
                     questions_json_path=args.vqav2_questions_json_path,
                     annotations_json_path=args.vqav2_annotations_json_path,
+                    vqa_dataset='vqa'
                 )
                 print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
                 scores.append(vqa_score)
@@ -482,6 +532,7 @@ def evaluate_vqa(
         num_samples=5000,
         num_shots=8,
         device=-1,
+        vqa_dataset='vqa'
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0.
@@ -502,15 +553,16 @@ def evaluate_vqa(
         num_shots (int, optional): number of shots to use. Defaults to 8.
         device (int, optional): device to use. Defaults to -1 (cpu).
         num_workers (int, optional): number of workers to use. Defaults to 4.
-
+        vqa_dataset (string): type of vqa dataset: currently supports vqa, ok_vqa. Defaults to vqa.
     Returns:
         float: accuracy score
     """
 
-    full_dataset = VQAv2Dataset(
+    full_dataset = VQADataset(
         image_dir_path=image_dir_path,
         question_path=questions_json_path,
         annotations_path=annotations_json_path,
+        vqa_dataset=vqa_dataset,
     )
 
     effective_num_shots = num_shots if num_shots > 0 else 2
@@ -573,8 +625,11 @@ def evaluate_vqa(
                               num_beams=num_beams,
                               length_penalty=length_penalty,
                               input_ids=input_ids)
+
+        process_function = postprocess_vqa_generation if vqa_dataset == 'vqa' else postprocess_ok_vqa_generation
+
         new_predictions = [
-            postprocess_vqa_generation(out)
+            process_function(out)
             for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ]
 
@@ -586,16 +641,16 @@ def evaluate_vqa(
         )
     # save the predictions to a temporary file
     random_uuid = str(uuid.uuid4())
-    with open(f"vqaresults_{random_uuid}.json", "w") as f:
+    with open(f"{vqa_dataset}results_{random_uuid}.json", "w") as f:
         f.write(json.dumps(predictions, indent=4))
 
     acc = compute_vqa_accuracy(
-        f"vqaresults_{random_uuid}.json", questions_json_path,
-        annotations_json_path
+        f"{vqa_dataset}results_{random_uuid}.json", questions_json_path,
+        annotations_json_path,
     )
 
     # delete the temporary file
-    os.remove(f"vqaresults_{random_uuid}.json")
+    os.remove(f"{vqa_dataset}results_{random_uuid}.json")
 
     return acc
 
