@@ -595,7 +595,7 @@ def evaluate_vqa(
                                     num_shots=num_shots)
 
     for batch in more_itertools.chunked(
-            tqdm(eval_dataset, desc="Running inference"), batch_size
+            tqdm(eval_dataset, desc=f"Running inference {vqa_dataset}"), batch_size
     ):
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
