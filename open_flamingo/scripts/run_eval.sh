@@ -16,6 +16,7 @@ COCO_ANNO_PATH="/data/yfcc-tmp/data/mscoco/annotations/captions_train2017.json"
 VQAV2_IMG_PATH="/mmfs1/gscratch/efml/anasa2/data/vqav2/train2014"
 VQAV2_ANNO_PATH="/mmfs1/gscratch/efml/anasa2/data/vqav2/v2_mscoco_train2014_annotations.json"
 VQAV2_QUESTION_PATH="/mmfs1/gscratch/efml/anasa2/data/vqav2/v2_OpenEnded_mscoco_train2014_questions.json"
+IMAGENET_ROOT="/tmp/val"
 
 RANDOM_ID=$$
 RESULTS_FILE="results_${RANDOM_ID}.json"
@@ -31,11 +32,10 @@ python open_flamingo/eval/evaluate.py \
     --vqav2_image_dir_path $VQAV2_IMG_PATH \
     --vqav2_annotations_json_path $VQAV2_ANNO_PATH \
     --vqav2_questions_json_path $VQAV2_QUESTION_PATH \
-    --eval_coco \
-    --eval_vqav2 \
-    --results_file $RESULTS_FILE
-    # use the below flags to run faster eval during development.
-    # --num_samples 16 --shots 0 --num_trials 1
+    --imagenet_root $IMAGENET_ROOT \
+    --eval_imagenet \
+    --results_file $RESULTS_FILE \
+    --num_samples 16 --shots 8 --num_trials 1
 
 
 echo "evaluation complete! results written to ${RESULTS_FILE}"
