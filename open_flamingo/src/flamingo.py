@@ -13,7 +13,7 @@ class Flamingo(nn.Module):
         eoc_token_id: int,
         media_token_id: int,
         vis_dim: int = None,
-        use_projection_vector: bool = False,
+        use_projection_vector: bool = True, # anas
     ):
         """
         Args:
@@ -33,7 +33,8 @@ class Flamingo(nn.Module):
         self.vis_dim = (
             vis_dim
             if vis_dim is not None
-            else vision_encoder.config.vision_config.hidden_size
+            #else vision_encoder.config.vision_config.hidden_size
+            else vision_encoder.config.projection_dim # anas
         )
 
         self.vision_encoder = vision_encoder

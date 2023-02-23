@@ -56,6 +56,9 @@ parser.add_argument("--eval_vqav2", action="store_true", default=False,
 parser.add_argument("--eval_flickr30", action="store_true", default=False,
                     help="Whether to evaluate on Flickr30.")
 
+parser.add_argument("--eval_ok_vqa", action="store_true", default=False,
+                    help="Whether to evaluate on Flickr30.")
+
 # Dataset arguments
 
 ## COCO Dataset
@@ -97,6 +100,23 @@ parser.add_argument(
     "--vqav2_annotations_json_path",
     type=str,
     default="/fsx/home-anasawadalla/data/vqav2/v2_mscoco_train2014_annotations.json",
+)
+
+## OK-VQA Dataset
+parser.add_argument(
+    "--ok_vqa_image_dir_path",
+    type=str,
+    default="/Users/yonatanbitton/Documents/OpenFlamingo/datasets/VQA/data/train2014",
+)
+parser.add_argument(
+    "--ok_vqa_questions_json_path",
+    type=str,
+    default="/Users/yonatanbitton/Documents/OpenFlamingo/datasets/ok-vqa/OpenEnded_mscoco_val2014_questions.json",
+)
+parser.add_argument(
+    "--ok_vqa_annotations_json_path",
+    type=str,
+    default="/Users/yonatanbitton/Documents/OpenFlamingo/datasets/ok-vqa/mscoco_val2014_annotations.json",
 )
 
 
