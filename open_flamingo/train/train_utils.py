@@ -3,6 +3,7 @@ from contextlib import suppress
 import torch
 from einops import rearrange
 from tqdm import tqdm
+import time
 
 
 def get_cast_dtype(precision: str):
@@ -56,9 +57,18 @@ def train_one_epoch(
     ][-1]
 
     model.train()
+
+    # setup logging
+    step_time_m = AverageMeter() # time for one optimizer step (> 1 batch if using gradient accum)
+    data_time_m = AverageMeter() # avg time to load one batch of both C4 AND laion (= 1 batch regardless of gradient accum)
+    end = time.time()
+
+    # loop through dataloader
     for num_steps, (batch_laion, batch_pile) in tqdm(
         enumerate(zip(laion_loader, pile_loader)), disable=args.rank != 0
     ):
+        data_time_m.update(time.time() - end) 
+
         global_step = num_steps + epoch * num_batches_per_epoch
 
         #### LAION FORWARD PASS ####
@@ -162,6 +172,7 @@ def train_one_epoch(
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
+        # step optimizer and log
         if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
             num_steps == num_batches_per_epoch - 1
         ):
@@ -169,7 +180,33 @@ def train_one_epoch(
             lr_scheduler.step()
             optimizer.zero_grad()
 
+            # step time and reset end outside of rank 0
+            step_time_m.update(time.time() - end)
+            end = time.time()
+
             if args.rank == 0 and args.report_to_wandb:
+                # compute within rank 0
+                laion_samples_per_second = args.gradient_accumulation_steps * args.batch_size_laion * args.world_size / step_time_m.val
+                laion_samples_per_second_per_gpu = args.gradient_accumulation_steps * args.batch_size_laion / step_time_m.val
+
+                c4_samples_per_second = args.gradient_accumulation_steps * args.batch_size_c4 * args.world_size / step_time_m.val
+                c4_samples_per_second_per_gpu = args.gradient_accumulation_steps * args.batch_size_c4 / step_time_m.val
+
+                wandb.log(
+                    {
+                        "data_time": data_time_m.avg,
+                        "step_time": step_time_m.avg, 
+                        "laion_samples_per_second": laion_samples_per_second,
+                        "laion_samples_per_second_per_gpu": laion_samples_per_second_per_gpu,
+                        "c4_samples_per_second": c4_samples_per_second,
+                        "c4_samples_per_second_per_gpu": c4_samples_per_second_per_gpu,
+                        "lr": optimizer.param_groups[0]['lr'], 
+                    }, 
+                    commit=False,
+                )
+                step_time_m.reset()
+                data_time_m.reset()
+
                 wandb.log(
                     {
                         "loss_laion": divided_loss_laion.item(),
@@ -191,3 +228,22 @@ def get_checkpoint(model):
             del state_dict[name]
 
     return state_dict
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count

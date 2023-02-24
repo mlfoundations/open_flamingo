@@ -28,8 +28,6 @@ from webdataset.tariterators import (
     valid_sample,
 )
 
-from utils import unique_ixs
-
 Image.MAX_IMAGE_PIXELS = 1000000000
 
 try:
@@ -343,6 +341,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
 
 MIN_KB = 10
 MAX_NUM_IMAGES = 5
+SIM_THRESHOLD = 30
 def preprocess_interleaved(sample, tokenizer, clip_processor):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
@@ -351,13 +350,13 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
     
     images, image_idxs = [], []
     for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
-        if info["image_info"][image_path]["matched_text_index"] in image_idxs:
-            continue
+        # pick one image per sentence
+        if info["image_info"][image_path]["matched_text_index"] in image_idxs: continue
         rawbytes = image_tar.extractfile(os.path.join(image_tar.getnames()[0], image_path)).read()
 
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB: continue
-        if sim[info["image_info"][image_path]["matched_text_index"]] < 30: continue
+        if sim[info["image_info"][image_path]["matched_text_index"]] < SIM_THRESHOLD: continue # quite high
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
@@ -379,13 +378,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         zero_padding = torch.zeros((MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float)
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
-    # add in <image> tokens
-    for ix in image_idxs: sentences[ix] = f"<image>{sentences[ix]}<|endofchunk|>"
+    # add in <image> and <eoc> tokens
+    for ix in image_idxs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
         
-    # add a single end of chunk token to the start of any sentence with an image
-    # sentences = [f"<|endofchunk|>{s}" if "<image>" in s else s for s in sentences]
     text = " ".join(sentences)
-    # text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
+    text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
     # whitespace cleanup
     text = text.replace(" <|endofchunk|>", "<|endofchunk|>").replace("<image> ", "<image>").replace(" <image>", "<image>")
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
