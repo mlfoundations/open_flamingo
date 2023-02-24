@@ -110,6 +110,8 @@ def filter_no_caption_or_no_image(sample):
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
+    if "No images in sample" in str(exn):
+        return True
     logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
     return True
 
@@ -348,11 +350,14 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
     sentences = info["text_list"]
     
     images, image_idxs = [], []
-    for image_path in info["image_info"]:
+    for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
+        if info["image_info"][image_path]["matched_text_index"] in image_idxs:
+            continue
         rawbytes = image_tar.extractfile(os.path.join(image_tar.getnames()[0], image_path)).read()
 
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB: continue
+        if sim[info["image_info"][image_path]["matched_text_index"]] < 30: continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
@@ -363,8 +368,8 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
 
     # filter out images that are exact duplicates
     images_tensors = preprocess_image(images, clip_processor)   
-    _, unique = unique_ixs(images_tensors, dim=0)
-    keep_ixs = unique[:MAX_NUM_IMAGES]
+    # _, unique = unique_ixs(images_tensors, dim=0)
+    keep_ixs =  range(min(len(images_tensors), MAX_NUM_IMAGES)) #unique[:MAX_NUM_IMAGES]
     images_tensors = images_tensors[keep_ixs]
     # images = [images[ix] for ix in keep_ixs] # useful for debugging, but otherwise not used
     image_idxs = [image_idxs[ix] for ix in keep_ixs]
@@ -375,12 +380,12 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
     # add in <image> tokens
-    for ix in image_idxs: sentences[ix] = f"<image>{sentences[ix]}"
+    for ix in image_idxs: sentences[ix] = f"<image>{sentences[ix]}<|endofchunk|>"
         
     # add a single end of chunk token to the start of any sentence with an image
-    sentences = [f"<|endofchunk|>{s}" if "<image>" in s else s for s in sentences]
+    # sentences = [f"<|endofchunk|>{s}" if "<image>" in s else s for s in sentences]
     text = " ".join(sentences)
-    text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
+    # text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
     # whitespace cleanup
     text = text.replace(" <|endofchunk|>", "<|endofchunk|>").replace("<image> ", "<image>").replace(" <image>", "<image>")
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
@@ -394,11 +399,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         text_tensor["input_ids"] == \
         tokenizer.additional_special_tokens_ids[tokenizer.additional_special_tokens.index("<image>")]
     )
-    print("num images", num_images)
+    
     if num_images == 0:
         raise ValueError("No images in sample")
-    elif num_images == 1 and random.random() <= 0.5:
-        raise ValueError("Only one image in sample")
+    # elif num_images == 1 and random.random() <= 0.5:
+    #     raise ValueError("Only one image in sample")
 
     return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"])
     
@@ -459,7 +464,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
 
     pipeline.extend(
         [
-            wds.to_tuple("json", "tar"),
+            wds.to_tuple("json", "tar", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
             # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),

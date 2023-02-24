@@ -199,12 +199,11 @@ def main():
     args.train_num_samples = args.train_num_samples_laion
     laion_dataset = get_data(args, image_processor, tokenizer)
 
-    # load the name of the first 9200 shards of c4 from /fsx/home-anasawadalla/shard_url_list.txt
     c4_shard_urls = []
     with open("/fsx/home-anasawadalla/shard_url_list.txt", "r") as f:
         for idx, line in enumerate(f):
             c4_shard_urls.append(line.strip())
-            if idx == 10:
+            if idx == 30000:
                 break
     
     # remove everything from the shard urls except the shard name
@@ -232,11 +231,12 @@ def main():
             )
 
         for n, p in model.named_parameters():
-            if p.requires_grad:
-                if apply_decay(n):
-                    params_with_wd.append(p)
-                else:
-                    params_without_wd.append(p)
+            # if p.requires_grad:
+            if apply_decay(n):
+                params_with_wd.append(p)
+            else:
+                params_without_wd.append(p)
+                
         return [
             {"params": params_with_wd, "weight_decay": args.weight_decay},
             {"params": params_without_wd, "weight_decay": 0.0},
