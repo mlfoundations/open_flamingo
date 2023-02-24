@@ -677,7 +677,7 @@ def preprocess_sentences(interleaved_list, is_image_list):
     return len(interleaved_list), interleaved_list, is_image_list
 
 
-def preprocess_interleaved_sample(interleaved_list, is_image_list, key, images, text_tokenizer, image_processor):
+def preprocess_interleaved_sample(interleaved_list, is_image_list, images, text_tokenizer, image_processor):
     num_images, interleaved_list, is_image_list = remove_unwanted_images(interleaved_list, is_image_list, images)
     if num_images == 0:
         raise ValueError("No images in sample")
@@ -700,7 +700,7 @@ def preprocess_interleaved_data(data, text_tokenizer, image_processor):
     is_image_list = sample["is_image"]
 
     images = {k: v for k, v  in data.items() if k.endswith("png") or k.endswith("jpg") or k.endswith("jpeg")}
-    images_tensor, (text_input_ids, text_attention_mask) = preprocess_interleaved_sample(interleaved_list, is_image_list, key, images, text_tokenizer, image_processor)
+    images_tensor, (text_input_ids, text_attention_mask) = preprocess_interleaved_sample(interleaved_list, is_image_list, images, text_tokenizer, image_processor)
     return images_tensor, (text_input_ids, text_attention_mask)
     
 
