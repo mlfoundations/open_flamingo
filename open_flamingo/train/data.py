@@ -10,6 +10,7 @@ import sys
 from dataclasses import dataclass
 from multiprocessing import Value
 
+
 import braceexpand
 import torch
 import torchvision
@@ -569,12 +570,14 @@ def remove_punctuation_based_sentences(interleaved_list, is_image_list):
                 interleaved_list[i] =  ""
     return interleaved_list, is_image_list
 
+def filter_no_json_or_no_image(sample):
+    has_json = "json" in sample
+    has_image = len(dict(filter(lambda item: item[0].endswith("png") or item[0].endswith("jpg") or item[0].endswith("jpeg"), sample.items()))) >= 1
+    return has_json and has_image
 
-def parse_image(input):
-    image_data = base64.b64decode(str(input))
-    image = Image.open(io.BytesIO(image_data))
-    image = image.convert("RGB")
-    return image
+def get_image(input, images):
+    image_name = input.split(".")[-2]+"."+input.split(".")[-1] 
+    return images[image_name]
 
 def is_tiny_image(image):
     """
@@ -582,7 +585,7 @@ def is_tiny_image(image):
     """
     return image.size[0] <= TINY_IMAGE_SIZE_THRESHOLD or image.size[1] <= TINY_IMAGE_SIZE_THRESHOLD
 
-def remove_unwanted_images(interleaved_list, is_image_list):
+def remove_unwanted_images(interleaved_list, is_image_list, images):
     """
     Smaller images are usually asscoiated with icons/ advertisements and may not be relevant to the input text. 
     To tackle this issue, the method updates the interleaved data and the is_image list if the images are too small
@@ -591,7 +594,7 @@ def remove_unwanted_images(interleaved_list, is_image_list):
     valid_images = 0
     for i, (interleaved_input, is_image) in enumerate(zip(interleaved_list, is_image_list)):
         if is_image:
-            interleaved_list[i] = parse_image(interleaved_input)
+            interleaved_list[i] = get_image(interleaved_input, images)
             is_unwanted = is_tiny_image(interleaved_list[i])
             if not is_unwanted:
                 valid_images +=1
@@ -608,12 +611,10 @@ def prepare_text_data(interleaved_list, text_tokenizer):
     """
     The method prepares text tensor
     """
-    text = " ".join(interleaved_list)
-    text = text.replace(" <|endofchunk|>", "<|endofchunk|>")
-    text = text.replace("<|endofchunk|> ", "<|endofchunk|>")
-    text = text.replace("<image> ", "<image>")
-    text = text.replace(" <image>", "<image>")
+    text = "".join(interleaved_list)
     text = f"{text}<|endofchunk|>{text_tokenizer.eos_token}"
+
+    print("text......", text)
     text_tokenizer.padding_side = "right"
     text_tensor = text_tokenizer(text, max_length=MAX_NUM_TOKENS, truncation=True, padding="max_length", return_tensors="pt")
     return text_tensor
@@ -628,7 +629,7 @@ def prepare_image_data(image_list, image_processor):
     return images_tensor
 
 
-def substitute_with_image_tag(interleaved_list, is_image_list):
+def substitute_with_image_tag(interleaved_list, is_image_list, images):
     """
     The method creates a list of images (PIL) format and updates interleaved_list
     with <image> tags.
@@ -636,8 +637,8 @@ def substitute_with_image_tag(interleaved_list, is_image_list):
 
     Examples: 
     [<PIL_image>, <PIL_image>, "test sentence"]                                     ---> ["<image>", "<image>", "test sentence"]
-    [<PIL_image>, <PIL_image>, "test sentence 1", "test sentence 2"]                ---> ["<image>", "<image>", "test sentence1<|endofchunk|>", "test sentence 2"]
-    [<PIL_image>, <PIL_image>, "test sentence 1", <PIL_image>, "test sentence 2"]   ---> ["<image>", "<image>", "test sentence1<|endofchunk|>", "<image>", "test sentence 2"]
+    [<PIL_image>, <PIL_image>, "test sentence 1", "test sentence 2"]                ---> ["<image>", "<image>", "test sentence 1<|endofchunk|>", "test sentence 2"]
+    [<PIL_image>, <PIL_image>, "test sentence 1", <PIL_image>, "test sentence 2"]   ---> ["<image>", "<image>", "test sentence 1<|endofchunk|>", "<image>", "test sentence 2"]
     """
     images = []
     for i, (interleaved_input, is_image) in enumerate(zip(interleaved_list, is_image_list)):
@@ -645,10 +646,12 @@ def substitute_with_image_tag(interleaved_list, is_image_list):
             images.append(interleaved_input)
             interleaved_list[i] =  f"<image>"
         else:
+            interleaved_list[i] = interleaved_list[i].strip()
             is_previous_image = interleaved_list[i-1] == f"<image>"
             is_last_sentence = i == (len(interleaved_list) - 1)
             if is_previous_image and not is_last_sentence:
                 interleaved_list[i] =  f"{interleaved_list[i]}<|endofchunk|>"
+            
 
     assert len(images) > 0, "images should be >= 1"
     return images, interleaved_list, is_image_list
@@ -674,11 +677,8 @@ def preprocess_sentences(interleaved_list, is_image_list):
     return len(interleaved_list), interleaved_list, is_image_list
 
 
-def preprocess_interleaved_sample(sample, text_tokenizer, image_processor):
-    interleaved_list = sample["interleaved_list"]
-    is_image_list = sample["is_image"]
-
-    num_images, interleaved_list, is_image_list = remove_unwanted_images(interleaved_list, is_image_list)
+def preprocess_interleaved_sample(interleaved_list, is_image_list, key, images, text_tokenizer, image_processor):
+    num_images, interleaved_list, is_image_list = remove_unwanted_images(interleaved_list, is_image_list, images)
     if num_images == 0:
         raise ValueError("No images in sample")
 
@@ -686,7 +686,7 @@ def preprocess_interleaved_sample(sample, text_tokenizer, image_processor):
     if num_sentences == 0:
         raise ValueError("No sentences in sample")
 
-    images, interleaved_list, is_image_list = substitute_with_image_tag(interleaved_list, is_image_list)
+    images, interleaved_list, is_image_list = substitute_with_image_tag(interleaved_list, is_image_list, images)
 
     text_tensor = prepare_text_data(interleaved_list, text_tokenizer)
     images_tensor = prepare_image_data(images, image_processor) 
@@ -694,11 +694,13 @@ def preprocess_interleaved_sample(sample, text_tokenizer, image_processor):
 
 
 
-def preprocess_interleaved_json(data, text_tokenizer, image_processor):
-    sample = data[0].decode('utf8')
-    sample = json.loads(sample)
-    
-    images_tensor, (text_input_ids, text_attention_mask) = preprocess_interleaved_sample(sample, text_tokenizer, image_processor)
+def preprocess_interleaved_data(data, text_tokenizer, image_processor):
+    sample = data["json"]
+    interleaved_list = sample["interleaved_list"]
+    is_image_list = sample["is_image"]
+
+    images = {k: v for k, v  in data.items() if k.endswith("png") or k.endswith("jpg") or k.endswith("jpeg")}
+    images_tensor, (text_input_ids, text_attention_mask) = preprocess_interleaved_sample(interleaved_list, is_image_list, key, images, text_tokenizer, image_processor)
     return images_tensor, (text_input_ids, text_attention_mask)
     
 
@@ -727,7 +729,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # create two preprocess functions that take in the passed in image_processor and tokenizer
-    preprocess_interleaved_json_fn = functools.partial(preprocess_interleaved_json, text_tokenizer=tokenizer, image_processor = image_processor)
+    preprocess_interleaved_data_fn = functools.partial(preprocess_interleaved_data, text_tokenizer=tokenizer, image_processor = image_processor)
 
 
     # at this point we have an iterator over all the shards
@@ -758,8 +760,9 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
 
     pipeline.extend(
         [
-            wds.to_tuple("json"),
-            wds.map(preprocess_interleaved_json_fn ,handler=log_and_continue),
+            wds.select(filter_no_json_or_no_image),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.map(preprocess_interleaved_data_fn ,handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
         ]
     )
