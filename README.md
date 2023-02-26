@@ -3,10 +3,14 @@
 An open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model.
 
 # Installation
-To install the package, run the following command:
+
+To create a conda environment for running OpenFlamingo, run
+
 ```
-pip install -e .
+conda env create -f environment.yml
 ```
+
+Alternatively, to install the package in an existing environment, run `pip install -e .`.
 
 # API
 You can load a model using the following code:
@@ -93,10 +97,12 @@ python evaluate.py
 --checkpoint_path path/to/checkpoint.pt
 --device 0
 --coco_image_dir_path path/to/coco/images
---coco_annotation_path path/to/coco/captions_train2017.json
+--coco_annotations_json_path path/to/coco/captions_train2017.json
 --vqav2_image_dir_path path/to/vqav2/images
---vqav2_annotation_path path/to/vqav2/v2_mscoco_train2014_annotations.json
---vqav2_question_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json
+--vqav2_annotations_json_path path/to/vqav2/v2_mscoco_train2014_annotations.json
+--vqav2_questions_json_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json
+--eval_coco
+--eval_vqav2
 ``` 
 
 

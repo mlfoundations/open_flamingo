@@ -106,6 +106,8 @@ def init_distributed_device(args):
             args.world_size = torch.distributed.get_world_size()
             args.rank = torch.distributed.get_rank()
         args.distributed = True
+    else:
+        torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=1, rank=0)
 
     if torch.cuda.is_available():
         if args.distributed and not args.no_set_device_rank:

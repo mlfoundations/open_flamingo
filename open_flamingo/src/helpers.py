@@ -39,31 +39,25 @@ class PerceiverAttention(nn.Module):
 
     def forward(self, x, latents):
         """
-        einstein notation
-        b - batch
-        t - time
-        n - sequence
-        d - dimension
+        Args:
+            x (torch.Tensor): image features
+                shape (b, T, n1, D)
+            latent (torch.Tensor): latent features
+                shape (b, T, n2, D)
         """
         x = self.norm_media(x)
         latents = self.norm_latents(latents)
 
-        b, m, h = *x.shape[:2], self.heads
+        h = self.heads
 
         q = self.to_q(latents)
-
-        # the paper differs from Perceiver in which they also concat the key / values derived from the latents to be attended to
         kv_input = torch.cat((x, latents), dim=-2)
         k, v = self.to_kv(kv_input).chunk(2, dim=-1)
-
         q, k, v = rearrange_many((q, k, v), "b t n (h d) -> b h t n d", h=h)
-
         q = q * self.scale
 
         # attention
-
         sim = einsum("... i d, ... j d  -> ... i j", q, k)
-
         sim = sim - sim.amax(dim=-1, keepdim=True).detach()
         attn = sim.softmax(dim=-1)
 
@@ -77,16 +71,26 @@ class PerceiverResampler(nn.Module):
         self,
         *,
         dim,
-        depth,
+        depth=6,
         dim_head=64,
         heads=8,
         num_latents=64,
-        num_media_embeds=4,
+        max_num_media=None,
+        max_num_frames=None,
         ff_mult=4
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
-        self.media_pos_emb = nn.Parameter(torch.randn(num_media_embeds, 1, dim))
+        self.frame_embs = (
+            nn.Parameter(torch.randn(max_num_frames, dim))
+            if exists(max_num_frames)
+            else None
+        )
+        self.media_time_embs = (
+            nn.Parameter(torch.randn(max_num_media, 1, dim))
+            if exists(max_num_media)
+            else None
+        )
 
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -102,18 +106,30 @@ class PerceiverResampler(nn.Module):
         self.norm = nn.LayerNorm(dim)
 
     def forward(self, x):
-        if x.ndim == 3:
-            x = rearrange(x, "b n d -> b 1 n d")
+        """
+        Args:
+            x (torch.Tensor): image features
+                shape (b, T, F, v, D)
+        Returns:
+            shape (b, T, n, D) where n is self.num_latents
+        """
+        b, T, F, v = x.shape[:4]
 
-        times = x.shape[1]
-        x = x + self.media_pos_emb[:times]
+        # frame and media time embeddings
+        if exists(self.frame_embs):
+            frame_embs = repeat(self.frame_embs[:F], "F d -> b T F v d", b=b, T=T, v=v)
+            x = x + frame_embs
+        x = rearrange(
+            x, "b T F v d -> b T (F v) d"
+        )  # flatten the frame and spatial dimensions
+        if exists(self.media_time_embs):
+            x = x + self.media_time_embs[:T]
 
-        latents = repeat(self.latents, "n d -> b m n d", b=x.shape[0], m=x.shape[1])
-
+        # blocks
+        latents = repeat(self.latents, "n d -> b T n d", b=b, T=T)
         for attn, ff in self.layers:
             latents = attn(x, latents) + latents
             latents = ff(latents) + latents
-
         return self.norm(latents)
 
 
@@ -140,7 +156,16 @@ class MaskedCrossAttention(nn.Module):
         self.only_attend_immediate_media = only_attend_immediate_media
 
     def forward(self, x, media, media_locations=None):
-        b, t, m = media.shape[:3]
+        """
+        Args:
+            x (torch.Tensor): text features
+                shape (B, T_txt, D_txt)
+            media (torch.Tensor): image features
+                shape (B, T_img, n, D_img) where n is the dim of the latents
+            media_locations: boolean mask identifying the media tokens in x
+                shape (B, T_txt)
+        """
+        _, T_img, n = media.shape[:3]
         h = self.heads
 
         x = self.norm(x)
@@ -158,7 +183,7 @@ class MaskedCrossAttention(nn.Module):
         if exists(media_locations):
             # at each boolean of True, increment the time counter (relative to media time)
             text_time = media_locations.cumsum(dim=-1)
-            media_time = torch.arange(t, device=x.device) + 1
+            media_time = torch.arange(T_img, device=x.device) + 1
 
             # text time must equal media time if only attending to most immediate image
             # otherwise, as long as text time is greater than media time (if attending to all previous images / media)
@@ -166,7 +191,7 @@ class MaskedCrossAttention(nn.Module):
 
             text_to_media_mask = mask_op(
                 rearrange(text_time, "b i -> b 1 i 1"),
-                repeat(media_time, "j -> 1 1 1 (j m)", m=m),
+                repeat(media_time, "j -> 1 1 1 (j n)", n=n),
             )
             sim = sim.masked_fill(~text_to_media_mask, -torch.finfo(sim.dtype).max)
 
@@ -213,9 +238,7 @@ class GatedCrossAttentionBlock(nn.Module):
     def forward(
         self,
         x,
-        # media tensor, encoded by perceiver resample - (batch, time, latents, dim)
         media,
-        # boolean tensor indicating positions of media - (batch, sequence)
         media_locations=None,
     ):
         x = (

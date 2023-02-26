@@ -86,7 +86,6 @@ def train_one_epoch(
                 input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                is_vision_encoded=False,
             )[0]
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
@@ -99,24 +98,7 @@ def train_one_epoch(
         clip_text_attention_mask = torch.stack([x[1] for x in batch_pile[0]]).to(
             device_id, dtype=cast_dtype, non_blocking=True
         )
-
-        N = clip_text_input_ids.shape[0]
-        I = clip_text_input_ids.shape[1]
-        clip_text_input_ids = rearrange(clip_text_input_ids, "n h w -> (n h) w")
-        clip_text_attention_mask = rearrange(
-            clip_text_attention_mask, "n h w -> (n h) w"
-        )
-
-        with torch.no_grad():
-            vision_features = model.module.vision_encoder.get_text_features(
-                input_ids=clip_text_input_ids, attention_mask=clip_text_attention_mask
-            )
-            vision_features = vision_features / vision_features.norm(
-                p=2, dim=-1, keepdim=True
-            )
-
-        vision_features = rearrange(vision_features, "(n h) w -> n h w", n=N, h=I)
-        vision_features = vision_features.unsqueeze(2).unsqueeze(2)
+        # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
 
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
@@ -136,11 +118,12 @@ def train_one_epoch(
 
         with autocast():
             loss_pile = model(
-                vision_features,
+                None,
                 input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                is_vision_encoded=True,
+                pseudovision_x=clip_text_input_ids,
+                pseudovision_attention_mask=clip_text_attention_mask,
             )[0]
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
@@ -150,19 +133,19 @@ def train_one_epoch(
             + divided_loss_pile * args.loss_multiplier_pile
         )
         loss.backward()
+        
+        #### MASK GRADIENTS FOR EMBEDDINGS ####
+        # Note (anas): Do not apply weight decay to embeddings as it will break this function.
+        def mask_embedding(m):
+            if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
+                zero_mask = torch.zeros_like(m.weight.grad)
+                zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+                zero_mask[endofchunk_token_id] = torch.ones_like(
+                    zero_mask[endofchunk_token_id]
+                )
+                m.weight.grad = m.weight.grad * zero_mask
 
-        if args.mask_embedding_gradients:
-            #### MASK EMBEDDING GRADIENTS ####
-            zero_mask = torch.zeros_like(
-                model.module.lang_encoder.get_input_embeddings().weight.grad
-            )
-            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-            zero_mask[endofchunk_token_id] = torch.ones_like(
-                zero_mask[endofchunk_token_id]
-            )
-            model.module.lang_encoder.get_input_embeddings().weight.grad = (
-                model.module.lang_encoder.get_input_embeddings().weight.grad * zero_mask
-            )
+        model.apply(mask_embedding)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 

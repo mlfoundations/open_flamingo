@@ -88,11 +88,6 @@ def main():
     parser.add_argument("--lr_scheduler", default="constant", type=str)
     parser.add_argument("--loss_multiplier_pile", type=float, default=1.0)
     parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
-    parser.add_argument(
-        "--mask_embedding_gradients",
-        action="store_true",
-        help="Do not train embeddings for tokens in vanilla LM vocab",
-    )
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
     parser.add_argument(
