@@ -126,7 +126,7 @@ def train_one_epoch(
                     labels[i][token_idx] = -100
                     token_idx += 1
 
-        print("labels: ", labels[0])
+        # print("labels: ", labels[0])
 
         labels[labels == media_token_id] = -100
         labels.to(device_id)

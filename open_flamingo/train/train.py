@@ -132,6 +132,11 @@ def main():
         default="anas-awadalla",
         type=str,
     )
+    parser.add_argument(
+        "--c4_textsim_threshold",
+        default=30,
+        type=float,
+    )
 
     # if torch.cuda.is_available():
     #   # This enables tf32 on Ampere GPUs which is only 8% slower than

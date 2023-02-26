@@ -341,8 +341,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
 
 MIN_KB = 10
 MAX_NUM_IMAGES = 5
-SIM_THRESHOLD = 30
-def preprocess_interleaved(sample, tokenizer, clip_processor):
+def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
@@ -356,7 +355,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
 
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB: continue
-        if sim[info["image_info"][image_path]["matched_text_index"]] < SIM_THRESHOLD: continue # quite high
+        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold: continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
@@ -379,7 +378,8 @@ def preprocess_interleaved(sample, tokenizer, clip_processor):
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
     # add in <image> and <eoc> tokens
-    for ix in image_idxs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
+    # eoc after sentence = "sentence loss"
+    for ix in image_idxs: sentences[ix] = f"<image>{sentences[ix]}<|endofchunk|>"
         
     text = " ".join(sentences)
     text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
@@ -430,7 +430,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer
+        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, sim_threshold=args.c4_textsim_threshold
     )
 
     # at this point we have an iterator over all the shards
@@ -555,8 +555,8 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     pipeline.extend(
         [
             wds.to_tuple("txt"),
-            wds.map(preprocess_fn, handler=log_and_continue),
-            wds.batched(args.batch_size, partial=False),
+            # wds.map(preprocess_fn, handler=log_and_continue),
+            # wds.batched(args.batch_size, partial=False),
             # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
         ]
     )
