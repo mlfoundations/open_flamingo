@@ -387,7 +387,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
 
     # add in <image> and <eoc> tokens
     # eoc after sentence = "sentence loss"
-    for ix in image_idxs: sentences[ix] = f"<image>{sentences[ix]}<|endofchunk|>"
+    for ix in image_idxs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
         
     text = " ".join(sentences)
     text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
