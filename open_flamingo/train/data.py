@@ -469,7 +469,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
 
     pipeline.extend(
         [
-            wds.to_tuple("json", "tar", "__key__"),
+            wds.to_tuple("json", "tar", "__key__", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
             # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
