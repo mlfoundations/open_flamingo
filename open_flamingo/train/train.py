@@ -132,6 +132,11 @@ def main():
         default="anas-awadalla",
         type=str,
     )
+    parser.add_argument(
+        "--grad-checkpointing",
+        default=False,
+        action="store_true",
+    )
 
     # if torch.cuda.is_available():
     #   # This enables tf32 on Ampere GPUs which is only 8% slower than
@@ -172,11 +177,15 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
         use_media_placement_augmentation=args.use_media_placement_augmentation,
+        use_cache=not args.grad_checkpointing,
     )
     
     assert model.use_projection_vector is False, "projection vector not desired"
 
     random_seed(args.seed, args.rank)
+
+    if args.grad_checkpointing:
+        model.lang_encoder.model.gradient_checkpointing_enable()
 
     print(f"Start running training on rank {args.rank}.")
 

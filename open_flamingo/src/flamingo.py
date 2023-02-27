@@ -84,7 +84,7 @@ class Flamingo(nn.Module):
         output = self.lang_encoder(
             lang_x, attention_mask=attention_mask, labels=labels)
 
-        self.lang_encoder.clear_conditioned_layers()
+        # self.lang_encoder.clear_conditioned_layers()
         return output
 
     def generate(
