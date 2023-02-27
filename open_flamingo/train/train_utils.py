@@ -36,6 +36,7 @@ def train_one_epoch(
     lr_scheduler,
     device_id,
     wandb,
+    bloom_filter
 ):
     num_batches_per_epoch_laion = laion_loader.num_batches
     num_batches_per_epoch_pile = pile_loader.num_batches
@@ -62,6 +63,8 @@ def train_one_epoch(
     step_time_m = AverageMeter() # time for one optimizer step (> 1 batch if using gradient accum)
     data_time_m = AverageMeter() # avg time to load one batch of both C4 AND laion (= 1 batch regardless of gradient accum)
     end = time.time()
+
+    num_collisions = 0
 
     # loop through dataloader
     for num_steps, (batch_laion, batch_pile) in tqdm(
@@ -103,6 +106,14 @@ def train_one_epoch(
         images = batch_pile[0].to(device_id, dtype=cast_dtype, non_blocking=True).unsqueeze(2)
         input_ids = torch.stack([x[0] for x in batch_pile[1]]).squeeze(1)
         attention_mask = torch.stack([x[1] for x in batch_pile[1]]).squeeze(1)
+        urls = batch_pile[2]
+        
+        # add urls to bloom filter if not already present
+        for url in urls:
+            if url in bloom_filter:
+                num_collisions += 1
+            else:
+                bloom_filter.add(url)
         
         # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
         labels = input_ids.clone()
@@ -207,6 +218,10 @@ def train_one_epoch(
                 step_time_m.reset()
                 data_time_m.reset()
 
+                colision_percentage = (num_collisions / (args.batch_size_c4 * args.gradient_accumulation_steps)) * 100
+                wandb.log({"c4_batch_collision_percentage": colision_percentage}, commit=False)
+                num_collisions = 0
+                
                 wandb.log(
                     {
                         "loss_laion": divided_loss_laion.item(),
@@ -218,6 +233,7 @@ def train_one_epoch(
                     {"loss_pile": divided_loss_pile.item(), "global_step": global_step},
                     commit=True,
                 )
+                
 
 
 def get_checkpoint(model):

@@ -402,7 +402,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     # elif num_images == 1 and random.random() <= 0.5:
     #     raise ValueError("Only one image in sample")
 
-    return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"])
+    return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]), info["url"]
     
 
 def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):

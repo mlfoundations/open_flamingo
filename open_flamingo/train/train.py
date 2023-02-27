@@ -208,7 +208,7 @@ def main():
     with open("/fsx/home-anasawadalla/shard_url_list.txt", "r") as f:
         for idx, line in enumerate(f):
             c4_shard_urls.append(line.strip())
-            if idx == 30000:
+            if idx == 53000:
                 break
     
     # remove everything from the shard urls except the shard name
@@ -287,6 +287,11 @@ def main():
         resume_from_epoch = checkpoint["epoch"] + 1
 
     ddp_model.train()
+    
+    # create a bloom filter to keep track of samples we have seen
+    # this is to avoid duplicates
+    from bloom_filter2 import BloomFilter
+    bloom_filter = BloomFilter(max_elements=15000000, error_rate=0.001)
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
@@ -305,6 +310,7 @@ def main():
             pile_loader=pile_loader,
             device_id=device_id,
             wandb=wandb,
+            bloom_filter=bloom_filter,
         )
 
         if args.rank == 0:
