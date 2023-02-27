@@ -41,7 +41,7 @@ class FlamingoLayer(nn.Module):
         output_attentions=False,
         use_cache=False,
     ):
-
+        print('what is this', self.vis_x is None)
         if self.vis_x is None:
             raise ValueError("vis_x must be conditioned before forward pass")
 

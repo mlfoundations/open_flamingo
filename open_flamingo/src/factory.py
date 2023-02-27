@@ -63,6 +63,7 @@ def create_model_and_transforms(
     model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
     model.lang_encoder.get_input_embeddings().requires_grad_(True)
+    model.lang_encoder.model.decoder.final_layer_norm.requires_grad_(True)
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
