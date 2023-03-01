@@ -214,6 +214,17 @@ class MaskedCrossAttention(nn.Module):
             )
             attn = attn.masked_fill(text_without_media_mask, 0.0)
 
+        
+        ### TEST ATTENTION MASKS ###
+        # assert attn.shape == (x.shape[0], self.heads, x.shape[1], T_img * n), "attn shape should be b h T_txt (T_img n)"
+        # mask = rearrange(
+        #     (attn != 0), "b h T_txt (T_img n) -> b h T_txt n T_img", n=n
+        # )
+        # for i in range(x.shape[1]):
+        #     print(i, mask[0, 0, i, 0])
+        # print(">>>>>>>>>")
+        ############
+
         out = einsum("... i j, ... j d -> ... i d", attn, v)
         out = rearrange(out, "b h n d -> b n (h d)")
         return self.to_out(out)

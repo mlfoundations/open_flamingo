@@ -221,7 +221,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         )
 
         media_locations = input_ids == self.media_token_id
-        attend_previous = (random.random() < 0.5) if self.use_media_placement_augmentation else False
+        attend_previous = (random.random() < 0.5) if self.use_media_placement_augmentation else True
 
         for layer in self.get_decoder().layers:
             layer.condition_media_locations(media_locations)
