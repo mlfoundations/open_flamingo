@@ -154,7 +154,7 @@ class MaskedCrossAttention(nn.Module):
         # whether for text to only attend to immediate preceding image, or all previous images
         self.only_attend_immediate_media = only_attend_immediate_media
 
-    def forward(self, x, media, media_locations=None, attend_previous=True):
+    def forward(self, x, media, media_locations=None):
         """
         Args:
             x (torch.Tensor): text features
@@ -163,8 +163,6 @@ class MaskedCrossAttention(nn.Module):
                 shape (B, T_img, n, D_img) where n is the dim of the latents
             media_locations: boolean mask identifying the media tokens in x
                 shape (B, T_txt)
-            attend_previous: bool
-                If false, ignores immediately preceding image and starts attending when following image
         """
         _, T_img, n = media.shape[:3]
         h = self.heads
@@ -185,13 +183,6 @@ class MaskedCrossAttention(nn.Module):
             # at each boolean of True, increment the time counter (relative to media time)
             text_time = media_locations.cumsum(dim=-1)
             media_time = torch.arange(T_img, device=x.device) + 1
-
-            if not attend_previous: 
-                text_time[~media_locations] += 1
-                # make sure max is still the number of images in the sequence
-                text_time[text_time > repeat(
-                    torch.count_nonzero(media_locations, dim=1), "b -> b i", i=text_time.shape[1]
-                )] = 0
 
             # text time must equal media time if only attending to most immediate image
             # otherwise, as long as text time is greater than media time (if attending to all previous images / media)
@@ -259,10 +250,9 @@ class GatedCrossAttentionBlock(nn.Module):
         x,
         media,
         media_locations=None,
-        attend_previous=True,
     ):
         x = (
-            self.attn(x, media, media_locations=media_locations, attend_previous=attend_previous) * self.attn_gate.tanh()
+            self.attn(x, media, media_locations=media_locations) * self.attn_gate.tanh()
             + x
         )
         x = self.ff(x) * self.ff_gate.tanh() + x

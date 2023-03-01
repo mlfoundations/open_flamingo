@@ -176,7 +176,6 @@ def main():
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
-        use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
     
     assert model.use_projection_vector is False, "projection vector not desired"
@@ -221,7 +220,7 @@ def main():
     args.dataset_type = "c4"
     args.batch_size = args.batch_size_c4
     args.train_num_samples = args.train_num_samples_c4
-    pile_dataset = get_data(args, image_processor, tokenizer)
+    pile_dataset = get_data(args, image_processor, tokenizer) # need to add in augmentation here according to args.use_media_augmentation
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
