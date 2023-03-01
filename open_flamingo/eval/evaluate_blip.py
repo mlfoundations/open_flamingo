@@ -21,7 +21,7 @@ from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames, \
     IMAGENET_1K_CLASS_ID_TO_LABEL
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--blip_path", default="Salesforce/blip2-opt-2.7b", type=str)
+parser.add_argument("--blip_path", default="Salesforce/blip2-flan-t5-xl", type=str)
 # Trial arguments
 parser.add_argument("--shots", nargs="+", default=[0], type=int)
 parser.add_argument(
@@ -446,8 +446,8 @@ def evaluate_vqa(
         questions_json_path,
         annotations_json_path,
         seed=42,
-        max_generation_length=5,
-        num_beams=3,
+        max_generation_length=10,
+        num_beams=5,
         length_penalty=-2.0,
         num_samples=5000,
         query_set_size=2048,
@@ -495,7 +495,7 @@ def evaluate_vqa(
                                         full_dataset, seed)
 
     def get_prompt(sample, train=True):
-        return f"Question:{sample['question'].strip()} Answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
+        return f"Question: {sample['question'].strip()} Answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
 
     _, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset, random_indices=random_indices,
@@ -533,6 +533,8 @@ def evaluate_vqa(
         
         new_predictions = tokenizer.batch_decode(outputs, skip_special_tokens=True)
         new_predictions = [p.replace("\n", "").split("<")[0] for p in new_predictions]
+        
+        print(new_predictions)
                 
         predictions.extend(
             [
