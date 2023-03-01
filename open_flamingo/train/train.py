@@ -220,7 +220,7 @@ def main():
     args.dataset_type = "c4"
     args.batch_size = args.batch_size_c4
     args.train_num_samples = args.train_num_samples_c4
-    pile_dataset = get_data(args, image_processor, tokenizer) # need to add in augmentation here according to args.use_media_augmentation
+    pile_dataset = get_data(args, image_processor, tokenizer) # need to add in augmentation here according to args.use_media_placement_augmentation
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []

@@ -349,7 +349,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
 
 MIN_KB = 10
 MAX_NUM_IMAGES = 5
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_augmentation):
+def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
@@ -368,7 +368,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
 
         images.append(image)
         matched_text_index = info["image_info"][image_path]["matched_text_index"]
-        if use_media_augmentation and matched_text_index > 0:
+        if use_media_placement_augmentation and matched_text_index > 0:
             matched_text_index = (matched_text_index - 1) if random.random() < 0.5 else matched_text_index
             
         image_idxs.append(matched_text_index)
@@ -442,7 +442,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, sim_threshold=args.c4_textsim_threshold, use_media_augmentation=args.use_media_augmentation
+        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, sim_threshold=args.c4_textsim_threshold, use_media_placement_augmentation=args.use_media_placement_augmentation
     )
 
     # at this point we have an iterator over all the shards
