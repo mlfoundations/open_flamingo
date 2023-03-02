@@ -11,3 +11,4 @@ webdataset
 wandb
 nltk
 scipy
+inflection
