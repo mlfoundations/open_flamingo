@@ -5,10 +5,21 @@ import glob
 import os
 import random
 import braceexpand
+import re
 
 import numpy as np
 import torch
 import wandb
+
+from functools import partial
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+
+from torch.distributed.fsdp import flat_param
+
+
+
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -133,7 +144,25 @@ def main():
         type=str,
     )
     parser.add_argument(
-        "--grad-checkpointing",
+        "--fsdp",
+        default=False,
+        action="store_true"
+    )
+    parser.add_argument(
+        "--fsdp-layers-to-wrap",
+        default=(
+            'CLIPModel',
+            'OPTDecoderLayer',
+            'AutoTokenizer',
+            'GatedCrossAttentionBlock',
+            'Embedding',
+            'OPTLearnedPositionalEmbedding',
+        ),
+        type=str,
+        nargs='+'
+    )
+    parser.add_argument(
+        "--fsdp-cpu-offload",
         default=False,
         action="store_true",
     )
@@ -184,9 +213,6 @@ def main():
 
     random_seed(args.seed, args.rank)
 
-    if args.grad_checkpointing:
-        model.lang_encoder.model.gradient_checkpointing_enable()
-
     print(f"Start running training on rank {args.rank}.")
 
     if args.rank == 0 and args.report_to_wandb:
@@ -200,7 +226,51 @@ def main():
     device_id = args.rank % torch.cuda.device_count()
     model = model.to(device_id)
 
-    ddp_model = DDP(model, device_ids=[device_id])
+    if args.fsdp:
+        #model = model.cpu()
+        print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+        print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+        mp = MixedPrecision(
+            reduce_dtype=torch.bfloat16,
+        )
+        layers = set()
+        for module in model.modules():
+            an_error = False
+            name = module.__class__.__name__
+            for layer in args.fsdp_layers_to_wrap:
+                if re.match(layer, name):
+                    layers.add(module.__class__)
+            
+                    list_of_bools = []
+                    list_of_names = []
+                    for n, p in module.named_parameters():
+                        list_of_bools.append(p.requires_grad)
+                        list_of_names.append(n)
+                        if list_of_bools[-1] != list_of_bools[0]:
+                            an_error = True
+                    
+                    if an_error:
+                        print(n, name)
+                        print(list_of_bools)
+                        print(list_of_names)
+                        exit()
+        print(layers)
+        print("Wrapped layers", layers)
+        wrapper_kwargs = dict(
+            mixed_precision=mp,
+            cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
+            auto_wrap_policy=partial(
+                transformer_auto_wrap_policy,
+                transformer_layer_cls=layers,
+            ),
+            device_id=device_id,
+            #flatten_parameters=False,
+        )
+        ddp_model = FSDP(model, **wrapper_kwargs)
+        print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+        print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+    else:
+        ddp_model = DDP(model, device_ids=[device_id])
 
     args.shards = list(braceexpand.braceexpand(args.laion_shards))
     args.dataset_type = "image_text"
@@ -240,11 +310,11 @@ def main():
             )
 
         for n, p in model.named_parameters():
-            # if p.requires_grad:
-            if apply_decay(n):
-                params_with_wd.append(p)
-            else:
-                params_without_wd.append(p)
+            if p.requires_grad:
+                if apply_decay(n):
+                    params_with_wd.append(p)
+                else:
+                    params_without_wd.append(p)
                 
         return [
             {"params": params_with_wd, "weight_decay": args.weight_decay},

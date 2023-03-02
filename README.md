@@ -70,6 +70,24 @@ train.py
 --dataset_resampled
 --num_epochs 10
 ```
+or
+```
+torchrun --nnodes=1 --nproc_per_node=2 train.py \
+    --dataset_resampled \
+    --batch_size_c4=32 \
+    --batch_size_laion=64 \
+    --lm_path facebook/opt-125m \
+    --train_num_samples_c4 500000 \
+    --train_num_samples_laion 1000000 \
+    --loss_multiplier_laion 0.2 \
+    --workers=8 \
+    --run_name test \
+    --num_epochs 30 \
+    --lr_scheduler constant \
+    --warmup_steps 1250 \
+    --use_media_placement_augmentation
+
+```
 
 If this is your first time running this command you will need to run:
 ```
