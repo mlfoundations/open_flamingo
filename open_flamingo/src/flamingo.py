@@ -13,7 +13,7 @@ class Flamingo(nn.Module):
         eoc_token_id: int,
         media_token_id: int,
         vis_dim: int = None,
-        use_projection_vector: bool = True, # anas
+        use_projection_vector: bool = False,
     ):
         """
         Args:
