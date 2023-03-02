@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
-from transformers import OPTForCausalLM, OPTModel, OPTPreTrainedModel
+from .opt_clone import OPTForCausalLM, OPTModel, OPTPreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
 import random
 
@@ -24,7 +24,8 @@ class FlamingoLayer(nn.Module):
 
     # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
     def condition_vis_x(self, vis_x):
-        self.vis_x = vis_x
+        pass
+        #self.vis_x = vis_x
 
     def condition_media_locations(self, media_locations):
         self.media_locations = media_locations
@@ -37,19 +38,20 @@ class FlamingoLayer(nn.Module):
         lang_x,
         attention_mask=None,
         layer_head_mask=None,
+        vis_x=None,
         past_key_value=None,
         output_attentions=False,
         use_cache=False,
     ):
 
-        if self.vis_x is None:
+        if vis_x is None:
             raise ValueError("vis_x must be conditioned before forward pass")
 
         if self.media_locations is None:
             raise ValueError("media_locations must be conditioned before forward pass")
 
         lang_x = self.gated_cross_attn_layer(
-            lang_x, self.vis_x, media_locations=self.media_locations, attend_previous=self.attend_previous,
+            lang_x, vis_x, media_locations=self.media_locations, attend_previous=self.attend_previous,
         )
         lang_x = self.decoder_layer(
             lang_x,
@@ -140,6 +142,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        vis_x = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -238,6 +241,7 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            vis_x=vis_x,
         )
 
         logits = self.lm_head(outputs[0]).contiguous()
