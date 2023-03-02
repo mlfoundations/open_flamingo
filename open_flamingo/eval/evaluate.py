@@ -464,10 +464,10 @@ def evaluate_coco_flickr(
         tokenizer.padding_side = "left"
         encodings = tokenizer(
             batch_text,
-            padding=True,
+            padding="longest",
             truncation=True,
             return_tensors="pt",
-            max_length=128,
+            max_length=512,
         )
         input_ids = encodings["input_ids"]
         attention_mask = encodings["attention_mask"]
@@ -608,9 +608,9 @@ def evaluate_vqa(
         encodings = tokenizer(
             batch_text,
             return_tensors="pt",
-            padding=True,
+            padding="longest",
             truncation=True,
-            max_length=256,
+            max_length=512,
         )
         input_ids = encodings["input_ids"].to(device if device >= 0 else "cpu")
         attention_mask = encodings["attention_mask"].to(
