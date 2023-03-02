@@ -10,6 +10,7 @@ def create_model_and_transforms(
     lang_encoder_path: str,
     tokenizer_path: str,
     use_local_files: bool = False,
+    use_cache : bool = True,
     **flamingo_kwargs,
 ):
     """
@@ -43,7 +44,7 @@ def create_model_and_transforms(
     )
 
     lang_encoder = OPTForCausalLMFlamingo.from_pretrained(
-        lang_encoder_path, local_files_only=use_local_files
+        lang_encoder_path, local_files_only=use_local_files, use_cache=use_cache,
     )
     lang_encoder.resize_token_embeddings(len(text_tokenizer))
 

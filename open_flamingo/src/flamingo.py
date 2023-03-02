@@ -75,16 +75,16 @@ class Flamingo(nn.Module):
         assert (vision_x is not None) ^ (
             pseudovision_x is not None
         ), "Must provide either vision_x or pseudovision_x"
-        self._process_media(
+        vis_x = self._process_media(
             vision_x=vision_x,
             pseudovision_x=pseudovision_x,
             pseudovision_attention_mask=pseudovision_attention_mask,
         )
 
         output = self.lang_encoder(
-            lang_x, attention_mask=attention_mask, labels=labels)
+            lang_x, attention_mask=attention_mask, labels=labels, vis_x = vis_x)
 
-        self.lang_encoder.clear_conditioned_layers()
+        # self.lang_encoder.clear_conditioned_layers()
         return output
 
     def generate(
@@ -181,8 +181,7 @@ class Flamingo(nn.Module):
                 pseudovision_x, pseudovision_attention_mask
             )
 
-        for layer in self.lang_encoder.get_decoder().layers:
-            layer.condition_vis_x(vision_features)
+        return vision_features
 
     def _encode_vision_x(self, vision_x: torch.Tensor):
         """
