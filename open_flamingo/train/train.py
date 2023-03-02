@@ -152,6 +152,8 @@ def main():
         "--fsdp-layers-to-wrap",
         default=(
             'CLIPModel',
+            'CLIPTextTransformer',
+            'CLIPVisionTransformer',
             'OPTDecoderLayer',
             'AutoTokenizer',
             'GatedCrossAttentionBlock',
@@ -206,7 +208,7 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
         use_media_placement_augmentation=args.use_media_placement_augmentation,
-        use_cache=not args.grad_checkpointing,
+        use_cache=True,
     )
     
     assert model.use_projection_vector is False, "projection vector not desired"
