@@ -86,6 +86,12 @@ Before evaluating the model, you will need to download the COCO and VQAv2 datase
 pip install pycocoevalcap
 ```
 
+To run evaluations on OKVQA you will need to run the following command:
+```
+import nltk
+nltk.download('wordnet')
+```
+
 To evaluate the model, use script open_flamingo/eval/evaluate.py with the following arguments:
 
 ```
