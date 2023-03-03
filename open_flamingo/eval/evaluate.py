@@ -742,6 +742,12 @@ def evaluate_imagenet(
                                     effective_num_shots=effective_num_shots,
                                     num_shots=num_shots)
 
+    # kwargs to use when calling tokenizer
+    tokenizer_kwargs = {'return_tensors': 'pt',
+                        'padding': True,
+                        'truncation': True,
+                        'max_length': 256}
+
     for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
         print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
         batch_per_class_probs = []
@@ -755,7 +761,17 @@ def evaluate_imagenet(
         batch_images = batch_images.to(device)
         model._process_media(vision_x=batch_images)
 
-        # TODO: Process the context text only once here.
+        # Process the context text only once.
+        context_encodings = tokenizer([context_text] * batch_size,
+                                      **tokenizer_kwargs)
+        context_ids = context_encodings['input_ids'].to(device)
+        context_attention_mask = context_encodings['attention_mask'].to(device)
+        context_tokens_len = context_ids.shape[-1]
+        context_precomputed = model(None, context_ids, context_attention_mask,
+                                    use_cached_vision_x=True,
+                                    clear_conditioned_layers=False,
+                                    use_cache=True)
+        past_key_values = context_precomputed.past_key_values
 
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
@@ -764,30 +780,40 @@ def evaluate_imagenet(
                           + _imagenet_prompt(imagenet_class_name, False)
                           + eoc_token] * batch_size
 
-            encodings = tokenizer(
-                batch_text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=256,
-            )
+            full_batch_encodings = tokenizer(batch_text, **tokenizer_kwargs)
             device = device if device >= 0 else "cpu"
 
-            # input_ids has shape [batch_size, seq_len]
-            input_ids = encodings["input_ids"].to(device)
-            attention_mask = encodings["attention_mask"].to(device)
+            # full_batch_input_ids has shape [batch_size, seq_len], but we
+            # only need to run inference on the [batch_size,
+            # context_tokens_len:] inputs that have not been precomputed and
+            # vary per class.
+            full_batch_input_ids = full_batch_encodings["input_ids"]
+            full_batch_attention_mask = full_batch_encodings["attention_mask"]
+            seq_len = full_batch_input_ids.shape[-1]
 
-            outputs = model(None, input_ids, attention_mask,
-                            use_cached_vision_x=True,
-                            clear_conditioned_layers=False)
+            # Autoregressively compute the outputs without recomputing the
+            # context computations.
+            for i in range(context_tokens_len, seq_len):
+                token_ids = full_batch_input_ids[:, i].to(device)
+                attention_mask = full_batch_attention_mask[:, i].to(device)
+                outputs = model(None, token_ids,
+                                attention_mask,
+                                use_cached_vision_x=True,
+                                clear_conditioned_layers=False,
+                                past_key_values=past_key_values,
+                                use_cache=True)
+                past_key_values = outputs.past_key_values
+
+            # TODO(jpgard): check shape of output logits at this step to
+            #  ensure they have the expected shape even after using caching.
 
             per_sample_probs = compute_per_sample_probs(
-                encodings=encodings,
+                encodings=full_batch_encodings,
                 tokenizer=tokenizer,
                 outputs=outputs,
                 eoc_token_id=eoc_token_id)
             per_sample_loss = compute_per_sample_loss(
-                encodings=encodings,
+                encodings=full_batch_encodings,
                 tokenizer=tokenizer,
                 outputs=outputs,
                 eoc_token_id=eoc_token_id)
