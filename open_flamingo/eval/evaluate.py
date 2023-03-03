@@ -770,8 +770,6 @@ def evaluate_imagenet(
                                     use_cached_vision_x=True,
                                     clear_conditioned_layers=False,
                                     use_cache=True)
-        past_key_values = context_precomputed.past_key_values
-        context_logits = context_precomputed.logits
 
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
@@ -798,7 +796,8 @@ def evaluate_imagenet(
             assert torch.all(context_ids[0, :] == full_batch_input_ids[:,
                                                   :context_len]).item()
 
-            logits = context_logits.clone()
+            logits = context_precomputed.logits.clone()
+            past_key_values = context_precomputed.past_key_values.clone()
 
             # Autoregressively compute the outputs without recomputing the
             # context computations.
