@@ -1,5 +1,6 @@
 import argparse
 import json
+from math import ceil
 import os
 import uuid
 from collections import defaultdict
@@ -670,7 +671,7 @@ def evaluate_imagenet(
     Evaluate a model on ImageNet dataset.
 
     Args:
-        model (nn.Module): model to evaluate
+        model (Flamingo): model to evaluate
         tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
         image_processor (transformers.ImageProcessor): image processor for the model
         batch_size (int): batch size
@@ -690,8 +691,8 @@ def evaluate_imagenet(
 
     if num_samples + effective_num_shots > len(full_dataset):
         raise ValueError(
-            f"num_samples + num_shots must be less than or equal to {len(full_dataset)}"
-        )
+            f"num_samples + num_shots must be less than or equal to "
+            f"{len(full_dataset)} ")
 
     random_indices = get_random_indices(num_samples, effective_num_shots,
                                         full_dataset, seed)
@@ -717,9 +718,11 @@ def evaluate_imagenet(
         effective_num_shots=effective_num_shots)
 
     model.eval()
-    # Predictions based on the class target sequence with the maximal predicted probability
+    # Predictions based on the class target sequence with the maximal
+    # predicted probability
     predictions_max_prob = []
-    # Predictions based on the class target sequence with the minimal loss on the model logits
+    # Predictions based on the class target sequence with the minimal loss on
+    # the model logits
     predictions_min_loss = []
     labels = []
 
@@ -733,7 +736,7 @@ def evaluate_imagenet(
                                     num_shots=num_shots)
 
     for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
-        print(f"processing batch {i} of {len(eval_dataset)}")
+        print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
         batch_per_class_probs = []
         batch_per_class_losses = []
         batch_images = prepare_batch_images(batch=batch,
@@ -741,9 +744,12 @@ def evaluate_imagenet(
                                             context_images=context_images,
                                             num_shots=num_shots)
 
-        # For each ImageNet class, construct the output prompt, compute its
-        # completion 'loss'. The class with the lowest completion loss would
-        # be the predicted label.
+        # Process the images only once.
+        batch_images = batch_images.to(device)
+        model._process_media(vision_x=batch_images)
+
+        # For each ImageNet class, construct the output prompt, compute a
+        # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
             batch_text = [context_text
                           + _imagenet_prompt(imagenet_class_name, False)
@@ -762,9 +768,10 @@ def evaluate_imagenet(
             # input_ids has shape [batch_size, seq_len]
             input_ids = encodings["input_ids"].to(device)
             attention_mask = encodings["attention_mask"].to(device)
-            batch_images = batch_images.to(device)
 
-            outputs = model(batch_images, input_ids, attention_mask)
+            outputs = model(None, input_ids, attention_mask,
+                            use_cached_vision_x=True,
+                            clear_conditioned_layers=False)
 
             per_sample_probs = compute_per_sample_probs(encodings=encodings,
                                                         tokenizer=tokenizer,

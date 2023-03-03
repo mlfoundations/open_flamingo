@@ -52,6 +52,8 @@ class Flamingo(nn.Module):
         labels: torch.Tensor = None,
         pseudovision_x: torch.Tensor = None,
         pseudovision_attention_mask: torch.Tensor = None,
+        use_cached_vision_x: bool=False,
+        clear_conditioned_layers: bool=True
     ):
         """
         Forward pass of Flamingo.
@@ -67,20 +69,43 @@ class Flamingo(nn.Module):
                 When training on the Pile, we use text as "pseudoimages" by encoding with the CLIP text encoder.
                 shape (B, T_img, m) where m is the sequence length
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
+            clear_conditioned_layers: if True, clear the conditioned layers
+                once the foward pass is completed. Set this to false if the
+                same set of images will be reused in another subsequent
+                forward pass.
         """
-        assert (vision_x is not None) ^ (
-            pseudovision_x is not None
-        ), "Must provide either vision_x or pseudovision_x"
-        self._process_media(
-            vision_x=vision_x,
-            pseudovision_x=pseudovision_x,
-            pseudovision_attention_mask=pseudovision_attention_mask,
-        )
+        assert (vision_x is not None) or (pseudovision_x is not None
+        ) or use_cached_vision_x, \
+            "Must provide either vision_x or pseudovision_x or set " \
+            "use_cached_vision_x to True. "
+
+        if use_cached_vision_x:
+
+            # Case: use cached; vision_x should be cached and other
+            # vision-related inputs should not be provided.
+
+            assert (vision_x is None) and (pseudovision_x is None),\
+                "Expect vision_x and pseudovision_x to be None when " \
+                "use_cached_vision_x is True. "
+            assert self.lang_encoder.is_conditioned()
+
+        else:
+
+            # Case: do not use caching (i.e. this is a standard forward pass);
+            # verify that either vision_x or pseudovision_x is provided.
+
+            assert (vision_x is not None) or (pseudovision_x is not None)
+            self._process_media(
+                vision_x=vision_x,
+                pseudovision_x=pseudovision_x,
+                pseudovision_attention_mask=pseudovision_attention_mask)
 
         output = self.lang_encoder(
             input_ids=lang_x, attention_mask=attention_mask, labels=labels)
 
-        self.lang_encoder.clear_conditioned_layers()
+        if clear_conditioned_layers:
+            self.lang_encoder.clear_conditioned_layers()
+
         return output
 
     def generate(
@@ -167,8 +192,6 @@ class Flamingo(nn.Module):
                 shape (B, T_img, m) where m is the sequence length
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
-        assert (vision_x is None) ^ (
-            pseudovision_x is None), "Must provide either vision_x or pseudovision_x"
 
         if vision_x is not None:
             vision_features = self._encode_vision_x(vision_x)
@@ -176,6 +199,8 @@ class Flamingo(nn.Module):
             vision_features = self._encode_pseudovision_x(
                 pseudovision_x, pseudovision_attention_mask
             )
+        else:
+            raise ValueError("Must provide either vision_x or pseudovision_x")
 
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_features)
@@ -230,6 +255,6 @@ class Flamingo(nn.Module):
 
         pseudovision_x = rearrange(
             pseudovision_x, "(b T) d -> b T 1 1 d", b=b, T=T)
-        
+
         pseudovision_x = self.perceiver(pseudovision_x)
         return pseudovision_x
