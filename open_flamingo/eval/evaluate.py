@@ -812,7 +812,8 @@ def evaluate_imagenet(
                 past_key_values=past_key_values,
                 use_cache=True)
 
-            logits = torch.concat((context_precomputed.logits, outputs.logits), 1)
+            logits = torch.concat(
+                (context_precomputed.logits, outputs.logits), 1)
 
             per_sample_probs = compute_per_sample_probs(
                 encodings=full_batch_encodings,
