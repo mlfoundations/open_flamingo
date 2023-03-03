@@ -64,7 +64,7 @@ def compute_shifted_logits_and_labels(logits: torch.Tensor, encodings,
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
 
-    assert torch.eq(shift_labels.size(), shift_logits.size())
+    assert shift_labels.size() == shift_logits.size()
 
     return shift_logits, shift_labels
 
