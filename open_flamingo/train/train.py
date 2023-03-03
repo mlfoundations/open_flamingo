@@ -16,6 +16,7 @@ from train_utils import get_checkpoint, train_one_epoch
 from transformers import (
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
+    get_cosine_schedule_with_warmup
 )
 
 from open_flamingo import create_model_and_transforms
@@ -220,7 +221,7 @@ def main():
     args.dataset_type = "c4"
     args.batch_size = args.batch_size_c4
     args.train_num_samples = args.train_num_samples_c4
-    pile_dataset = get_data(args, image_processor, tokenizer) # need to add in augmentation here according to args.use_media_placement_augmentation
+    pile_dataset = get_data(args, image_processor, tokenizer)
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -254,6 +255,12 @@ def main():
     print(f"Total training steps: {total_training_steps}")
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=total_training_steps,
+        )
+    elif args.lr_scheduler == "cosine":
+        lr_scheduler = get_cosine_schedule_with_warmup(
             optimizer,
             num_warmup_steps=args.warmup_steps,
             num_training_steps=total_training_steps,
