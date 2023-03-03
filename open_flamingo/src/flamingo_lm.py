@@ -14,6 +14,10 @@ class FlamingoLayer(nn.Module):
         self.vis_x = None
         self.media_locations = None
 
+    def is_conditioned(self) -> bool:
+        """Check whether the layer is conditioned."""
+        return self.vis_x is None
+
     # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
     def condition_vis_x(self, vis_x):
         self.vis_x = vis_x
@@ -97,7 +101,11 @@ class FlamingoLMMixin(nn.Module):
             layer.condition_media_locations(media_locations)
 
         return super().forward(*input, **kwargs) # Call the other parent's forward method
-            
+
+    def is_conditioned(self) -> bool:
+        """Check whether all decoder layers are already conditioned."""
+        return all(l.is_conditioned() for l in self._get_decoder_layers())
+
     def clear_conditioned_layers(self):
         for layer in self._get_decoder_layers():
             layer.condition_vis_x(None)
