@@ -791,7 +791,6 @@ def evaluate_imagenet(
             full_batch_input_ids = full_batch_encodings["input_ids"].to(device)
             full_batch_attention_mask = full_batch_encodings[
                 "attention_mask"].to(device)
-            seq_len = full_batch_input_ids.shape[-1]
 
             # Sanity check that the encoded inputs with context are the same
             # as the encoded context alone, for every example in the batch
@@ -803,7 +802,6 @@ def evaluate_imagenet(
                 [tuple([x.clone() for x in inner]) for inner in
                  context_precomputed.past_key_values])
 
-            infer_start = datetime.now().timestamp()
             # Compute the outputs without recomputing context representations.
             outputs = model(
                 vision_x=None,
@@ -814,9 +812,7 @@ def evaluate_imagenet(
                 past_key_values=past_key_values,
                 use_cache=True)
 
-            print(f"inference loop took {datetime.now().timestamp() - infer_start}s")
-            logits = torch.concat(
-                (context_precomputed.logits, outputs.logits), 1)
+            logits = torch.concat((context_precomputed.logits, outputs.logits), 1)
 
             per_sample_probs = compute_per_sample_probs(
                 encodings=full_batch_encodings,
