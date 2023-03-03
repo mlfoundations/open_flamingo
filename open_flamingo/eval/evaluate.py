@@ -778,11 +778,6 @@ def evaluate_imagenet(
         # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
-            # TODO(jpgard): here we are tokenizing the context text but
-            #  really don't need to. I am leaving it for now as a sanity
-            #  check but we can change the below code to remove the
-            #  duplicated context_text later.
-
             batch_text = [context_text
                           + _imagenet_prompt(imagenet_class_name, False)
                           + eoc_token] * batch_size
