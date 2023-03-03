@@ -807,25 +807,12 @@ def evaluate_imagenet(
             # Compute the outputs without recomputing context representations.
             outputs = model(
                 vision_x=None,
-                lang_x=full_batch_input_ids[:, context_len:].view(-1, 1),
+                lang_x=full_batch_input_ids[:, context_len:],
                 attention_mask=full_batch_attention_mask,
                 use_cached_vision_x=True,
                 clear_conditioned_layers=False,
                 past_key_values=past_key_values,
                 use_cache=True)
-            # per_position_logits = []
-            # for i in range(context_len, seq_len):
-            #     outputs = model(
-            #         vision_x=None,
-            #         lang_x=full_batch_input_ids[:, i].view(-1, 1),
-            #         attention_mask=full_batch_attention_mask[:, :i + 1],
-            #         use_cached_vision_x=True,
-            #         clear_conditioned_layers=False,
-            #         past_key_values=past_key_values,
-            #         use_cache=True)
-            #
-            #     past_key_values = outputs.past_key_values
-            #     per_position_logits.append(outputs.logits)
 
             print(f"inference loop took {datetime.now().timestamp() - infer_start}s")
             logits = torch.concat(
