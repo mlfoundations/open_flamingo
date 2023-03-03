@@ -781,14 +781,16 @@ def evaluate_imagenet(
                             use_cached_vision_x=True,
                             clear_conditioned_layers=False)
 
-            # TODO(jpgard): We also need to mask eoc_token_ids in these
-            #  computations!
-            per_sample_probs = compute_per_sample_probs(encodings=encodings,
-                                                        tokenizer=tokenizer,
-                                                        outputs=outputs)
-            per_sample_loss = compute_per_sample_loss(encodings=encodings,
-                                                      tokenizer=tokenizer,
-                                                      outputs=outputs)
+            per_sample_probs = compute_per_sample_probs(
+                encodings=encodings,
+                tokenizer=tokenizer,
+                outputs=outputs,
+                eoc_token_id=eoc_token_id)
+            per_sample_loss = compute_per_sample_loss(
+                encodings=encodings,
+                tokenizer=tokenizer,
+                outputs=outputs,
+                eoc_token_id=eoc_token_id)
             batch_per_class_probs.append(per_sample_probs.detach())
             batch_per_class_losses.append(per_sample_loss.detach())
 
