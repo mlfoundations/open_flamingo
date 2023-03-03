@@ -192,8 +192,6 @@ class Flamingo(nn.Module):
                 shape (B, T_img, m) where m is the sequence length
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
-        assert (vision_x is None) ^ (
-            pseudovision_x is None), "Must provide either vision_x or pseudovision_x"
 
         if vision_x is not None:
             vision_features = self._encode_vision_x(vision_x)
@@ -201,6 +199,8 @@ class Flamingo(nn.Module):
             vision_features = self._encode_pseudovision_x(
                 pseudovision_x, pseudovision_attention_mask
             )
+        else:
+            raise ValueError("Must provide either vision_x or pseudovision_x")
 
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_features)
