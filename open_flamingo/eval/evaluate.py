@@ -771,6 +771,7 @@ def evaluate_imagenet(
                                     clear_conditioned_layers=False,
                                     use_cache=True)
         past_key_values = context_precomputed.past_key_values
+        context_logits = context_precomputed.logits
 
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
@@ -796,6 +797,8 @@ def evaluate_imagenet(
             assert torch.all(context_ids[0, :] == full_batch_input_ids[:,
                                                   :context_len]).item()
 
+            logits = context_logits.clone()
+
             # Autoregressively compute the outputs without recomputing the
             # context computations.
             for i in range(context_len, seq_len):
@@ -816,6 +819,7 @@ def evaluate_imagenet(
                     use_cache=True)
 
                 past_key_values = outputs.past_key_values
+                logits = torch.concat((logits, outputs.logits), 1)
 
             # TODO(jpgard): check shape of output logits at this step to
             #  ensure they have the expected shape even after using caching.
@@ -823,12 +827,12 @@ def evaluate_imagenet(
             per_sample_probs = compute_per_sample_probs(
                 encodings=full_batch_encodings,
                 tokenizer=tokenizer,
-                outputs=outputs,
+                logits=logits,
                 eoc_token_id=eoc_token_id)
             per_sample_loss = compute_per_sample_loss(
                 encodings=full_batch_encodings,
                 tokenizer=tokenizer,
-                outputs=outputs,
+                logits=logits,
                 eoc_token_id=eoc_token_id)
             batch_per_class_probs.append(per_sample_probs.detach())
             batch_per_class_losses.append(per_sample_loss.detach())

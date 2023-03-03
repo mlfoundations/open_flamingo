@@ -23,7 +23,8 @@ def compute_classification_accuracy(
     return np.mean(is_correct).item()
 
 
-def compute_shifted_logits_and_labels(outputs, encodings, tokenizer,
+def compute_shifted_logits_and_labels(logits: torch.Tensor, encodings,
+                                      tokenizer,
                                       eoc_token_id) -> Tuple[
     torch.Tensor, torch.Tensor]:
     """Helper function to compute shifted logits and labels.
@@ -42,6 +43,7 @@ def compute_shifted_logits_and_labels(outputs, encodings, tokenizer,
     """
 
     labels = encodings["input_ids"].clone()
+
     # convert padding and EOC tokens to -100 so they are ignored in loss
     labels[labels == tokenizer.pad_token_id] = -100
     labels[labels == eoc_token_id] = -100
@@ -59,12 +61,16 @@ def compute_shifted_logits_and_labels(outputs, encodings, tokenizer,
 
     # Shift so that tokens < n predict n. The shifted tensors both have
     # shape [batch_size, seq_len - 1].
-    shift_logits = outputs.logits[..., :-1, :].contiguous()
+    shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
+
+    assert torch.eq(shift_labels.size(), shift_logits.size())
+
     return shift_logits, shift_labels
 
 
-def compute_per_sample_probs(encodings, tokenizer, outputs, eoc_token_id
+def compute_per_sample_probs(encodings, tokenizer, logits: torch.Tensor,
+                             eoc_token_id
                              ) -> torch.Tensor:
     """Helper function to compute per-sample probability of the input sequence.
 
@@ -72,7 +78,7 @@ def compute_per_sample_probs(encodings, tokenizer, outputs, eoc_token_id
     prompt text
     """
     shift_logits, shift_labels = compute_shifted_logits_and_labels(
-        outputs, encodings, tokenizer, eoc_token_id)
+        logits, encodings, tokenizer, eoc_token_id)
 
     # Tuple of tensors for unmasked label tokens. The first element of the
     # tuple contains the batch indices; the second element contains the
@@ -104,7 +110,7 @@ def compute_per_sample_probs(encodings, tokenizer, outputs, eoc_token_id
     return target_probs
 
 
-def compute_per_sample_loss(encodings, tokenizer, outputs, eoc_token_id
+def compute_per_sample_loss(encodings, tokenizer, logits, eoc_token_id
                             ) -> torch.Tensor:
     """Helper function to compute per-sample classification loss.
 
@@ -112,7 +118,7 @@ def compute_per_sample_loss(encodings, tokenizer, outputs, eoc_token_id
     prompt text
     """
     shift_logits, shift_labels = compute_shifted_logits_and_labels(
-        outputs, encodings, tokenizer, eoc_token_id)
+        logits, encodings, tokenizer, eoc_token_id)
 
     device = shift_logits.device
 
