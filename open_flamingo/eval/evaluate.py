@@ -747,9 +747,8 @@ def evaluate_imagenet(
         batch_images = batch_images.to(device)
         model._process_media(vision_x=batch_images)
 
-        # For each ImageNet class, construct the output prompt, compute its
-        # completion 'loss'. The class with the lowest completion loss would
-        # be the predicted label.
+        # For each ImageNet class, construct the output prompt, compute a
+        # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
             batch_text = [context_text
                           + _imagenet_prompt(imagenet_class_name, False)
