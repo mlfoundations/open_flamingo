@@ -771,16 +771,22 @@ def evaluate_imagenet(
                                     clear_conditioned_layers=False,
                                     use_cache=True)
 
+        device = device if device >= 0 else "cpu"
+
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
+
+            # TODO(jpgard): here we are tokenizing the context text but
+            #  really don't need to. I am leaving it for now as a sanity
+            #  check but we can change the below code to remove the
+            #  duplicated context_text later.
 
             batch_text = [context_text
                           + _imagenet_prompt(imagenet_class_name, False)
                           + eoc_token] * batch_size
 
             full_batch_encodings = tokenizer(batch_text, **tokenizer_kwargs)
-            device = device if device >= 0 else "cpu"
 
             # full_batch_input_ids has shape [batch_size, seq_len], but we
             # only need to run inference on the [batch_size,
@@ -799,34 +805,29 @@ def evaluate_imagenet(
             logits = context_precomputed.logits.clone()
 
             # Clone the nested structure of the past key values
+            # TODO(jpgard): is there a faster way to do this?
+            #  Could be a bottleneck.
             past_key_values = tuple(
                 [tuple([x.clone() for x in inner]) for inner in
                  context_precomputed.past_key_values])
 
-            # Autoregressively compute the outputs without recomputing the
-            # context computations.
+            # Compute the outputs without recomputing context representations.
+            per_position_logits = []
             for i in range(context_len, seq_len):
-                tokens_i = torch.unsqueeze(full_batch_input_ids[:, i], 1)
-
-                # The attention_mask always has to have the length:
-                # len(past_key_values) + len(input_ids). See:
-                # https://huggingface.co/docs/transformers/v4.26.1/en/model_doc/gpt2#transformers.GPT2Model.forward.attention_mask
-                attention_mask_i = full_batch_attention_mask[:, :i + 1]
 
                 outputs = model(
                     vision_x=None,
-                    lang_x=tokens_i,
-                    attention_mask=attention_mask_i,
+                    lang_x=full_batch_input_ids[:, i].view(-1, 1),
+                    attention_mask=full_batch_attention_mask[:, :i + 1],
                     use_cached_vision_x=True,
                     clear_conditioned_layers=False,
                     past_key_values=past_key_values,
                     use_cache=True)
 
                 past_key_values = outputs.past_key_values
-                logits = torch.concat((logits, outputs.logits), 1)
+                per_position_logits.append(outputs.logits)
 
-            # TODO(jpgard): check shape of output logits at this step to
-            #  ensure they have the expected shape even after using caching.
+            logits = torch.concat((logits, *per_position_logits), 1)
 
             per_sample_probs = compute_per_sample_probs(
                 encodings=full_batch_encodings,
