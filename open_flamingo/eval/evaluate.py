@@ -236,7 +236,8 @@ def main():
                     annotations_json_path=args.ok_vqa_annotations_json_path,
                     vqa_dataset='ok_vqa'
                 )
-                print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
+                print(
+                    f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
                 scores.append(ok_vqa_score)
             print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
             results["ok_vqa"].append(
@@ -596,7 +597,8 @@ def evaluate_vqa(
                                     num_shots=num_shots)
 
     for batch in more_itertools.chunked(
-            tqdm(eval_dataset, desc=f"Running inference {vqa_dataset}"), batch_size
+            tqdm(eval_dataset, desc=f"Running inference {vqa_dataset}"),
+            batch_size
     ):
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
@@ -698,6 +700,11 @@ def evaluate_imagenet(
                                         full_dataset, seed)
 
     eoc_token = "<|endofchunk|>"
+    eoc_token_id = tokenizer.additional_special_tokens_ids[
+        tokenizer.additional_special_tokens.index(eoc_token)]
+
+    # Padding from right allows efficient precomputing of context activations.
+    tokenizer.padding_side = "right"
 
     def _imagenet_prompt(class_name, is_context: bool = True):
         """Construct an imagenet prompt for a given label."""
@@ -748,6 +755,8 @@ def evaluate_imagenet(
         batch_images = batch_images.to(device)
         model._process_media(vision_x=batch_images)
 
+        # TODO: Process the context text only once here.
+
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
@@ -755,7 +764,6 @@ def evaluate_imagenet(
                           + _imagenet_prompt(imagenet_class_name, False)
                           + eoc_token] * batch_size
 
-            tokenizer.padding_side = "left"
             encodings = tokenizer(
                 batch_text,
                 return_tensors="pt",
@@ -773,6 +781,8 @@ def evaluate_imagenet(
                             use_cached_vision_x=True,
                             clear_conditioned_layers=False)
 
+            # TODO(jpgard): We also need to mask eoc_token_ids in these
+            #  computations!
             per_sample_probs = compute_per_sample_probs(encodings=encodings,
                                                         tokenizer=tokenizer,
                                                         outputs=outputs)
