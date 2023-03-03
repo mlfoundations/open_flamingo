@@ -799,14 +799,22 @@ def evaluate_imagenet(
             # Autoregressively compute the outputs without recomputing the
             # context computations.
             for i in range(context_len, seq_len):
+                tokens_i = torch.unsqueeze(full_batch_input_ids[:, i], 1)
+
+                # The attention_mask always has to have the length:
+                # len(past_key_values) + len(input_ids). See:
+                # https://huggingface.co/docs/transformers/v4.26.1/en/model_doc/gpt2#transformers.GPT2Model.forward.attention_mask
+                attention_mask_i = full_batch_attention_mask[:, :i + 1]
+
                 outputs = model(
                     vision_x=None,
-                    lang_x=torch.unsqueeze(full_batch_input_ids[:, i], 1),
-                    attention_mask=full_batch_attention_mask[:, :i],
+                    lang_x=tokens_i,
+                    attention_mask=attention_mask_i,
                     use_cached_vision_x=True,
                     clear_conditioned_layers=False,
                     past_key_values=past_key_values,
                     use_cache=True)
+
                 past_key_values = outputs.past_key_values
 
             # TODO(jpgard): check shape of output logits at this step to
