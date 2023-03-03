@@ -1,5 +1,6 @@
 import argparse
 import json
+from math import ceil
 import os
 import uuid
 from collections import defaultdict
@@ -735,7 +736,7 @@ def evaluate_imagenet(
                                     num_shots=num_shots)
 
     for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
-        print(f"processing batch {i} of {len(eval_dataset)}")
+        print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
         batch_per_class_probs = []
         batch_per_class_losses = []
         batch_images = prepare_batch_images(batch=batch,
