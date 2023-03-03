@@ -774,7 +774,7 @@ def evaluate_imagenet(
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            print('[DEBUG] processing class %s' % imagenet_class_name)
+
             batch_text = [context_text
                           + _imagenet_prompt(imagenet_class_name, False)
                           + eoc_token] * batch_size
