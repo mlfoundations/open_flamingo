@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 import json
 from math import ceil
 import os
@@ -802,19 +803,18 @@ def evaluate_imagenet(
             assert torch.all(context_ids[0, :] == full_batch_input_ids[:,
                                                   :context_len]).item()
 
-            logits = context_precomputed.logits.clone()
-
             # Clone the nested structure of the past key values
             # TODO(jpgard): is there a faster way to do this?
             #  Could be a bottleneck.
+            copy_start = datetime.now().timestamp()
             past_key_values = tuple(
                 [tuple([x.clone() for x in inner]) for inner in
                  context_precomputed.past_key_values])
+            print(f"copying took {datetime.now().timestamp() - copy_start}s")
 
             # Compute the outputs without recomputing context representations.
             per_position_logits = []
             for i in range(context_len, seq_len):
-
                 outputs = model(
                     vision_x=None,
                     lang_x=full_batch_input_ids[:, i].view(-1, 1),
@@ -827,7 +827,8 @@ def evaluate_imagenet(
                 past_key_values = outputs.past_key_values
                 per_position_logits.append(outputs.logits)
 
-            logits = torch.concat((logits, *per_position_logits), 1)
+            logits = torch.concat(
+                (context_precomputed.logits, *per_position_logits), 1)
 
             per_sample_probs = compute_per_sample_probs(
                 encodings=full_batch_encodings,
