@@ -16,7 +16,7 @@ class FlamingoLayer(nn.Module):
 
     def is_conditioned(self) -> bool:
         """Check whether the layer is conditioned."""
-        return self.vis_x is None
+        return self.vis_x is not None
 
     # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
     def condition_vis_x(self, vis_x):
