@@ -797,7 +797,11 @@ def evaluate_imagenet(
                                                   :context_len]).item()
 
             logits = context_precomputed.logits.clone()
-            past_key_values = context_precomputed.past_key_values.clone()
+
+            # Clone the nested structure of the past key values
+            past_key_values = tuple(
+                [tuple([x.clone() for x in inner]) for inner in
+                 context_precomputed.past_key_values])
 
             # Autoregressively compute the outputs without recomputing the
             # context computations.
