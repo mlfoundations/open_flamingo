@@ -819,38 +819,40 @@ def evaluate_imagenet(
                 tokenizer=tokenizer,
                 logits=logits,
                 eoc_token_id=eoc_token_id)
-            per_sample_loss = compute_per_sample_loss(
-                encodings=full_batch_encodings,
-                tokenizer=tokenizer,
-                logits=logits,
-                eoc_token_id=eoc_token_id)
             batch_per_class_probs.append(per_sample_probs.detach())
-            batch_per_class_losses.append(per_sample_loss.detach())
+
+            ## uncomment below to perform loss-based evals; these generally
+            ## seem much worse and aren't what they did in the original paper.
+            # per_sample_loss = compute_per_sample_loss(
+            #     encodings=full_batch_encodings,
+            #     tokenizer=tokenizer,
+            #     logits=logits,
+            #     eoc_token_id=eoc_token_id)
+            # batch_per_class_losses.append(per_sample_loss.detach())
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
         # the (probability or loss) for batch element i on imagenet class j.
         batch_probs = torch.stack(batch_per_class_probs, 1)
-        batch_losses = torch.stack(batch_per_class_losses, 1)
 
         predictions_max_prob.extend(
             torch.argmax(batch_probs, 1).detach().tolist())
-        predictions_min_loss.extend(
-            torch.argmin(batch_losses, 1).detach().tolist())
         labels.extend(x['class_id'] for x in batch)
 
+        ## uncomment below to perform loss-based evals; these generally
+        ## seem much worse and aren't what they did in the original paper.
+        # batch_losses = torch.stack(batch_per_class_losses, 1)
+        # predictions_min_loss.extend(
+        #     torch.argmin(batch_losses, 1).detach().tolist())
+
     acc_max_prob = (np.array(predictions_max_prob) == np.array(labels)).mean()
-    acc_min_loss = (np.array(predictions_min_loss) == np.array(labels)).mean()
+    # acc_min_loss = (np.array(predictions_min_loss) == np.array(labels)).mean()
     print(f"[DEBUG] ImageNet accuracy with max prob method is {acc_max_prob}")
-    print(f"[DEBUG] ImageNet accuracy with min loss method is {acc_min_loss}")
+    # print(f"[DEBUG] ImageNet accuracy with min loss method is {acc_min_loss}")
     print(f"[DEBUG] printing ImageNet predictions and labels:")
-    for yhat_prob, yhat_loss, y in zip(predictions_max_prob,
-                                       predictions_min_loss,
-                                       labels):
+    for yhat_prob, y in zip(predictions_max_prob,labels):
         print(" " * 30 + f"label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}"
-                         f"\nprediction (max prob method): "
+                         f"\nprediction: "
                          f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]}"
-                         f"\nprediction (min loss method): "
-                         f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]}\n"
                          "#" * 25)
     return acc_max_prob
 
