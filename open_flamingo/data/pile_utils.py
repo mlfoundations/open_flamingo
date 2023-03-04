@@ -51,7 +51,6 @@ def preprocess_pile(sample, tokenizer, clip_processor):
 
 
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
-    print("text...", text)
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
         text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"

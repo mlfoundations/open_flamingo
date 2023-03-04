@@ -15,7 +15,7 @@ def preprocess_text(sample, tokenizer):
     sample = [
         (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample
     ]
-    print(sample)
+
     text = tokenizer(
         sample,
         max_length=32,

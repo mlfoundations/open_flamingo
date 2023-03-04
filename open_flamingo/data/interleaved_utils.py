@@ -78,7 +78,6 @@ def prepare_text_data(interleaved_list, text_tokenizer):
     """
     text = "".join(interleaved_list)
     text = f"{text}<|endofchunk|>{text_tokenizer.eos_token}"
-    print("text...", text)
     text_tokenizer.padding_side = "right"
     text_tensor = text_tokenizer(text, max_length=MAX_NUM_TOKENS, truncation=True, padding="max_length", return_tensors="pt")
     return text_tensor
