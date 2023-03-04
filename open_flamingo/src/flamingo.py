@@ -55,7 +55,7 @@ class Flamingo(nn.Module):
         use_cached_vision_x: bool=False,
         clear_conditioned_layers: bool=True,
         past_key_values=None,
-        use_cache:bool=False,
+        use_cache: bool=False,
     ):
         """
         Forward pass of Flamingo.
@@ -75,6 +75,11 @@ class Flamingo(nn.Module):
                 once the foward pass is completed. Set this to false if the
                 same set of images will be reused in another subsequent
                 forward pass.
+            past_key_values: pre-computed values to pass to language model.
+                See past_key_values documentation in Hugging Face
+                CausalLM models.
+            use_cache: whether to use cached key values. See use_cache
+                documentation in Hugging Face CausalLM models.
         """
         assert (vision_x is not None) or (pseudovision_x is not None
         ) or use_cached_vision_x, \
