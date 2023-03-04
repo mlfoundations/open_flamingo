@@ -264,6 +264,7 @@ def preprocess_text(sample, tokenizer):
     sample = [
         (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample
     ]
+    print(sample)
     text = tokenizer(
         sample,
         max_length=32,
@@ -322,6 +323,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
 
 
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
+    print("text...", text)
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
         text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
@@ -356,92 +358,20 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False)
 
-    num_samples, num_shards = get_dataset_size(input_shards)
-    num_samples = None
-    if not num_samples:
-        num_samples = args.train_num_samples
-        if not num_samples:
-            raise RuntimeError(
-                "Currently, number of dataset samples must be specified for training dataset. "
-                "Please specify via `--train-num-samples` if no dataset length info present."
-            )
+    num_samples, num_shards = get_shard_stats(args, input_shards)
 
     # create a shared epoch store to sync epoch to dataloader worker proc
     shared_epoch = SharedEpoch(epoch=epoch)
+    preprocess_pile_fn = functools.partial(preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer)
+    preprocess_fn = [preprocess_pile_fn]
+
     if resampled:
-        pipeline = [
-            ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)
-        ]
+        dataset = create_dataset_pipeline_with_resampling(input_shards,shared_epoch, args, preprocess_fn)
     else:
-        pipeline = [wds.SimpleShardList(input_shards)]
+        dataset = create_dataset_pipeline_without_resampling(input_shards, shared_epoch, args, preprocess_fn)
+        assert (num_shards >= args.workers * args.world_size), "number of shards must be >= total workers"
 
-    preprocess_fn = functools.partial(
-        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer
-    )
-
-    # at this point we have an iterator over all the shards
-    if not resampled:
-        pipeline.extend(
-            [
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ]
-        )
-    pipeline.extend(
-        [
-            # at this point, we have an iterator over the shards assigned to each worker at each node
-            # wds.tarfile_to_samples(handler=log_and_continue),
-            tarfile_to_samples_nothrow,
-            wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
-            ),
-        ]
-    )
-
-    pipeline.extend(
-        [
-            wds.to_tuple("txt"),
-            wds.map(preprocess_fn, handler=log_and_continue),
-            wds.batched(args.batch_size, partial=False),
-            # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
-        ]
-    )
-
-    dataset = wds.DataPipeline(*pipeline)
-    if not resampled:
-        assert (
-            num_shards >= args.workers * args.world_size
-        ), "number of shards must be >= total workers"
-    # roll over and repeat a few samples to get same number of full batches on each node
-    round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
-    num_batches = round_fn(num_samples / global_batch_size)
-    num_workers = max(1, args.workers)
-    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-    num_batches = num_worker_batches * num_workers
-    num_samples = num_batches * global_batch_size
-    # each worker is iterating over this
-    dataset = dataset.with_epoch(num_worker_batches)
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=True,
-    )
-
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-
+    dataloader = prepare_dataloader(args, floor, num_samples, dataset)
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
@@ -450,98 +380,23 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False)
 
-    num_samples, num_shards = get_dataset_size(input_shards)
-    num_samples = None
-    if not num_samples:
-        num_samples = args.train_num_samples
-        if not num_samples:
-            raise RuntimeError(
-                "Currently, number of dataset samples must be specified for training dataset. "
-                "Please specify via `--train-num-samples` if no dataset length info present."
-            )
+    num_samples, num_shards = get_shard_stats(args, input_shards)
 
     # create a shared epoch store to sync epoch to dataloader worker proc
     shared_epoch = SharedEpoch(epoch=epoch)
-    if resampled:
-        pipeline = [
-            ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)
-        ]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
-
-    # create two preprocess functions that take in the passed in image_processor and tokenizer
-    preprocess_image_fn = functools.partial(
-        preprocess_image, image_processor=image_processor
-    )
+    preprocess_image_fn = functools.partial(preprocess_image, image_processor=image_processor)
     preprocess_text_fn = functools.partial(preprocess_text, tokenizer=tokenizer)
 
-    # at this point we have an iterator over all the shards
-    if not resampled:
-        pipeline.extend(
-            [
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ]
-        )
-    pipeline.extend(
-        [
-            # at this point, we have an iterator over the shards assigned to each worker at each node
-            # wds.tarfile_to_samples(handler=log_and_continue),
-            tarfile_to_samples_nothrow,
-            wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
-            ),
-        ]
-    )
+    preprocess_fn = [preprocess_image_fn, preprocess_text_fn]
+    if resampled:
+        dataset = create_dataset_pipeline_with_resampling(input_shards,shared_epoch, args, preprocess_fn)
+    else:
+        dataset = create_dataset_pipeline_without_resampling(input_shards, shared_epoch, args, preprocess_fn)
+        assert (num_shards >= args.workers * args.world_size), "number of shards must be >= total workers"
 
-    pipeline.extend(
-        [
-            wds.select(filter_no_caption_or_no_image),
-            wds.decode("pilrgb", handler=log_and_continue),
-            wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
-            wds.batched(args.batch_size, partial=False),
-            wds.map_tuple(
-                preprocess_image_fn, preprocess_text_fn, handler=log_and_continue
-            ),
-        ]
-    )
-
-    dataset = wds.DataPipeline(*pipeline)
-    if not resampled:
-        assert (
-            num_shards >= args.workers * args.world_size
-        ), "number of shards must be >= total workers"
-    # roll over and repeat a few samples to get same number of full batches on each node
-    round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
-    num_batches = round_fn(num_samples / global_batch_size)
-    num_workers = max(1, args.workers)
-    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-    num_batches = num_worker_batches * num_workers
-    num_samples = num_batches * global_batch_size
-    # each worker is iterating over this
-    dataset = dataset.with_epoch(num_worker_batches)
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=True,
-    )
-
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-
+    dataloader = prepare_dataloader(args, floor, num_samples, dataset)
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+
 
 
 
@@ -613,6 +468,7 @@ def prepare_text_data(interleaved_list, text_tokenizer):
     """
     text = "".join(interleaved_list)
     text = f"{text}<|endofchunk|>{text_tokenizer.eos_token}"
+    print("text...", text)
     text_tokenizer.padding_side = "right"
     text_tensor = text_tokenizer(text, max_length=MAX_NUM_TOKENS, truncation=True, padding="max_length", return_tensors="pt")
     return text_tensor
@@ -621,6 +477,7 @@ def prepare_text_data(interleaved_list, text_tokenizer):
 def prepare_image_data(image_list, image_processor):
     images_tensor = preprocess_image(image_list, image_processor) 
     num_images = len(image_list)
+    print("num_images", num_images)
     if num_images < MAX_NUM_IMAGES:
         zero_padding = torch.zeros((MAX_NUM_IMAGES - num_images, N_CHANNELS, INTERLEAVED_IMAGE_SIZE, INTERLEAVED_IMAGE_SIZE), dtype=torch.float)
         images_tensor = torch.cat((images_tensor, zero_padding), dim=0)
@@ -702,11 +559,8 @@ def preprocess_interleaved_data(data, text_tokenizer, image_processor):
     return images_tensor, (text_input_ids, text_attention_mask)
     
 
-def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
-    input_shards = args.shards
-    assert input_shards is not None
-    resampled = getattr(args, "dataset_resampled", False)
 
+def get_shard_stats(args, input_shards):
     num_samples, num_shards = get_dataset_size(input_shards)
     num_samples = None
     if not num_samples:
@@ -716,34 +570,49 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
                 "Currently, number of dataset samples must be specified for training dataset. "
                 "Please specify via `--train-num-samples` if no dataset length info present."
             )
+    return num_samples,num_shards
 
-    # create a shared epoch store to sync epoch to dataloader worker proc
-    shared_epoch = SharedEpoch(epoch=epoch)
-    if resampled:
-        pipeline = [
-            ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)
-        ]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
+def prepare_dataloader(args, floor, num_samples, dataset):
+    num_samples, num_batches, num_worker_batches = recompute_samples_stats(args, floor, num_samples)
+    # each worker is iterating over this
+    dataset = dataset.with_epoch(num_worker_batches)
+    dataloader = wds.WebLoader(
+        dataset,
+        batch_size=None,
+        shuffle=False,
+        num_workers=args.workers,
+        persistent_workers=True,
+    )
+    # add meta-data to dataloader instance for convenience
+    dataloader.num_batches = num_batches
+    dataloader.num_samples = num_samples
+    return dataloader
 
-    # create two preprocess functions that take in the passed in image_processor and tokenizer
-    preprocess_interleaved_data_fn = functools.partial(preprocess_interleaved_data, text_tokenizer=tokenizer, image_processor = image_processor)
+def recompute_samples_stats(args, floor, num_samples):
+    # roll over and repeat a few samples to get same number of full batches on each node
+    round_fn = math.floor if floor else math.ceil
+    global_batch_size = args.batch_size * args.world_size
+    num_batches = round_fn(num_samples / global_batch_size)
+    num_workers = max(1, args.workers)
+    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
+    num_batches = num_worker_batches * num_workers
+    num_samples = num_batches * global_batch_size
+    return num_samples,num_batches,num_worker_batches
+
+def get_shard_stats(args, input_shards):
+    num_samples, num_shards = get_dataset_size(input_shards)
+    num_samples = None
+    if not num_samples:
+        num_samples = args.train_num_samples
+        if not num_samples:
+            raise RuntimeError(
+                "Currently, number of dataset samples must be specified for training dataset. "
+                "Please specify via `--train-num-samples` if no dataset length info present."
+            )
+    return num_samples,num_shards
 
 
-    # at this point we have an iterator over all the shards
-    if not resampled:
-        pipeline.extend(
-            [
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ]
-        )
+def add_tar_to_samples_step(pipeline):
     pipeline.extend(
         [
             # at this point, we have an iterator over the shards assigned to each worker at each node
@@ -756,47 +625,106 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         ]
     )
 
+
+
+def add_detshuffle2_step(shared_epoch, args, pipeline):
+    pipeline.extend(
+            [
+                detshuffle2(
+                    bufsize=_SHARD_SHUFFLE_SIZE,
+                    initial=_SHARD_SHUFFLE_INITIAL,
+                    seed=args.seed,
+                    epoch=shared_epoch,
+                ),
+                wds.split_by_node,
+                wds.split_by_worker,
+            ]
+        )
+
+
+def add_image_text_data_processing_step(args, preprocess_data_fn, pipeline):
+    preprocess_image_fn = preprocess_data_fn[0]
+    preprocess_text_fn = preprocess_data_fn[1]
+    pipeline.extend(
+        [
+            wds.select(filter_no_caption_or_no_image),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
+            wds.batched(args.batch_size, partial=False),
+            wds.map_tuple(
+                preprocess_image_fn, preprocess_text_fn, handler=log_and_continue
+            ),
+        ]
+    )
+
+def add_pile_data_processing_step(args, preprocess_data_fn, pipeline):
+    pipeline.extend(
+        [
+            wds.to_tuple("txt"),
+            wds.map(preprocess_data_fn[0], handler=log_and_continue),
+            wds.batched(args.batch_size, partial=False),
+            # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
+        ]
+    )
+
+def add_interleaved_data_processing_step(args, preprocess_data_fn, pipeline):
     pipeline.extend(
         [
             wds.select(filter_no_json_or_no_image),
             wds.decode("pilrgb", handler=log_and_continue),
-            wds.map(preprocess_interleaved_data_fn ,handler=log_and_continue),
+            wds.map(preprocess_data_fn[0],handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
         ]
     )
 
+
+
+def create_dataset_pipeline_without_resampling(input_shards, shared_epoch, args, preprocess_data_fn):
+    pipeline = [wds.SimpleShardList(input_shards)]
+    add_detshuffle2_step(shared_epoch, args, pipeline)
+    add_tar_to_samples_step(pipeline)
+    if args.dataset_type == "interleaved":
+        add_interleaved_data_processing_step(args, preprocess_data_fn, pipeline)
+    elif args.dataset_type == "pile":
+        add_pile_data_processing_step(args, preprocess_data_fn, pipeline)
+    elif args.data_type == "image_text":
+        add_image_text_data_processing_step(args, preprocess_data_fn, pipeline)
     dataset = wds.DataPipeline(*pipeline)
-    if not resampled:
-        assert (
-            num_shards >= args.workers * args.world_size
-        ), "number of shards must be >= total workers"
-    # roll over and repeat a few samples to get same number of full batches on each node
-    round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
-    num_batches = round_fn(num_samples / global_batch_size)
-    num_workers = max(1, args.workers)
-    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-    num_batches = num_worker_batches * num_workers
-    num_samples = num_batches * global_batch_size
-    # each worker is iterating over this
-    dataset = dataset.with_epoch(num_worker_batches)
+    return dataset
 
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=True,
-    )
+def create_dataset_pipeline_with_resampling(input_shards, shared_epoch, args, preprocess_data_fn):
+    pipeline = [ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)]
+    add_tar_to_samples_step(pipeline)
+    if args.dataset_type == "interleaved":
+        add_interleaved_data_processing_step(args, preprocess_data_fn, pipeline)
+    elif args.dataset_type == "pile":
+        add_pile_data_processing_step(args, preprocess_data_fn, pipeline)
+    elif args.dataset_type == "image_text":
+        add_image_text_data_processing_step(args, preprocess_data_fn, pipeline)
+    dataset = wds.DataPipeline(*pipeline)
+    return dataset
 
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
+def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
+    input_shards = args.shards
+    assert input_shards is not None
+    resampled = getattr(args, "dataset_resampled", False)
 
+    num_samples, num_shards = get_shard_stats(args, input_shards)
+
+    # create a shared epoch store to sync epoch to dataloader worker proc
+    shared_epoch = SharedEpoch(epoch=epoch)
+    preprocess_interleaved_data_fn = functools.partial(preprocess_interleaved_data, text_tokenizer=tokenizer, image_processor = image_processor)
+    preprocess_fn = [preprocess_interleaved_data_fn]
+
+    if resampled:
+        dataset = create_dataset_pipeline_with_resampling(input_shards,shared_epoch, args, preprocess_fn)
+    else:
+        dataset = create_dataset_pipeline_without_resampling(input_shards, shared_epoch, args, preprocess_fn)
+        assert (num_shards >= args.workers * args.world_size), "number of shards must be >= total workers"
+
+    dataloader = prepare_dataloader(args, floor, num_samples, dataset)
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
-
-
-
+    
 def get_dataset_fn(dataset_type):
     if dataset_type == "image_text":
         return get_wds_dataset
