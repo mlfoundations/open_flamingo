@@ -55,7 +55,6 @@ def main():
         default="large model test",
         help="used to name saving directory and wandb run",
     )
-    parser.add_argument("--use_media_placement_augmentation", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     # Sum of gradient optimization batch size
