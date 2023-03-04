@@ -70,7 +70,7 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar" #"s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
+        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar"
     )
     parser.add_argument(
         "--c4_shards",
