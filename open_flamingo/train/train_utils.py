@@ -150,17 +150,12 @@ def train_one_epoch(
             
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
-        print('STEP 0')
-        print(args.gradient_accumulation_steps)
-
         #### BACKWARD PASS ####
         loss = (
             divided_loss_laion * args.loss_multiplier_laion
             + divided_loss_pile * args.loss_multiplier_pile
         )
         loss.backward()
-
-        print('STEP 1')
 
         # NOTE: moved to after backward pass, because gradients are recomputed during backward.
         def conditional_clear(m):

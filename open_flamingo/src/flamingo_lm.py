@@ -49,7 +49,7 @@ class FlamingoLayer(nn.Module):
 
         if self.media_locations is None:
             raise ValueError("media_locations must be conditioned before forward pass")
-
+        
         lang_x = self.gated_cross_attn_layer(
             lang_x, vis_x, media_locations=self.media_locations, attend_previous=self.attend_previous,
         )
