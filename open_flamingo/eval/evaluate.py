@@ -4,7 +4,7 @@ from math import ceil
 import os
 import uuid
 from collections import defaultdict
-from typing import Callable, Any, Optional
+from typing import Callable
 
 import more_itertools
 import numpy as np
@@ -236,7 +236,8 @@ def main():
                     annotations_json_path=args.ok_vqa_annotations_json_path,
                     vqa_dataset='ok_vqa'
                 )
-                print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
+                print(
+                    f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
                 scores.append(ok_vqa_score)
             print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
             results["ok_vqa"].append(
@@ -596,7 +597,8 @@ def evaluate_vqa(
                                     num_shots=num_shots)
 
     for batch in more_itertools.chunked(
-            tqdm(eval_dataset, desc=f"Running inference {vqa_dataset}"), batch_size
+            tqdm(eval_dataset, desc=f"Running inference {vqa_dataset}"),
+            batch_size
     ):
         batch_images = prepare_batch_images(batch=batch,
                                             image_processor=image_processor,
@@ -698,6 +700,11 @@ def evaluate_imagenet(
                                         full_dataset, seed)
 
     eoc_token = "<|endofchunk|>"
+    eoc_token_id = tokenizer.additional_special_tokens_ids[
+        tokenizer.additional_special_tokens.index(eoc_token)]
+
+    # Padding from right allows efficient precomputing of context activations.
+    tokenizer.padding_side = "right"
 
     def _imagenet_prompt(class_name, is_context: bool = True):
         """Construct an imagenet prompt for a given label."""
@@ -735,6 +742,12 @@ def evaluate_imagenet(
                                     effective_num_shots=effective_num_shots,
                                     num_shots=num_shots)
 
+    # kwargs to use when calling tokenizer
+    tokenizer_kwargs = {'return_tensors': 'pt',
+                        'padding': True,
+                        'truncation': True,
+                        'max_length': 256}
+
     for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
         print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
         batch_per_class_probs = []
@@ -748,37 +761,69 @@ def evaluate_imagenet(
         batch_images = batch_images.to(device)
         model._process_media(vision_x=batch_images)
 
+        # Process the context text only once.
+        context_encodings = tokenizer([context_text] * batch_size,
+                                      **tokenizer_kwargs)
+        context_ids = context_encodings['input_ids'].to(device)
+        context_len = context_ids.shape[-1]
+        context_precomputed = model(None, context_ids,
+                                    use_cached_vision_x=True,
+                                    clear_conditioned_layers=False,
+                                    use_cache=True)
+
+        device = device if device >= 0 else "cpu"
+
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
+
             batch_text = [context_text
                           + _imagenet_prompt(imagenet_class_name, False)
                           + eoc_token] * batch_size
 
-            tokenizer.padding_side = "left"
-            encodings = tokenizer(
-                batch_text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=256,
-            )
-            device = device if device >= 0 else "cpu"
+            full_batch_encodings = tokenizer(batch_text, **tokenizer_kwargs)
 
-            # input_ids has shape [batch_size, seq_len]
-            input_ids = encodings["input_ids"].to(device)
-            attention_mask = encodings["attention_mask"].to(device)
+            # full_batch_input_ids has shape [batch_size, seq_len], but we
+            # only need to run inference on the [batch_size,
+            # context_len:] inputs that have not been precomputed and
+            # vary per class.
+            full_batch_input_ids = full_batch_encodings["input_ids"].to(device)
+            full_batch_attention_mask = full_batch_encodings[
+                "attention_mask"].to(device)
 
-            outputs = model(None, input_ids, attention_mask,
-                            use_cached_vision_x=True,
-                            clear_conditioned_layers=False)
+            # Sanity check that the encoded inputs with context are the same
+            # as the encoded context alone, for every example in the batch
+            assert torch.all(context_ids[0, :] == full_batch_input_ids[:,
+                                                  :context_len]).item()
 
-            per_sample_probs = compute_per_sample_probs(encodings=encodings,
-                                                        tokenizer=tokenizer,
-                                                        outputs=outputs)
-            per_sample_loss = compute_per_sample_loss(encodings=encodings,
-                                                      tokenizer=tokenizer,
-                                                      outputs=outputs)
+            # Clone the nested structure of the past key values
+            past_key_values = tuple(
+                [tuple([x.clone() for x in inner]) for inner in
+                 context_precomputed.past_key_values])
+
+            # Compute the outputs without recomputing context representations.
+            outputs = model(
+                vision_x=None,
+                lang_x=full_batch_input_ids[:, context_len:],
+                attention_mask=full_batch_attention_mask,
+                use_cached_vision_x=True,
+                clear_conditioned_layers=False,
+                past_key_values=past_key_values,
+                use_cache=True)
+
+            logits = torch.concat(
+                (context_precomputed.logits, outputs.logits), 1)
+
+            per_sample_probs = compute_per_sample_probs(
+                encodings=full_batch_encodings,
+                tokenizer=tokenizer,
+                logits=logits,
+                eoc_token_id=eoc_token_id)
+            per_sample_loss = compute_per_sample_loss(
+                encodings=full_batch_encodings,
+                tokenizer=tokenizer,
+                logits=logits,
+                eoc_token_id=eoc_token_id)
             batch_per_class_probs.append(per_sample_probs.detach())
             batch_per_class_losses.append(per_sample_loss.detach())
 
