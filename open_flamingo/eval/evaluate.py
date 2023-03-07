@@ -748,6 +748,12 @@ def evaluate_imagenet(
                         'truncation': True,
                         'max_length': 256}
 
+    if torch.cuda.device_count() > 1:
+        print(f"Detected {torch.cuda.device_count()} GPUs; wrapping model in "
+              f"DataParallel")
+
+        model = torch.nn.DataParallel(model)
+
     for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
         print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
         batch_per_class_probs = []
@@ -813,6 +819,8 @@ def evaluate_imagenet(
 
             logits = torch.concat(
                 (context_precomputed.logits, outputs.logits), 1)
+
+            import ipdb;ipdb.set_trace()
 
             per_sample_probs = compute_per_sample_probs(
                 encodings=full_batch_encodings,
