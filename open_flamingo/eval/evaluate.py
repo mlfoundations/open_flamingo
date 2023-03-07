@@ -9,6 +9,7 @@ from typing import Callable
 import more_itertools
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
@@ -786,16 +787,49 @@ def evaluate_imagenet(
 
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
-        for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            per_sample_probs, per_sample_loss = \
-                compute_per_sample_probs_and_loss(
-                    imagenet_class_name, context_text, context_ids,
-                    _imagenet_prompt, eoc_token, eoc_token_id, batch_size,
-                    tokenizer, tokenizer_kwargs, device, context_len,
-                    model, context_precomputed)
 
-            batch_per_class_probs.append(per_sample_probs.detach())
-            batch_per_class_losses.append(per_sample_loss.detach())
+        def infer(rank, queue, model=model):
+            """Each subprocess will run this function on a different
+            GPU which is indicated by the parameter `rank`."""
+            device = torch.device(f"cuda:{rank}")
+            model.to(device)
+            while True:
+                x = queue.get()
+                if x is None:  # check for sentinel value
+                    break
+                # x = x.to(device)
+                # model(x)
+                # del x  # free memory
+                print(f"Inference on process {rank} for x {x}")
+
+        queue = mp.Queue()
+        processes = []
+        device_count = torch.cuda.device_count()
+        for rank in range(device_count):
+            p = mp.Process(target=infer, args=(rank, queue))
+            p.start()
+            processes.append(p)
+        for _ in range(10):
+            queue.put(torch.randn(1, 3, 224, 224))
+
+        for imagenet_class_name in tqdm(openai_imagenet_classnames):
+            queue.put(imagenet_class_name)
+
+            # per_sample_probs, per_sample_loss = \
+            #     compute_per_sample_probs_and_loss(
+            #         imagenet_class_name, context_text, context_ids,
+            #         _imagenet_prompt, eoc_token, eoc_token_id, batch_size,
+            #         tokenizer, tokenizer_kwargs, device, context_len,
+            #         model, context_precomputed)
+            #
+            # batch_per_class_probs.append(per_sample_probs.detach())
+            # batch_per_class_losses.append(per_sample_loss.detach())
+
+        for _ in range(device_count):
+            queue.put(None)  # sentinel value to signal subprocesses to exit
+        for p in processes:
+            p.join()  # wait for all subprocesses to finish
+        return
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
         # the (probability or loss) for batch element i on imagenet class j.
