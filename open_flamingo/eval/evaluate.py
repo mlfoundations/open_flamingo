@@ -15,10 +15,9 @@ from tqdm import tqdm
 
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.eval.classification import compute_per_sample_probs, \
-    compute_per_sample_loss
+
 from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames, \
-    IMAGENET_1K_CLASS_ID_TO_LABEL
+    IMAGENET_1K_CLASS_ID_TO_LABEL, compute_per_sample_probs_and_loss
 
 from open_flamingo.src.factory import create_model_and_transforms
 from open_flamingo.src.flamingo import Flamingo
@@ -347,7 +346,18 @@ def get_context_text(get_prompt: Callable[[dict], str], in_context_samples,
 
 
 def prepare_batch_images(batch, image_processor, context_images,
-                         num_shots):
+                         num_shots) -> torch.Tensor:
+    """Helper function to prepare images from a batch.
+
+    Args:
+        batch: the batch of inputs.
+        image_processor: the image processor.
+        context_images: context images to prepend to the batch image.
+        num_shots: number of shots; should be identical to number of context
+            images.
+    Returns:
+        Tensor of shape [batch_size, num_shots + 1, 1, num_channels, h, w].
+    """
     batch_images = None
     for b in batch:
         b_image = image_processor(images=[b["image"]], return_tensors="pt")[
@@ -748,12 +758,6 @@ def evaluate_imagenet(
                         'truncation': True,
                         'max_length': 256}
 
-    if torch.cuda.device_count() > 1:
-        print(f"Detected {torch.cuda.device_count()} GPUs; wrapping model in "
-              f"DataParallel")
-
-        model = torch.nn.DataParallel(model)
-
     for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
         print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
         batch_per_class_probs = []
@@ -766,10 +770,7 @@ def evaluate_imagenet(
         # Process the images only once.
         batch_images = batch_images.to(device)
 
-        if hasattr(model, "module"):
-            model.module._process_media(vision_x=batch_images)
-        else:
-            model._process_media(vision_x=batch_images)
+        model._process_media(vision_x=batch_images)
 
         # Process the context text only once.
         context_encodings = tokenizer([context_text] * batch_size,
@@ -786,56 +787,13 @@ def evaluate_imagenet(
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
+            per_sample_probs, per_sample_loss = \
+                compute_per_sample_probs_and_loss(
+                    imagenet_class_name, context_text, context_ids,
+                    _imagenet_prompt, eoc_token, eoc_token_id, batch_size,
+                    tokenizer, tokenizer_kwargs, device, context_len,
+                    model, context_precomputed)
 
-            batch_text = [context_text
-                          + _imagenet_prompt(imagenet_class_name, False)
-                          + eoc_token] * batch_size
-
-            full_batch_encodings = tokenizer(batch_text, **tokenizer_kwargs)
-
-            # full_batch_input_ids has shape [batch_size, seq_len], but we
-            # only need to run inference on the [batch_size,
-            # context_len:] inputs that have not been precomputed and
-            # vary per class.
-            full_batch_input_ids = full_batch_encodings["input_ids"].to(device)
-            full_batch_attention_mask = full_batch_encodings[
-                "attention_mask"].to(device)
-
-            # Sanity check that the encoded inputs with context are the same
-            # as the encoded context alone, for every example in the batch
-            assert torch.all(context_ids[0, :] == full_batch_input_ids[:,
-                                                  :context_len]).item()
-
-            # Clone the nested structure of the past key values
-            past_key_values = tuple(
-                [tuple([x.clone() for x in inner]) for inner in
-                 context_precomputed.past_key_values])
-
-            # Compute the outputs without recomputing context representations.
-            outputs = model(
-                vision_x=None,
-                lang_x=full_batch_input_ids[:, context_len:],
-                attention_mask=full_batch_attention_mask,
-                use_cached_vision_x=True,
-                clear_conditioned_layers=False,
-                past_key_values=past_key_values,
-                use_cache=True)
-
-            logits = torch.concat(
-                (context_precomputed.logits, outputs.logits), 1)
-
-            import ipdb;ipdb.set_trace()
-
-            per_sample_probs = compute_per_sample_probs(
-                encodings=full_batch_encodings,
-                tokenizer=tokenizer,
-                logits=logits,
-                eoc_token_id=eoc_token_id)
-            per_sample_loss = compute_per_sample_loss(
-                encodings=full_batch_encodings,
-                tokenizer=tokenizer,
-                logits=logits,
-                eoc_token_id=eoc_token_id)
             batch_per_class_probs.append(per_sample_probs.detach())
             batch_per_class_losses.append(per_sample_loss.detach())
 

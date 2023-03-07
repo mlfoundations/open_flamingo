@@ -1,3 +1,6 @@
+import torch
+from open_flamingo.eval.classification import compute_per_sample_probs, compute_per_sample_loss
+
 # classnames via https://github.com/mlfoundations/wise-ft/blob/master/src/datasets/imagenet_classnames.py#L1
 openai_imagenet_classnames = [
     "tench", "goldfish", "great white shark", "tiger shark", "hammerhead shark", "electric ray",
@@ -169,3 +172,57 @@ openai_imagenet_classnames = [
 # Maps numeric class ids to labels
 IMAGENET_1K_CLASS_ID_TO_LABEL = dict(zip(range(len(openai_imagenet_classnames)),
                                          openai_imagenet_classnames))
+
+def compute_per_sample_probs_and_loss(
+        imagenet_class_name, context_text, context_ids,
+        _imagenet_prompt, eoc_token, eoc_token_id,
+        batch_size, tokenizer, tokenizer_kwargs, device, context_len, model,
+        context_precomputed):
+    batch_text = [context_text
+                  + _imagenet_prompt(imagenet_class_name, False)
+                  + eoc_token] * batch_size
+
+    full_batch_encodings = tokenizer(batch_text, **tokenizer_kwargs)
+
+    # full_batch_input_ids has shape [batch_size, seq_len], but we
+    # only need to run inference on the [batch_size,
+    # context_len:] inputs that have not been precomputed and
+    # vary per class.
+    full_batch_input_ids = full_batch_encodings["input_ids"].to(device)
+    full_batch_attention_mask = full_batch_encodings[
+        "attention_mask"].to(device)
+
+    # Sanity check that the encoded inputs with context are the same
+    # as the encoded context alone, for every example in the batch
+    assert torch.all(context_ids[0, :] == full_batch_input_ids[:,
+                                          :context_len]).item()
+
+    # Clone the nested structure of the past key values
+    past_key_values = tuple(
+        [tuple([x.clone() for x in inner]) for inner in
+         context_precomputed.past_key_values])
+
+    # Compute the outputs without recomputing context representations.
+    outputs = model(
+        vision_x=None,
+        lang_x=full_batch_input_ids[:, context_len:],
+        attention_mask=full_batch_attention_mask,
+        use_cached_vision_x=True,
+        clear_conditioned_layers=False,
+        past_key_values=past_key_values,
+        use_cache=True)
+
+    logits = torch.concat(
+        (context_precomputed.logits, outputs.logits), 1)
+
+    per_sample_probs = compute_per_sample_probs(
+        encodings=full_batch_encodings,
+        tokenizer=tokenizer,
+        logits=logits,
+        eoc_token_id=eoc_token_id)
+    per_sample_loss = compute_per_sample_loss(
+        encodings=full_batch_encodings,
+        tokenizer=tokenizer,
+        logits=logits,
+        eoc_token_id=eoc_token_id)
+    return per_sample_loss, per_sample_probs
