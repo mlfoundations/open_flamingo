@@ -794,7 +794,7 @@ def evaluate_imagenet(
         device_count = torch.cuda.device_count()
 
         for rank in range(device_count):
-            p = mp.Process(target=infer, args=(rank, queue))
+            p = mp.Process(target=infer, args=(rank, queue, model))
             p.start()
             processes.append(p)
 

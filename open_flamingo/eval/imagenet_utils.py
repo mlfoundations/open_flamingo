@@ -389,15 +389,17 @@ def compute_per_sample_probs_and_loss(
     return per_sample_loss, per_sample_probs
 
 
-def infer(rank, queue):
+def infer(rank, queue, model):
     """Each subprocess will run this function on a different
     GPU which is indicated by the parameter `rank`."""
     device = torch.device(f"cuda:{rank}")
-    # model.to(device)
+    model.to(device)
     while True:
-        x, context_text, context_ids = queue.get()
-        if x is None:  # check for sentinel value
+        item = queue.get()
+        if item is None:  # check for sentinel value
             break
+        else:
+            x, context_text, context_ids = item
         context_ids = context_ids.to(device)
         # model(x)
         del context_ids  # free memory
