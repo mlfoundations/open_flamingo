@@ -788,7 +788,7 @@ def evaluate_imagenet(
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
         from open_flamingo.eval.imagenet_utils import infer
-
+        mp.set_start_method('spawn')
         queue = mp.Queue()
         processes = []
         device_count = torch.cuda.device_count()
