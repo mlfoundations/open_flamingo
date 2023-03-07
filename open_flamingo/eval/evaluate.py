@@ -792,14 +792,14 @@ def evaluate_imagenet(
         queue = mp.Queue()
         processes = []
         device_count = torch.cuda.device_count()
+
         for rank in range(device_count):
             p = mp.Process(target=infer, args=(rank, queue, model))
             p.start()
             processes.append(p)
-        for _ in range(10):
-            queue.put(torch.randn(1, 3, 224, 224))
 
-        for imagenet_class_name in tqdm(openai_imagenet_classnames):
+        for imagenet_class_name in ["dummy_cl1", "dummy_cl2", "dummy_cl3", "dummy_cl4"]:
+        # for imagenet_class_name in tqdm(openai_imagenet_classnames):
             queue.put(imagenet_class_name)
 
             # per_sample_probs, per_sample_loss = \
