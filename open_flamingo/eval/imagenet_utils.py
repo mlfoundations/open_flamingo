@@ -226,3 +226,18 @@ def compute_per_sample_probs_and_loss(
         logits=logits,
         eoc_token_id=eoc_token_id)
     return per_sample_loss, per_sample_probs
+
+
+def infer(rank, queue, model):
+    """Each subprocess will run this function on a different
+    GPU which is indicated by the parameter `rank`."""
+    device = torch.device(f"cuda:{rank}")
+    model.to(device)
+    while True:
+        x = queue.get()
+        if x is None:  # check for sentinel value
+            break
+        # x = x.to(device)
+        # model(x)
+        # del x  # free memory
+        print(f"Inference on process {rank} for x {x}")

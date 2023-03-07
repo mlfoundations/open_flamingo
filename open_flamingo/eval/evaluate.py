@@ -787,27 +787,13 @@ def evaluate_imagenet(
 
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
-
-        def infer(rank, queue, model=model):
-            """Each subprocess will run this function on a different
-            GPU which is indicated by the parameter `rank`."""
-            device = torch.device(f"cuda:{rank}")
-            model.to(device)
-            while True:
-                x = queue.get()
-                if x is None:  # check for sentinel value
-                    break
-                # x = x.to(device)
-                # model(x)
-                # del x  # free memory
-                print(f"Inference on process {rank} for x {x}")
-
+        from open_flamingo.eval.imagenet_utils import infer
         mp.set_start_method('spawn')
         queue = mp.Queue()
         processes = []
         device_count = torch.cuda.device_count()
         for rank in range(device_count):
-            p = mp.Process(target=infer, args=(rank, queue))
+            p = mp.Process(target=infer, args=(rank, queue, model))
             p.start()
             processes.append(p)
         for _ in range(10):
