@@ -765,7 +765,11 @@ def evaluate_imagenet(
 
         # Process the images only once.
         batch_images = batch_images.to(device)
-        model._process_media(vision_x=batch_images)
+
+        if hasattr(model, "module"):
+            model.module._process_media(vision_x=batch_images)
+        else:
+            model._process_media(vision_x=batch_images)
 
         # Process the context text only once.
         context_encodings = tokenizer([context_text] * batch_size,
