@@ -802,6 +802,7 @@ def evaluate_imagenet(
                 # del x  # free memory
                 print(f"Inference on process {rank} for x {x}")
 
+        mp.set_start_method('spawn')
         queue = mp.Queue()
         processes = []
         device_count = torch.cuda.device_count()
