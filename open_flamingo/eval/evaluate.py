@@ -798,9 +798,8 @@ def evaluate_imagenet(
             p.start()
             processes.append(p)
 
-        for imagenet_class_name in ["dummy_cl1", "dummy_cl2", "dummy_cl3", "dummy_cl4"]:
-        # for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            queue.put(imagenet_class_name)
+        for imagenet_class_name in tqdm(openai_imagenet_classnames[:32]):
+            queue.put((imagenet_class_name, context_text, context_ids))
 
             # per_sample_probs, per_sample_loss = \
             #     compute_per_sample_probs_and_loss(
@@ -816,7 +815,7 @@ def evaluate_imagenet(
             queue.put(None)  # sentinel value to signal subprocesses to exit
         for p in processes:
             p.join()  # wait for all subprocesses to finish
-        return
+        return 0.
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
         # the (probability or loss) for batch element i on imagenet class j.
