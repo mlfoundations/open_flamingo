@@ -273,7 +273,7 @@ def preprocess_text(sample, tokenizer):
     )
     return text["input_ids"], text["attention_mask"]
 
-def preprocess_pile(sample, tokenizer, clip_processor):
+def preprocess_pile(sample, tokenizer, clip_processor, max_length):
     sample = sample[0].decode("utf-8")
 
     # remove multiple consecutive spaces
@@ -321,7 +321,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+        text, max_length=max_length, truncation=True, padding="max_length", return_tensors="pt"
     )
 
     clip_text_tensor = clip_processor.tokenizer(
@@ -348,8 +348,8 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     )
 
 MIN_KB = 10
-MAX_NUM_IMAGES = 5
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
+MAX_NUM_IMAGES = 10
+def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, max_length, filter_single_image):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
@@ -397,7 +397,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+        text, max_length=max_length, truncation=True, padding="max_length", return_tensors="pt"
     )
 
     # reject sequences with too few images (after truncation)
@@ -405,11 +405,10 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
         text_tensor["input_ids"] == \
         tokenizer.additional_special_tokens_ids[tokenizer.additional_special_tokens.index("<image>")]
     )
-    
     if num_images == 0:
         raise ValueError("No images in sample")
-    # elif num_images == 1 and random.random() <= 0.5:
-    #     raise ValueError("Only one image in sample")
+    elif filter_single_image and num_images == 1 and random.random() <= 0.5:
+        raise ValueError("Only one image in sample")
 
     return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]), sample[2]
     
@@ -439,7 +438,8 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, sim_threshold=args.c4_textsim_threshold
+        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, sim_threshold=args.c4_textsim_threshold, max_length=args.max_sequence_len,
+        filter_single_image=args.filter_c4_single_image,
     )
 
     # at this point we have an iterator over all the shards
@@ -532,7 +532,7 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer
+        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer, max_length=args.max_sequence_len,
     )
 
     # at this point we have an iterator over all the shards

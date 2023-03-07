@@ -90,6 +90,8 @@ def main():
         default="fp32",
         help="Floating point precision.",
     )
+    parser.add_argument("--max_sequence_len", default=256, type=int)
+    parser.add_argument("--filter_c4_single_image", action-"store_true")
     # data args
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--train_num_samples_c4", type=int, default=10000)
