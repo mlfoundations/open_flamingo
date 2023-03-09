@@ -355,10 +355,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
     
-    images, image_idxs = [], []
+    # build a sequence using images paired with their most similar sentence (according to CLIP)
+    images, sentence_ixs = [], []
     for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
         # pick one image per sentence
-        if info["image_info"][image_path]["matched_text_index"] in image_idxs: continue
+        if info["image_info"][image_path]["matched_text_index"] in sentence_ixs: continue
         rawbytes = image_tar.extractfile(os.path.join(image_tar.getnames()[0], image_path)).read()
 
         # filter to images >= 10KB
@@ -366,23 +367,55 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold: continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
-        images.append(image)
-        matched_text_index = info["image_info"][image_path]["matched_text_index"]
-        if use_media_augmentation and matched_text_index > 0:
-            matched_text_index = (matched_text_index - 1) if random.random() < 0.5 else matched_text_index
-            
-        image_idxs.append(matched_text_index)
-    
-    if len(images) == 0:
-        raise ValueError("No images in sample")
+        images.append(image)    
+        sentence_ixs.append(info["image_info"][image_path]["matched_text_index"]  )
 
+    if len(images) == 0:
+        raise ValueError("No images in sample after thresholding")
+
+
+    """
+    Augmentation
+    W.p. 1/2, shift which images the texts attend to.
+
+    Example:
+    - unaugmented: sentence0 | sentence0.5 | <image1> sentence1 | <image2> sentence2 | <image3> sentence3
+    - augmented: <image1> sentence0 | sentence0.5 | <image2> sentence1 | <image3> sentence2 | sentence3
+    Note that all following sentences attend to the same preceding image. So here, sentence2
+    also attends to image2.
+
+    Example:
+    - unaugmented: <image1> sentence1 | sentence1.5 | <image2> sentence2
+    - augmented: <image2> sentence1 | sentence1.5 | sentence2 (<image1> is discarded)
+    
+    This tries to match Flamingo & our previous augmentation.
+        One difference is that previously in the above example, sentence2 would just not attend to anything
+    Note that our data setup is a little different than what Flamingo does. 
+    We already place images right before the texts that are most semantically relevant.
+    However, we find that using some form of augmentation is very helpful.
+    """
+    do_shift = random.random() < 0.5 if use_media_augmentation else False
+    if do_shift:
+        # minimum ix -> 0; everyone else -> previous
+        current = list(sorted(sentence_ixs))
+        if current[0] == 0: 
+            # drop first sample
+            current = current[1:]
+            images = images[1:]
+        shifted = [0] + current
+        shiftmap = dict(zip(current, shifted))
+        sentence_ixs = [shiftmap[ix] for ix in sentence_ixs]
+
+    if len(images) == 0:
+        raise ValueError("No images in sample after augmenting")
+    
     # filter out images that are exact duplicates
     images_tensors = preprocess_image(images, clip_processor)   
     # _, unique = unique_ixs(images_tensors, dim=0)
-    keep_ixs =  range(min(len(images_tensors), MAX_NUM_IMAGES)) #unique[:MAX_NUM_IMAGES]
+    keep_ixs =  range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
     # images = [images[ix] for ix in keep_ixs] # useful for debugging, but otherwise not used
-    image_idxs = [image_idxs[ix] for ix in keep_ixs]
+    sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
     
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
@@ -391,8 +424,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
 
     # add in <image> and <eoc> tokens
     # eoc after sentence = "sentence loss"
-    for ix in image_idxs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
-        
+    for ix in sentence_ixs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
     text = " ".join(sentences)
     text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
     # whitespace cleanup
@@ -408,12 +440,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         text_tensor["input_ids"] == \
         tokenizer.additional_special_tokens_ids[tokenizer.additional_special_tokens.index("<image>")]
     )
-    
     if num_images == 0:
-        raise ValueError("No images in sample")
-    # elif num_images == 1 and random.random() <= 0.5:
-    #     raise ValueError("Only one image in sample")
-
+        raise ValueError("No images in sample after truncation")
+    elif num_images == 1 and random.random() <= 0.5:
+        raise ValueError("Only one image in sample after truncation")
+    print(num_images.item())
     return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]), sample[2]
     
 
