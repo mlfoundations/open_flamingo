@@ -381,8 +381,8 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, max
     Example:
     - unaugmented: sentence0 | sentence0.5 | <image1> sentence1 | <image2> sentence2 | <image3> sentence3
     - augmented: <image1> sentence0 | sentence0.5 | <image2> sentence1 | <image3> sentence2 | sentence3
-    Note that all following sentences attend to the same preceding image. So here, sentence2
-    also attends to image2.
+    Note that all following sentences attend to the same preceding image. So here, sentence3
+    also attends to image3.
 
     Example:
     - unaugmented: <image1> sentence1 | sentence1.5 | <image2> sentence2
@@ -423,7 +423,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, max
     # eoc after sentence = "sentence loss"
     for ix in sentence_ixs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
 
-    # try to include most of the images
+    # NEW: try to include most of the images
     min_sentence_ix = min(sentence_ixs)
     sentences = sentences[max(0, min_sentence_ix-1):]
 
