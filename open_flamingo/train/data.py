@@ -273,7 +273,7 @@ def preprocess_text(sample, tokenizer):
     )
     return text["input_ids"], text["attention_mask"]
 
-def preprocess_pile(sample, tokenizer, clip_processor):
+def preprocess_pile(sample, tokenizer, clip_processor, max_length):
     sample = sample[0].decode("utf-8")
 
     # remove multiple consecutive spaces
@@ -321,7 +321,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+        text, max_length=max_length, truncation=True, padding="max_length", return_tensors="pt"
     )
 
     clip_text_tensor = clip_processor.tokenizer(
@@ -348,8 +348,8 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     )
 
 MIN_KB = 10
-MAX_NUM_IMAGES = 5
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_augmentation):
+MAX_NUM_IMAGES = 10
+def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, max_length, filter_single_image, use_media_placement_augmentation):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
@@ -368,7 +368,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)    
-        sentence_ixs.append(info["image_info"][image_path]["matched_text_index"]  )
+        sentence_ixs.append(info["image_info"][image_path]["matched_text_index"])
 
     if len(images) == 0:
         raise ValueError("No images in sample after thresholding")
@@ -394,27 +394,24 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     We already place images right before the texts that are most semantically relevant.
     However, we find that using some form of augmentation is very helpful.
     """
-    do_shift = random.random() < 0.5 if use_media_augmentation else False
+    do_shift = random.random() < 0.5 if use_media_placement_augmentation else False
     if do_shift:
         # minimum ix -> 0; everyone else -> previous
         current = list(sorted(sentence_ixs))
         if current[0] == 0: 
             # drop first sample
             current = current[1:]
+            sentence_ixs = sentence_ixs[1:]
             images = images[1:]
+            if len(images) == 0: raise ValueError("No images in sample after augmenting")
         shifted = [0] + current
         shiftmap = dict(zip(current, shifted))
         sentence_ixs = [shiftmap[ix] for ix in sentence_ixs]
-
-    if len(images) == 0:
-        raise ValueError("No images in sample after augmenting")
     
-    # filter out images that are exact duplicates
+    # images -> tensors
     images_tensors = preprocess_image(images, clip_processor)   
-    # _, unique = unique_ixs(images_tensors, dim=0)
     keep_ixs =  range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
-    # images = [images[ix] for ix in keep_ixs] # useful for debugging, but otherwise not used
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
     
     # pad to 5 images
@@ -425,6 +422,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     # add in <image> and <eoc> tokens
     # eoc after sentence = "sentence loss"
     for ix in sentence_ixs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
+
+    # try to include most of the images
+    min_sentence_ix = min(sentence_ixs)
+    sentences = sentences[max(0, min_sentence_ix-1):]
+
     text = " ".join(sentences)
     text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
     # whitespace cleanup
@@ -432,7 +434,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+        text, max_length=max_length, truncation=True, padding="max_length", return_tensors="pt"
     )
 
     # reject sequences with too few images (after truncation)
@@ -442,9 +444,8 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     )
     if num_images == 0:
         raise ValueError("No images in sample after truncation")
-    elif num_images == 1 and random.random() <= 0.5:
+    elif filter_single_image and num_images == 1 and random.random() <= 0.5:
         raise ValueError("Only one image in sample after truncation")
-    print(num_images.item())
     return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]), sample[2]
     
 
@@ -473,7 +474,11 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, sim_threshold=args.c4_textsim_threshold, use_media_augmentation=args.use_media_augmentation
+        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, 
+        sim_threshold=args.c4_textsim_threshold, 
+        max_length=args.max_sequence_len,
+        filter_single_image=args.filter_c4_single_image,
+        use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
 
     # at this point we have an iterator over all the shards
@@ -566,7 +571,7 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer
+        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer, max_length=args.max_sequence_len,
     )
 
     # at this point we have an iterator over all the shards

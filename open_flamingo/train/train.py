@@ -16,6 +16,7 @@ from train_utils import get_checkpoint, train_one_epoch
 from transformers import (
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
+    get_cosine_schedule_with_warmup
 )
 
 from open_flamingo import create_model_and_transforms
@@ -54,7 +55,6 @@ def main():
         default="large model test",
         help="used to name saving directory and wandb run",
     )
-    parser.add_argument("--use_media_placement_augmentation", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     # Sum of gradient optimization batch size
@@ -70,7 +70,7 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar" #"s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
+        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar"
     )
     parser.add_argument(
         "--c4_shards",
@@ -90,6 +90,14 @@ def main():
         default="fp32",
         help="Floating point precision.",
     )
+    parser.add_argument("--max_sequence_len", default=256, type=int)
+    parser.add_argument("--filter_c4_single_image", action="store_true")
+    parser.add_argument(
+        "--c4_textsim_threshold",
+        default=30,
+        type=float,
+    )
+    parser.add_argument("--use_media_placement_augmentation", action="store_true")
     # data args
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--train_num_samples_c4", type=int, default=10000)
@@ -131,11 +139,6 @@ def main():
         "--wandb_entity",
         default="anas-awadalla",
         type=str,
-    )
-    parser.add_argument(
-        "--c4_textsim_threshold",
-        default=30,
-        type=float,
     )
 
     # if torch.cuda.is_available():
@@ -220,7 +223,7 @@ def main():
     args.dataset_type = "c4"
     args.batch_size = args.batch_size_c4
     args.train_num_samples = args.train_num_samples_c4
-    pile_dataset = get_data(args, image_processor, tokenizer) # need to add in augmentation here according to args.use_media_augmentation
+    pile_dataset = get_data(args, image_processor, tokenizer)
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -254,6 +257,12 @@ def main():
     print(f"Total training steps: {total_training_steps}")
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=total_training_steps,
+        )
+    elif args.lr_scheduler == "cosine":
+        lr_scheduler = get_cosine_schedule_with_warmup(
             optimizer,
             num_warmup_steps=args.warmup_steps,
             num_training_steps=total_training_steps,

@@ -60,6 +60,7 @@ def train_one_epoch(
     model.train()
 
     # setup logging
+    num_images = AverageMeter()
     step_time_m = AverageMeter() # time for one optimizer step (> 1 batch if using gradient accum)
     data_time_m = AverageMeter() # avg time to load one batch of both C4 AND laion (= 1 batch regardless of gradient accum)
     end = time.time()
@@ -107,6 +108,9 @@ def train_one_epoch(
         input_ids = torch.stack([x[0] for x in batch_pile[1]]).squeeze(1)
         attention_mask = torch.stack([x[1] for x in batch_pile[1]]).squeeze(1)
         urls = batch_pile[2]
+
+        # log num images
+        for n in torch.count_nonzero(input_ids == media_token_id, dim=1): num_images.update(n)
         
         # add urls to bloom filter if not already present
         for url in urls:
@@ -137,8 +141,6 @@ def train_one_epoch(
                     labels[i][token_idx] = -100
                     token_idx += 1
 
-        # print("labels: ", labels[0])
-
         labels[labels == media_token_id] = -100
         labels.to(device_id)
 
@@ -150,15 +152,15 @@ def train_one_epoch(
                 labels=labels,
             )[0]
             
-            # if loss is nan, skip this batch
-            if torch.isnan(loss_pile):
-                print("loss is nan, skipping this batch")
-                print("input_ids: ", tokenizer.batch_decode(input_ids))
-                print("labels: ", labels)
-                print("images: ", images)
-                optimizer.zero_grad()
-                continue
-            
+        # if loss is nan, skip this batch
+        if torch.isnan(loss_pile):
+            print("loss is nan, skipping this batch")
+            print("input_ids: ", tokenizer.batch_decode(input_ids))
+            print("labels: ", labels)
+            print("images: ", images)
+            optimizer.zero_grad()
+            continue
+
         divided_loss_pile = loss_pile / args.gradient_accumulation_steps
 
         #### BACKWARD PASS ####
@@ -212,6 +214,7 @@ def train_one_epoch(
                         "c4_samples_per_second": c4_samples_per_second,
                         "c4_samples_per_second_per_gpu": c4_samples_per_second_per_gpu,
                         "lr": optimizer.param_groups[0]['lr'], 
+                        "avg_num_images_per_c4_seq": num_images.avg, 
                     }, 
                     commit=False,
                 )
