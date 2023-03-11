@@ -1,6 +1,24 @@
-# open_flamingo
+# 🦩 OpenFlamingo
+[![PyPI version](https://badge.fury.io/py/open-flamingo.svg)](https://badge.fury.io/py/open-flamingo)
+[![Downloads](https://pepy.tech/badge/open-flamingo/week)](https://pepy.tech/project/open-flamingo/week)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model.
+[Blog post](https://www.anasawadalla.com/blog/openflamingo) | [Twitter thread]() | Paper (coming soon)
+
+Welcome to our open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 3B model](#api) trained on the [Multimodal C4 dataset](#multimodal-c4-dataset-mmc4).
+
+This repo is still under development. You can expect us to release better performing and larger Flamingo models soon. If you have any questions, please feel free to open an issue. We also welcome pull requests!
+
+# Table of Contents
+- [Installation](#installation)
+- [API](#api)
+- [Multimodal C4 dataset (MMC4)](#multimodal-c4-dataset-mmc4)
+- [Training](#training)
+- [Evaluation](#evaluation)
+- [Future plans](#future-plans)
+- [Team](#team)
+- [Acknowledgments](#acknowledgments)
+- [Citing](#citing)
 
 # Installation
 
@@ -10,7 +28,10 @@ To create a conda environment for running OpenFlamingo, run
 conda env create -f environment.yml
 ```
 
-Alternatively, to install the package in an existing environment, run `pip install -e .`.
+Alternatively, to install the package in an existing environment, run 
+```
+pip install open_flamingo
+```
 
 # API
 You can load a model using the following code:
@@ -27,31 +48,15 @@ model, image_processor, tokenizer = create_model_and_transforms(
 
 # If you have a checkpoint do:
 model.load_state_dict(torch.load("path/to/checkpoint.pt"), strict=False)
-
 ```
 For how to generate using Flamingo look at examples/example.py
 
-## Demo
-Alternatively, if you want to play around with the model without worrying about the code, you can use the demo streamlit in the examples directory.
 
-First run:
-```
-pip install streamlit
-pip install huggingface_hub
-```
+# Multimodal C4 dataset (MMC4)
 
-after that you need to authenticate into HuggingFace hub to access model weights:
+Coming soon!
 
-```
-huggingface-cli login
-```
-
-Then to run the demo, run the following command from the examples directory:
-```
-streamlit run demo.py
-```
-
-# Training instructions
+# Training
 Currently, we only support OPT models on the language side and CLIP on the vision side.
 
 To train a model, modify the following example command from the open_flamingo/train directory:
@@ -78,9 +83,7 @@ nltk.download('punkt')
 ```
 in a python shell before running training.
 
-## Additional arguments:
-
-### Evaluation
+# Evaluation
 Before evaluating the model, you will need to download the COCO and VQAv2 datasets. You will also need to install the coco evaluation package by running the following command:
 ```
 pip install pycocoevalcap
@@ -110,12 +113,32 @@ python evaluate.py
 --eval_vqav2
 ``` 
 
+# Future plans
 
-### Wandb
-To log to wandb, use the --report_to wandb flag. The run name will be specified using the --run_name argument. To specify the wandb project, use the --wandb_project argument and use wandb_entity to specify the wandb entity.
+# Team
 
-### Checkpointing
-Checkpoints will be saved after each epoch in a directory name after the run_name argument. If there is already a checkpoints in that directory then it will try to resume training from the latest checkpoint in that directory. Additionally you can specify the --delete_previous_checkpoint flag to delete the previous checkpoint when saving the latest checkpoint. This should save you some space.
+# Acknowledgments
+This code is based on Lucidrains' [flamingo implementation](https://github.com/lucidrains/flamingo-pytorch) and David Hansmair's [flamingo-mini repo](https://github.com/dhansmair/flamingo-mini). Thank you for making your code public!
 
-### Offline training
-To run this script in offline mode (i.e. without downloading models from HuggingFace hub and syncing to Wandb), use the --offline flag. Additionally you will want to provide paths to local models and tokenizer using the --vision_encoder_path, clip_processor_path, --lm_path, and --tokenizer_path arguments.
+We would also like to thank [Jean-Baptiste Alayrac](https://www.jbalayrac.com) and [Antoine Miech](https://antoine77340.github.io) for their advice.
+
+# Citing
+If you found this repository useful, please consider citing:
+
+```
+@software{open_flamingo,
+    author = {...},
+    title = {OpenFlamingo},
+    month = march,
+    year = 2023,
+    note = {If you use this software, please cite it as below.},
+    ... TBD
+```
+
+```
+@article{Alayrac2022Flamingo,
+    title   = {Flamingo: a Visual Language Model for Few-Shot Learning},
+    author  = {Jean-Baptiste Alayrac et al},
+    year    = {2022}
+}
+```
