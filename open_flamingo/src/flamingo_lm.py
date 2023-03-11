@@ -42,16 +42,16 @@ class FlamingoLayer(nn.Module):
             lang_x, self.vis_x, media_locations=self.media_locations
         )
         lang_x = self.decoder_layer(
-            lang_x,
-            attention_mask=attention_mask,
-            **decoder_layer_kwargs
+            lang_x, attention_mask=attention_mask, **decoder_layer_kwargs
         )
         return lang_x
+
 
 class FlamingoLMMixin(nn.Module):
     """
     Mixin to add cross-attention layers to a language model.
     """
+
     def set_decoder_layers_attr_name(self, decoder_layers_attr_name):
         self.decoder_layers_attr_name = decoder_layers_attr_name
 
@@ -77,14 +77,16 @@ class FlamingoLMMixin(nn.Module):
                 for _ in self._get_decoder_layers()
             ]
         )
-        self._set_decoder_layers(nn.ModuleList(
-            [
-                FlamingoLayer(gated_cross_attn_layer, decoder_layer)
-                for gated_cross_attn_layer, decoder_layer in zip(
-                    self.gated_cross_attn_layers, self._get_decoder_layers()
-                )
-            ]
-        ))
+        self._set_decoder_layers(
+            nn.ModuleList(
+                [
+                    FlamingoLayer(gated_cross_attn_layer, decoder_layer)
+                    for gated_cross_attn_layer, decoder_layer in zip(
+                        self.gated_cross_attn_layers, self._get_decoder_layers()
+                    )
+                ]
+            )
+        )
         self.media_token_id = media_token_id
         self.initalized_flamingo = True
 
@@ -100,7 +102,9 @@ class FlamingoLMMixin(nn.Module):
         for layer in self._get_decoder_layers():
             layer.condition_media_locations(media_locations)
 
-        return super().forward(*input, **kwargs) # Call the other parent's forward method
+        return super().forward(
+            *input, **kwargs
+        )  # Call the other parent's forward method
 
     def is_conditioned(self) -> bool:
         """Check whether all decoder layers are already conditioned."""
