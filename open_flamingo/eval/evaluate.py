@@ -214,7 +214,6 @@ def main():
     results = defaultdict(list)
 
     if args.eval_coco:
-
         print("Evaluating on COCO...")
         for shot in args.shots:
             scores = []
@@ -239,7 +238,6 @@ def main():
             )
 
     if args.eval_ok_vqa:
-
         print("Evaluating on OK-VQA...")
         for shot in args.shots:
             scores = []
@@ -266,7 +264,6 @@ def main():
             )
 
     if args.eval_vqav2:
-
         print("Evaluating on VQAv2...")
         for shot in args.shots:
             scores = []
@@ -293,7 +290,6 @@ def main():
             )
 
     if args.eval_imagenet:
-
         print("Evaluating on ImageNet...")
         for shot in args.shots:
             scores = []
@@ -852,7 +848,6 @@ def evaluate_imagenet(
         # For each ImageNet class, construct the output prompt, compute a
         # forward pass, and store the results.
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
-
             batch_text = [
                 context_text + _imagenet_prompt(imagenet_class_name, False) + eoc_token
             ] * batch_size

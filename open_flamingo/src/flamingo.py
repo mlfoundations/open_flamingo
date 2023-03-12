@@ -91,7 +91,6 @@ class Flamingo(nn.Module):
         )
 
         if use_cached_vision_x:
-
             # Case: use cached; vision_x should be cached and other
             # vision-related inputs should not be provided.
 
@@ -102,7 +101,6 @@ class Flamingo(nn.Module):
             assert self.lang_encoder.is_conditioned()
 
         else:
-
             # Case: do not use caching (i.e. this is a standard forward pass);
             # verify that either vision_x or pseudovision_x is provided.
 

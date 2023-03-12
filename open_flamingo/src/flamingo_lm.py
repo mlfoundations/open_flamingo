@@ -31,7 +31,6 @@ class FlamingoLayer(nn.Module):
         attention_mask=None,
         **decoder_layer_kwargs,
     ):
-
         if self.vis_x is None:
             raise ValueError("vis_x must be conditioned before forward pass")
 

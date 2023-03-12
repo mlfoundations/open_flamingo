@@ -1,11 +1,9 @@
 # 🦩 OpenFlamingo
 [![PyPI version](https://badge.fury.io/py/open-flamingo.svg)](https://badge.fury.io/py/open-flamingo)
-[![Downloads](https://pepy.tech/badge/open-flamingo/week)](https://pepy.tech/project/open-flamingo/week)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 [Blog post](https://www.anasawadalla.com/blog/openflamingo) | [Twitter thread]() | Paper (coming soon)
 
-Welcome to our open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 3B model](#api) trained on the [Multimodal C4 dataset](#multimodal-c4-dataset-mmc4).
+Welcome to our open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 3B model](#api) trained on the [Multimodal C4 dataset](#multimodal-c4-dataset-mmc4). Please refer to our blog post for more details.
 
 This repo is still under development. You can expect us to release better performing and larger Flamingo models soon. If you have any questions, please feel free to open an issue. We also welcome pull requests!
 

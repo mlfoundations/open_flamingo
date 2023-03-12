@@ -28,7 +28,6 @@ def preprocess_sentence(sentence):
 
 
 def remove_punctuation_based_sentences(interleaved_list, is_image_list):
-
     """
     Sets sentences that just punctuations to empty string
     """
