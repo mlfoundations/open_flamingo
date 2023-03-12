@@ -31,24 +31,95 @@ Alternatively, to install the package in an existing environment, run
 pip install open_flamingo
 ```
 
-# API
-You can load a model using the following code:
+# Approach
+OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. [Multimodal C4](#multimodal-c4-dataset-mmc4)) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context training.
 
+## Model architecture
+OpenFlamingo seeks to fuse pretrained a vision encoder and a language model using cross attention layers. The model architecture is shown below.
+
+![OpenFlamingo architecture](docs/flamingo.png) 
+Credit: [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model)
+    
+# Usage
+We provide an initial [OpenFlamingo 3B model](https://huggingface.co/open-flamingo/flamingo3B) using a CLIP ViT-Large vision encoder and an OPT 1.3B language encoder. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [OPT](https://huggingface.co/models?search=opt) models, [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
+
+## Initializing an OpenFlamingo model
 ``` python
 from open_flamingo import create_model_and_transforms
 
 model, image_processor, tokenizer = create_model_and_transforms(
-    clip_vision_encoder_path="openai/clip-vit-base-patch32",
-    clip_processor_path="openai/clip-vit-base-patch32",
-    lang_encoder_path="facebook/opt-125m",
-    tokenizer_path="facebook/opt-125m", 
+    clip_vision_encoder_path="openai/clip-vit-large-patch14",
+    clip_processor_path="openai/clip-vit-large-patch14",
+    lang_encoder_path="facebook/opt-1.3b",
+    tokenizer_path="facebook/opt-1.3b",
 )
 
 # If you have a checkpoint do:
 model.load_state_dict(torch.load("path/to/checkpoint.pt"), strict=False)
 ```
-For how to generate using Flamingo look at examples/example.py
 
+## Generating text
+Here is an example of generating text conditioned on interleaved images/text, in this case we will do few-shot image captioning.
+
+``` python
+from PIL import Image
+import requests
+
+"""
+Step 1: Load images
+"""
+demo_image_one = Image.open(
+    requests.get(
+        "http://images.cocodataset.org/val2017/000000039769.jpg", stream=True
+    ).raw
+)
+
+demo_image_two = Image.open(
+    requests.get(
+        "https://upload.wikimedia.org/wikipedia/commons/a/ad/Football_in_Bloomington%2C_Indiana%2C_1996.jpg", stream=True
+    ).raw
+)
+
+query_image = Image.open(
+    requests.get(
+        "https://upload.wikimedia.org/wikipedia/commons/e/e4/Latte_and_dark_coffee.jpg", stream=True
+    ).raw
+)
+
+
+"""
+Step 2: Preprocessing images
+Details: For OpenFlamingo, we expect the image to be a torch tensor of shape batch_size x num_media x num_frames x channels x height x width. In this case batch_size = 1, num_media = 3, num_frames = 1 (this will always be one expect for video which we don't support yet), channels = 3, height = 224, width = 224.
+"""
+vis_x = image_processor(images=[demo_image_one, demo_image_two, query_image], return_tensors="pt")
+vis_x = vis_x.unsqueeze(1).unsqueeze(1)
+
+
+"""
+Step 3: Preprocessing text
+Details: In the text we expect an <image> special token to indicate where an image is. We also expect an <|endofchunk|> special token to indicate the end of the text portion associated with an image.
+"""
+tokenizer.padding_side = "left" # For generation padding tokens should be on the left
+lang_x = tokenizer(
+    ["<image>An image of two cats.<|endofchunk|><image>An image of a soccer player shooting a ball.<|endofchunk|><image>An image of"],
+    max_length=128,
+    padding=True,
+    return_tensors="pt",
+)
+
+
+"""
+Step 4: Generate text
+"""
+generated_text = model.generate(
+    vis_x=vis_x,
+    lang_x=lang_x["input_ids"],
+    attention_mask=lang_x["attention_mask"],
+    max_new_tokens=20
+)
+
+print("Generated text: ", tokenizer.decode(generated_text[0]))
+```
 
 # Multimodal C4 dataset (MMC4)
 
