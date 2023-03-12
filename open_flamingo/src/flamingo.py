@@ -52,10 +52,10 @@ class Flamingo(nn.Module):
         labels: torch.Tensor = None,
         pseudovision_x: torch.Tensor = None,
         pseudovision_attention_mask: torch.Tensor = None,
-        use_cached_vision_x: bool=False,
-        clear_conditioned_layers: bool=True,
+        use_cached_vision_x: bool = False,
+        clear_conditioned_layers: bool = True,
         past_key_values=None,
-        use_cache: bool=False,
+        use_cache: bool = False,
     ):
         """
         Forward pass of Flamingo.
@@ -81,23 +81,26 @@ class Flamingo(nn.Module):
             use_cache: whether to use cached key values. See use_cache
                 documentation in Hugging Face CausalLM models.
         """
-        assert (vision_x is not None) or (pseudovision_x is not None
-        ) or use_cached_vision_x, \
-            "Must provide either vision_x or pseudovision_x or set " \
+        assert (
+            (vision_x is not None)
+            or (pseudovision_x is not None)
+            or use_cached_vision_x
+        ), (
+            "Must provide either vision_x or pseudovision_x or set "
             "use_cached_vision_x to True. "
+        )
 
         if use_cached_vision_x:
-
             # Case: use cached; vision_x should be cached and other
             # vision-related inputs should not be provided.
 
-            assert (vision_x is None) and (pseudovision_x is None),\
-                "Expect vision_x and pseudovision_x to be None when " \
+            assert (vision_x is None) and (pseudovision_x is None), (
+                "Expect vision_x and pseudovision_x to be None when "
                 "use_cached_vision_x is True. "
+            )
             assert self.lang_encoder.is_conditioned()
 
         else:
-
             # Case: do not use caching (i.e. this is a standard forward pass);
             # verify that either vision_x or pseudovision_x is provided.
 
@@ -105,13 +108,16 @@ class Flamingo(nn.Module):
             self._process_media(
                 vision_x=vision_x,
                 pseudovision_x=pseudovision_x,
-                pseudovision_attention_mask=pseudovision_attention_mask)
+                pseudovision_attention_mask=pseudovision_attention_mask,
+            )
 
-        output = self.lang_encoder(input_ids=lang_x,
-                                   attention_mask=attention_mask,
-                                   labels=labels,
-                                   past_key_values=past_key_values,
-                                   use_cache=use_cache)
+        output = self.lang_encoder(
+            input_ids=lang_x,
+            attention_mask=attention_mask,
+            labels=labels,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+        )
 
         if clear_conditioned_layers:
             self.lang_encoder.clear_conditioned_layers()
@@ -232,10 +238,8 @@ class Flamingo(nn.Module):
                 # add a dimension v to match perceiver input
                 vision_x = vision_x.unsqueeze(-2)
             else:
-                vision_x = self.vision_encoder.vision_model(
-                    vision_x).last_hidden_state
-        vision_x = rearrange(
-            vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
+                vision_x = self.vision_encoder.vision_model(vision_x).last_hidden_state
+        vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
 
         vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
         return vision_x
@@ -263,8 +267,7 @@ class Flamingo(nn.Module):
                 p=2, dim=-1, keepdim=True
             )
 
-        pseudovision_x = rearrange(
-            pseudovision_x, "(b T) d -> b T 1 1 d", b=b, T=T)
+        pseudovision_x = rearrange(pseudovision_x, "(b T) d -> b T 1 1 d", b=b, T=T)
 
         pseudovision_x = self.perceiver(pseudovision_x)
         return pseudovision_x
