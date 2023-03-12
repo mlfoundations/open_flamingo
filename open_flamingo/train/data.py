@@ -10,7 +10,6 @@ import sys
 from dataclasses import dataclass
 from multiprocessing import Value
 
-
 import braceexpand
 import torch
 import torchvision
@@ -28,6 +27,7 @@ from webdataset.tariterators import (
     valid_sample,
 )
 
+
 from PIL import Image
 import io
 
@@ -38,7 +38,6 @@ MAX_NUM_IMAGES = 5
 TINY_IMAGE_SIZE_THRESHOLD = 1
 N_CHANNELS = 3
 INTERLEAVED_IMAGE_SIZE = 224
-
 
 try:
     import horovod.torch as hvd
@@ -282,7 +281,6 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     # remove multiple newlines delimiters
     sample = re.sub(r" +", " ", sample)
 
-
     sentences = sent_tokenize(sample)
     # remove sentences that are just punctuation
     sentences = [s for s in sentences if not re.match(r"^\W+$", s)]
@@ -319,7 +317,6 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     text = text.replace(" <|endofchunk|>", "<|endofchunk|>")
     text = text.replace("<image> ", "<image>")
     text = text.replace(" <image>", "<image>")
-
 
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
@@ -544,266 +541,11 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-
-def remove_consecutive_spaces(sentence):
-    sentence = re.sub(r"\s+", " ", sentence)
-    return sentence
-
-def remove_multiple_newline_limiters(sentence):
-    sentence =  re.sub(r" +", " ", sentence)
-    return sentence
-
-def preprocess_sentence(sentence):
-    sentence = remove_consecutive_spaces(sentence)
-    sentence = remove_multiple_newline_limiters(sentence)
-    return sentence
-
-def remove_punctuation_based_sentences(interleaved_list, is_image_list):
-
-    """
-    Sets sentences that just punctuations to empty string
-    """
-    for i, (interleaved_input, is_image) in enumerate(zip(interleaved_list, is_image_list)):
-        if not is_image:
-            is_punctuation = re.match(r"^\W+$", interleaved_input)
-            if is_punctuation:
-                interleaved_list[i] =  ""
-    return interleaved_list, is_image_list
-
-def filter_no_json_or_no_image(sample):
-    has_json = "json" in sample
-    has_image = len(dict(filter(lambda item: item[0].endswith("png") or item[0].endswith("jpg") or item[0].endswith("jpeg"), sample.items()))) >= 1
-    return has_json and has_image
-
-def get_image(input, images):
-    image_name = input.split(".")[-2]+"."+input.split(".")[-1] 
-    return images[image_name]
-
-def is_tiny_image(image):
-    """
-    Removes images that are smaller in size for example RSS icons
-    """
-    return image.size[0] <= TINY_IMAGE_SIZE_THRESHOLD or image.size[1] <= TINY_IMAGE_SIZE_THRESHOLD
-
-def remove_unwanted_images(interleaved_list, is_image_list, images):
-    """
-    Smaller images are usually asscoiated with icons/ advertisements and may not be relevant to the input text. 
-    To tackle this issue, the method updates the interleaved data and the is_image list if the images are too small
-    We also do not want to include more than five images in any interleaved sample so this method takes care of that too. 
-    """
-    valid_images = 0
-    for i, (interleaved_input, is_image) in enumerate(zip(interleaved_list, is_image_list)):
-        if is_image:
-            interleaved_list[i] = get_image(interleaved_input, images)
-            is_unwanted = is_tiny_image(interleaved_list[i])
-            if not is_unwanted:
-                valid_images +=1
-
-            if is_unwanted or valid_images > MAX_NUM_IMAGES:
-                interleaved_list[i] = ""
-                is_image_list[i] = 0
-
-    num_images = min(MAX_NUM_IMAGES, valid_images)
-    return num_images, interleaved_list, is_image_list
-
-
-def prepare_text_data(interleaved_list, text_tokenizer):
-    """
-    The method prepares text tensor
-    """
-    text = "".join(interleaved_list)
-    text = f"{text}<|endofchunk|>{text_tokenizer.eos_token}"
-    text_tokenizer.padding_side = "right"
-    text_tensor = text_tokenizer(text, max_length=MAX_NUM_TOKENS, truncation=True, padding="max_length", return_tensors="pt")
-    return text_tensor
-
-
-def prepare_image_data(image_list, image_processor):
-    images_tensor = preprocess_image(image_list, image_processor) 
-    num_images = len(image_list)
-    if num_images < MAX_NUM_IMAGES:
-        zero_padding = torch.zeros((MAX_NUM_IMAGES - num_images, N_CHANNELS, INTERLEAVED_IMAGE_SIZE, INTERLEAVED_IMAGE_SIZE), dtype=torch.float)
-        images_tensor = torch.cat((images_tensor, zero_padding), dim=0)
-    return images_tensor
-
-
-def substitute_with_image_tag(interleaved_list, is_image_list, images):
-    """
-    The method creates a list of images (PIL) format and updates interleaved_list
-    with <image> tags.
-    Returns: A list of images and the updated interleaved_list list with samples
-
-    Examples: 
-    [<PIL_image>, <PIL_image>, "test sentence"]                                     ---> ["<image>", "<image>", "test sentence"]
-    [<PIL_image>, <PIL_image>, "test sentence 1", "test sentence 2"]                ---> ["<image>", "<image>", "test sentence 1<|endofchunk|>", "test sentence 2"]
-    [<PIL_image>, <PIL_image>, "test sentence 1", <PIL_image>, "test sentence 2"]   ---> ["<image>", "<image>", "test sentence 1<|endofchunk|>", "<image>", "test sentence 2"]
-    """
-    images = []
-    for i, (interleaved_input, is_image) in enumerate(zip(interleaved_list, is_image_list)):
-        if is_image:
-            images.append(interleaved_input)
-            interleaved_list[i] =  f"<image>"
-        else:
-            interleaved_list[i] = interleaved_list[i].strip()
-            is_previous_image = interleaved_list[i-1] == f"<image>"
-            is_last_sentence = i == (len(interleaved_list) - 1)
-            if is_previous_image and not is_last_sentence:
-                interleaved_list[i] =  f"{interleaved_list[i]}<|endofchunk|>"
-            
-
-    assert len(images) > 0, "images should be >= 1"
-    return images, interleaved_list, is_image_list
-
-
-def filter_out_empty_sentences(interleaved_list, is_image_list):
-    filtered_interleaved_list = []
-    filtered_is_image_list = []
-    for i, (interleaved_input, is_image) in enumerate(zip(interleaved_list, is_image_list)):
-        if not interleaved_input == "":
-            filtered_interleaved_list.append(interleaved_input)
-            filtered_is_image_list.append(is_image)
-    return filtered_interleaved_list, filtered_is_image_list
-
-
-def preprocess_sentences(interleaved_list, is_image_list):
-    for i, (interleaved_input, is_image) in enumerate(zip(interleaved_list, is_image_list)):
-        if not is_image:
-            interleaved_list[i] = preprocess_sentence(interleaved_input)
-    interleaved_list, is_image_list = remove_punctuation_based_sentences(interleaved_list, is_image_list)
-    interleaved_list, is_image_list = filter_out_empty_sentences(interleaved_list, is_image_list)
-    assert len(interleaved_list) == len(is_image_list) , "lengths of the interleaved and is_image list should be same"
-    return len(interleaved_list), interleaved_list, is_image_list
-
-
-def preprocess_interleaved_sample(interleaved_list, is_image_list, images, text_tokenizer, image_processor):
-    num_images, interleaved_list, is_image_list = remove_unwanted_images(interleaved_list, is_image_list, images)
-    if num_images == 0:
-        raise ValueError("No images in sample")
-
-    num_sentences, interleaved_list, is_image_list = preprocess_sentences(interleaved_list, is_image_list)
-    if num_sentences == 0:
-        raise ValueError("No sentences in sample")
-
-    images, interleaved_list, is_image_list = substitute_with_image_tag(interleaved_list, is_image_list, images)
-
-    text_tensor = prepare_text_data(interleaved_list, text_tokenizer)
-    images_tensor = prepare_image_data(images, image_processor) 
-    return images_tensor, (text_tensor["input_ids"], text_tensor["attention_mask"])
-
-
-
-def preprocess_interleaved_data(data, text_tokenizer, image_processor):
-    sample = data["json"]
-    interleaved_list = sample["interleaved_list"]
-    is_image_list = sample["is_image"]
-
-    images = {k: v for k, v  in data.items() if k.endswith("png") or k.endswith("jpg") or k.endswith("jpeg")}
-    images_tensor, (text_input_ids, text_attention_mask) = preprocess_interleaved_sample(interleaved_list, is_image_list, images, text_tokenizer, image_processor)
-    return images_tensor, (text_input_ids, text_attention_mask)
-    
-
-def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
-    input_shards = args.shards
-    assert input_shards is not None
-    resampled = getattr(args, "dataset_resampled", False)
-
-    num_samples, num_shards = get_dataset_size(input_shards)
-    num_samples = None
-    if not num_samples:
-        num_samples = args.train_num_samples
-        if not num_samples:
-            raise RuntimeError(
-                "Currently, number of dataset samples must be specified for training dataset. "
-                "Please specify via `--train-num-samples` if no dataset length info present."
-            )
-
-    # create a shared epoch store to sync epoch to dataloader worker proc
-    shared_epoch = SharedEpoch(epoch=epoch)
-    if resampled:
-        pipeline = [
-            ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)
-        ]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
-
-    # create two preprocess functions that take in the passed in image_processor and tokenizer
-    preprocess_interleaved_data_fn = functools.partial(preprocess_interleaved_data, text_tokenizer=tokenizer, image_processor = image_processor)
-
-
-    # at this point we have an iterator over all the shards
-    if not resampled:
-        pipeline.extend(
-            [
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ]
-        )
-    pipeline.extend(
-        [
-            # at this point, we have an iterator over the shards assigned to each worker at each node
-            # wds.tarfile_to_samples(handler=log_and_continue),
-            tarfile_to_samples_nothrow,
-            wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
-            ),
-        ]
-    )
-
-    pipeline.extend(
-        [
-            wds.select(filter_no_json_or_no_image),
-            wds.decode("pilrgb", handler=log_and_continue),
-            wds.map(preprocess_interleaved_data_fn ,handler=log_and_continue),
-            wds.batched(args.batch_size, partial=False),
-        ]
-    )
-
-    dataset = wds.DataPipeline(*pipeline)
-    if not resampled:
-        assert (
-            num_shards >= args.workers * args.world_size
-        ), "number of shards must be >= total workers"
-    # roll over and repeat a few samples to get same number of full batches on each node
-    round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
-    num_batches = round_fn(num_samples / global_batch_size)
-    num_workers = max(1, args.workers)
-    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-    num_batches = num_worker_batches * num_workers
-    num_samples = num_batches * global_batch_size
-    # each worker is iterating over this
-    dataset = dataset.with_epoch(num_worker_batches)
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=True,
-    )
-
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
-
-
-
 def get_dataset_fn(dataset_type):
     if dataset_type == "image_text":
         return get_wds_dataset
     elif dataset_type == "pile":
         return get_pile_dataset
-    elif dataset_type == "interleaved":
-        return get_interleaved_dataset
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
@@ -812,3 +554,4 @@ def get_data(args, image_processor, tokenizer, epoch=0):
     return get_dataset_fn(args.dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )
+
