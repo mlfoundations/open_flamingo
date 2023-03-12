@@ -52,6 +52,7 @@ class COCOFlickrDataset(Dataset):
         else:
             return f"{self.image_dir_path}/{self.annotations[idx]['image_id']:012d}.jpg"
 
+
     def __getitem__(self, idx):
         image = Image.open(self.get_img_path(idx))
         caption = self.annotations[idx]["caption"]
@@ -68,7 +69,7 @@ class VQADataset(Dataset):
         image_dir_path="/mmfs1/gscratch/efml/anasa2/data/vqav2/train2014/",
         question_path="/mmfs1/gscratch/efml/anasa2/data/vqav2/v2_OpenEnded_mscoco_train2014_questions.json",
         annotations_path="/mmfs1/gscratch/efml/anasa2/data/vqav2/v2_mscoco_train2014_annotations.json",
-        vqa_dataset="vqa",
+        vqa_dataset='vqa',
     ):
         self.questions = json.load(open(question_path, "r"))["questions"]
         self.answers = json.load(open(annotations_path, "r"))["annotations"]
@@ -79,16 +80,13 @@ class VQADataset(Dataset):
         return len(self.questions)
 
     def get_img_path(self, question):
-        if self.vqa_dataset == "vqa":
-            return os.path.join(
-                self.image_dir_path, f"COCO_train2014_{question['image_id']:012d}.jpg"
-            )
-        elif self.vqa_dataset == "ok_vqa":
-            return os.path.join(
-                self.image_dir_path, f"COCO_val2014_{question['image_id']:012d}.jpg"
-            )
+        if self.vqa_dataset == 'vqa':
+            return os.path.join(self.image_dir_path, f"COCO_train2014_{question['image_id']:012d}.jpg")
+        elif self.vqa_dataset == 'ok_vqa':
+            return os.path.join(self.image_dir_path, f"COCO_val2014_{question['image_id']:012d}.jpg")
         else:
             raise Exception(f"Unknown VQA dataset {self.vqa_dataset}")
+
 
     def __getitem__(self, idx):
         question = self.questions[idx]
@@ -105,7 +103,6 @@ class VQADataset(Dataset):
 
 class ImageNetDataset(ImageFolder):
     """Class to represent the ImageNet1k dataset."""
-
     def __init__(self, root, **kwargs):
         super().__init__(root=root, **kwargs)
 
@@ -115,5 +112,6 @@ class ImageNetDataset(ImageFolder):
         return {
             "image": sample,
             "class_id": target,  # numeric ID of the ImageNet class
-            "class_name": target_label,  # human-readable name of ImageNet class
+            "class_name": target_label  # human-readable name of ImageNet class
         }
+

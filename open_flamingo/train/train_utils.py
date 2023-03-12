@@ -1,6 +1,7 @@
 from contextlib import suppress
 
 import torch
+from einops import rearrange
 from tqdm import tqdm
 
 
@@ -132,7 +133,7 @@ def train_one_epoch(
             + divided_loss_pile * args.loss_multiplier_pile
         )
         loss.backward()
-
+        
         #### MASK GRADIENTS FOR EMBEDDINGS ####
         # Note (anas): Do not apply weight decay to embeddings as it will break this function.
         def mask_embedding(m):

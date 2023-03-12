@@ -573,6 +573,64 @@ def compute_vqa_accuracy(result_json_path, question_json_path, annotation_json_p
 
     return vqaEval.accuracy["overall"]
 
+    # print accuracies
+    print("\n")
+    print("Overall Accuracy is: %.02f\n" % (vqaEval.accuracy["overall"]))
+    print("Per Question Type Accuracy is the following:")
+    for quesType in vqaEval.accuracy["perQuestionType"]:
+        print("%s : %.02f" % (quesType, vqaEval.accuracy["perQuestionType"][quesType]))
+    print("\n")
+    print("Per Answer Type Accuracy is the following:")
+    for ansType in vqaEval.accuracy["perAnswerType"]:
+        print("%s : %.02f" % (ansType, vqaEval.accuracy["perAnswerType"][ansType]))
+    print("\n")
+    # demo how to use evalQA to retrieve low score result
+    # 35 is per question percentage accuracy
+    evals = [quesId for quesId in vqaEval.evalQA if vqaEval.evalQA[quesId] < 35]
+    if len(evals) > 0:
+        print("ground truth answers")
+        randomEval = random.choice(evals)
+        randomAnn = vqa.loadQA(randomEval)
+        vqa.showQA(randomAnn)
+
+        print("\n")
+        print("generated answer (accuracy %.02f)" % (vqaEval.evalQA[randomEval]))
+        ann = vqaRes.loadQA(randomEval)[0]
+        print("Answer:   %s\n" % (ann["answer"]))
+
+        imgId = randomAnn[0]["image_id"]
+        imgFilename = "COCO_" + dataSubType + "_" + str(imgId).zfill(12) + ".jpg"
+        if os.path.isfile(imgDir + imgFilename):
+            I = io.imread(imgDir + imgFilename)
+            plt.imshow(I)
+            plt.axis("off")
+            plt.show()
+
+    # plot accuracy for various question types
+    plt.bar(
+        range(len(vqaEval.accuracy["perQuestionType"])),
+        vqaEval.accuracy["perQuestionType"].values(),
+        align="center",
+    )
+    plt.xticks(
+        range(len(vqaEval.accuracy["perQuestionType"])),
+        vqaEval.accuracy["perQuestionType"].keys(),
+        rotation="0",
+        fontsize=10,
+    )
+    plt.title("Per Question Type Accuracy", fontsize=10)
+    plt.xlabel("Question Types", fontsize=10)
+    plt.ylabel("Accuracy", fontsize=10)
+    plt.show()
+
+    # save evaluation results to ./Results folder
+    json.dump(vqaEval.accuracy, open(accuracyFile, "w"))
+    json.dump(vqaEval.evalQA, open(evalQAFile, "w"))
+    json.dump(vqaEval.evalQuesType, open(evalQuesTypeFile, "w"))
+    json.dump(vqaEval.evalAnsType, open(evalAnsTypeFile, "w"))
+
+    return vqaEval.accuracy["overall"]
+
 
 def postprocess_vqa_generation(predictions):
     return re.split("Question|Answer", predictions, 1)[0]
