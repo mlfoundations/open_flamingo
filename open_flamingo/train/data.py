@@ -169,6 +169,7 @@ def pytorch_worker_seed(increment=0):
     # fallback to wds rank based seed
     return wds.utils.pytorch_worker_seed()
 
+
 _SHARD_SHUFFLE_SIZE = 2000
 _SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
@@ -177,11 +178,11 @@ _SAMPLE_SHUFFLE_INITIAL = 1000
 
 class detshuffle2(wds.PipelineStage):
     def __init__(
-            self,
-            bufsize=1000,
-            initial=100,
-            seed=0,
-            epoch=-1,
+        self,
+        bufsize=1000,
+        initial=100,
+        seed=0,
+        epoch=-1,
     ):
         self.bufsize = bufsize
         self.initial = initial
@@ -205,6 +206,7 @@ class detshuffle2(wds.PipelineStage):
             seed = self.seed + epoch
         rng.seed(seed)
         return _shuffle(src, self.bufsize, self.initial, rng)
+
 
 class ResampledShards2(IterableDataset):
     """An iterable dataset yielding a list of urls."""
@@ -273,6 +275,7 @@ def preprocess_text(sample, tokenizer):
     )
     return text["input_ids"], text["attention_mask"]
 
+
 def preprocess_pile(sample, tokenizer, clip_processor, max_length):
     sample = sample[0].decode("utf-8")
 
@@ -290,7 +293,7 @@ def preprocess_pile(sample, tokenizer, clip_processor, max_length):
 
     indices_replaced = torch.zeros(len(sentences), dtype=torch.bool)
     # replace 100% of sentences this is bad code atm and should be changed
-    indices_replaced[torch.rand(len(sentences)) <= 1.0] = True 
+    indices_replaced[torch.rand(len(sentences)) <= 1.0] = True
 
     if indices_replaced.sum() == 0:
         raise ValueError("No sentences to mask")
@@ -321,7 +324,11 @@ def preprocess_pile(sample, tokenizer, clip_processor, max_length):
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=max_length, truncation=True, padding="max_length", return_tensors="pt"
+        text,
+        max_length=max_length,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
     )
 
     clip_text_tensor = clip_processor.tokenizer(
@@ -347,32 +354,47 @@ def preprocess_pile(sample, tokenizer, clip_processor, max_length):
         text_tensor["attention_mask"],
     )
 
+
 MIN_KB = 10
 MAX_NUM_IMAGES = 10
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, max_length, filter_single_image, use_media_placement_augmentation):
+
+
+def preprocess_interleaved(
+    sample,
+    tokenizer,
+    clip_processor,
+    sim_threshold,
+    max_length,
+    filter_single_image,
+    use_media_placement_augmentation,
+):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
-    
+
     # build a sequence using images paired with their most similar sentence (according to CLIP)
     images, sentence_ixs = [], []
     for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
         # pick one image per sentence
-        if info["image_info"][image_path]["matched_text_index"] in sentence_ixs: continue
-        rawbytes = image_tar.extractfile(os.path.join(image_tar.getnames()[0], image_path)).read()
+        if info["image_info"][image_path]["matched_text_index"] in sentence_ixs:
+            continue
+        rawbytes = image_tar.extractfile(
+            os.path.join(image_tar.getnames()[0], image_path)
+        ).read()
 
         # filter to images >= 10KB
-        if len(rawbytes) // 1000 <= MIN_KB: continue
-        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold: continue
+        if len(rawbytes) // 1000 <= MIN_KB:
+            continue
+        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold:
+            continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
-        images.append(image)    
+        images.append(image)
         sentence_ixs.append(info["image_info"][image_path]["matched_text_index"])
 
     if len(images) == 0:
         raise ValueError("No images in sample after thresholding")
-
 
     """
     Augmentation
@@ -398,56 +420,74 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, max
     if do_shift:
         # minimum ix -> 0; everyone else -> previous
         current = list(sorted(sentence_ixs))
-        if current[0] == 0: 
+        if current[0] == 0:
             # drop first sample
             current = current[1:]
             sentence_ixs = sentence_ixs[1:]
             images = images[1:]
-            if len(images) == 0: raise ValueError("No images in sample after augmenting")
+            if len(images) == 0:
+                raise ValueError("No images in sample after augmenting")
         shifted = [0] + current
         shiftmap = dict(zip(current, shifted))
         sentence_ixs = [shiftmap[ix] for ix in sentence_ixs]
-    
+
     # images -> tensors
-    images_tensors = preprocess_image(images, clip_processor)   
-    keep_ixs =  range(min(len(images_tensors), MAX_NUM_IMAGES))
+    images_tensors = preprocess_image(images, clip_processor)
+    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
-    
+
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
-        zero_padding = torch.zeros((MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float)
+        zero_padding = torch.zeros(
+            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+        )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
     # add in <image> and <eoc> tokens
     # eoc after sentence = "sentence loss"
-    for ix in sentence_ixs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
+    for ix in sentence_ixs:
+        sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
 
     # NEW: try to include most of the images
     min_sentence_ix = min(sentence_ixs)
-    sentences = sentences[max(0, min_sentence_ix-1):]
+    sentences = sentences[max(0, min_sentence_ix - 1) :]
 
     text = " ".join(sentences)
-    text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
+    text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
     # whitespace cleanup
-    text = text.replace(" <|endofchunk|>", "<|endofchunk|>").replace("<image> ", "<image>").replace(" <image>", "<image>")
+    text = (
+        text.replace(" <|endofchunk|>", "<|endofchunk|>")
+        .replace("<image> ", "<image>")
+        .replace(" <image>", "<image>")
+    )
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=max_length, truncation=True, padding="max_length", return_tensors="pt"
+        text,
+        max_length=max_length,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
     )
 
     # reject sequences with too few images (after truncation)
     num_images = torch.count_nonzero(
-        text_tensor["input_ids"] == \
-        tokenizer.additional_special_tokens_ids[tokenizer.additional_special_tokens.index("<image>")]
+        text_tensor["input_ids"]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
     )
     if num_images == 0:
         raise ValueError("No images in sample after truncation")
     elif filter_single_image and num_images == 1 and random.random() <= 0.5:
         raise ValueError("Only one image in sample after truncation")
-    return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]), sample[2]
-    
+    return (
+        images_tensors,
+        (text_tensor["input_ids"], text_tensor["attention_mask"]),
+        sample[2],
+    )
+
 
 def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.shards
@@ -474,8 +514,10 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, 
-        sim_threshold=args.c4_textsim_threshold, 
+        preprocess_interleaved,
+        clip_processor=image_processor,
+        tokenizer=tokenizer,
+        sim_threshold=args.c4_textsim_threshold,
         max_length=args.max_sequence_len,
         filter_single_image=args.filter_c4_single_image,
         use_media_placement_augmentation=args.use_media_placement_augmentation,
@@ -546,6 +588,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
 
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
+
 def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.shards
     assert input_shards is not None
@@ -571,7 +614,10 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer, max_length=args.max_sequence_len,
+        preprocess_pile,
+        clip_processor=image_processor,
+        tokenizer=tokenizer,
+        max_length=args.max_sequence_len,
     )
 
     # at this point we have an iterator over all the shards
@@ -639,6 +685,7 @@ def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
+
 def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.shards
     assert input_shards is not None
@@ -702,7 +749,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
             wds.map_tuple(
-                preprocess_image_fn, preprocess_text_fn,  handler=log_and_continue
+                preprocess_image_fn, preprocess_text_fn, handler=log_and_continue
             ),
         ]
     )
@@ -747,10 +794,9 @@ def get_dataset_fn(dataset_type):
         return get_interleaved_dataset
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
-    
+
 
 def get_data(args, image_processor, tokenizer, epoch=0):
-
     return get_dataset_fn(args.dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )

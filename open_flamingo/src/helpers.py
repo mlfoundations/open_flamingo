@@ -77,7 +77,7 @@ class PerceiverResampler(nn.Module):
         num_latents=64,
         max_num_media=None,
         max_num_frames=None,
-        ff_mult=4
+        ff_mult=4,
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
@@ -138,7 +138,13 @@ class PerceiverResampler(nn.Module):
 
 class MaskedCrossAttention(nn.Module):
     def __init__(
-        self, *, dim, dim_visual, dim_head=64, heads=8, only_attend_immediate_media=True,
+        self,
+        *,
+        dim,
+        dim_visual,
+        dim_head=64,
+        heads=8,
+        only_attend_immediate_media=True,
     ):
         super().__init__()
         self.scale = dim_head**-0.5
@@ -205,7 +211,6 @@ class MaskedCrossAttention(nn.Module):
             )
             attn = attn.masked_fill(text_without_media_mask, 0.0)
 
-        
         ### TEST ATTENTION MASKS ###
         # assert attn.shape == (x.shape[0], self.heads, x.shape[1], T_img * n), "attn shape should be b h T_txt (T_img n)"
         # mask = rearrange(
@@ -230,7 +235,7 @@ class GatedCrossAttentionBlock(nn.Module):
         dim_head=64,
         heads=8,
         ff_mult=4,
-        only_attend_immediate_media=True
+        only_attend_immediate_media=True,
     ):
         super().__init__()
         self.attn = MaskedCrossAttention(

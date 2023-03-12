@@ -38,7 +38,6 @@ class FlamingoLayer(nn.Module):
         output_attentions=False,
         use_cache=False,
     ):
-
         if self.vis_x is None:
             raise ValueError("vis_x must be conditioned before forward pass")
 
@@ -46,7 +45,9 @@ class FlamingoLayer(nn.Module):
             raise ValueError("media_locations must be conditioned before forward pass")
 
         lang_x = self.gated_cross_attn_layer(
-            lang_x, self.vis_x, media_locations=self.media_locations,
+            lang_x,
+            self.vis_x,
+            media_locations=self.media_locations,
         )
         lang_x = self.decoder_layer(
             lang_x,

@@ -16,7 +16,7 @@ from train_utils import get_checkpoint, train_one_epoch
 from transformers import (
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
-    get_cosine_schedule_with_warmup
+    get_cosine_schedule_with_warmup,
 )
 
 from open_flamingo import create_model_and_transforms
@@ -70,7 +70,7 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar"
+        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
     )
     parser.add_argument(
         "--c4_shards",
@@ -180,7 +180,7 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
     )
-    
+
     assert model.use_projection_vector is False, "projection vector not desired"
 
     random_seed(args.seed, args.rank)
@@ -212,12 +212,15 @@ def main():
             c4_shard_urls.append(line.strip())
             if idx == 53000:
                 break
-    
+
     # remove everything from the shard urls except the shard name
     c4_shard_urls = [shard_url.split("/")[-1] for shard_url in c4_shard_urls]
     # add the s3 prefix
-    c4_shard_urls = [f"pipe:aws s3 cp s3://s-laion/flamingo/c4/{shard_url} -" for shard_url in c4_shard_urls]
-            
+    c4_shard_urls = [
+        f"pipe:aws s3 cp s3://s-laion/flamingo/c4/{shard_url} -"
+        for shard_url in c4_shard_urls
+    ]
+
     args.shards = c4_shard_urls
 
     args.dataset_type = "c4"
@@ -243,7 +246,7 @@ def main():
                 params_with_wd.append(p)
             else:
                 params_without_wd.append(p)
-                
+
         return [
             {"params": params_with_wd, "weight_decay": args.weight_decay},
             {"params": params_without_wd, "weight_decay": 0.0},
@@ -295,10 +298,11 @@ def main():
         resume_from_epoch = checkpoint["epoch"] + 1
 
     ddp_model.train()
-    
+
     # create a bloom filter to keep track of samples we have seen
     # this is to avoid duplicates
     from bloom_filter2 import BloomFilter
+
     bloom_filter = BloomFilter(max_elements=15000000, error_rate=0.001)
 
     for epoch in range(resume_from_epoch, args.num_epochs):

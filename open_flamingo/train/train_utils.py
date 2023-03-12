@@ -36,7 +36,7 @@ def train_one_epoch(
     lr_scheduler,
     device_id,
     wandb,
-    bloom_filter
+    bloom_filter,
 ):
     num_batches_per_epoch_laion = laion_loader.num_batches
     num_batches_per_epoch_pile = pile_loader.num_batches
@@ -61,8 +61,12 @@ def train_one_epoch(
 
     # setup logging
     num_images = AverageMeter()
-    step_time_m = AverageMeter() # time for one optimizer step (> 1 batch if using gradient accum)
-    data_time_m = AverageMeter() # avg time to load one batch of both C4 AND laion (= 1 batch regardless of gradient accum)
+    step_time_m = (
+        AverageMeter()
+    )  # time for one optimizer step (> 1 batch if using gradient accum)
+    data_time_m = (
+        AverageMeter()
+    )  # avg time to load one batch of both C4 AND laion (= 1 batch regardless of gradient accum)
     end = time.time()
 
     num_collisions = 0
@@ -71,7 +75,7 @@ def train_one_epoch(
     for num_steps, (batch_laion, batch_pile) in tqdm(
         enumerate(zip(laion_loader, pile_loader)), disable=args.rank != 0
     ):
-        data_time_m.update(time.time() - end) 
+        data_time_m.update(time.time() - end)
 
         global_step = num_steps + epoch * num_batches_per_epoch
 
@@ -104,21 +108,26 @@ def train_one_epoch(
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
         #### C4 FORWARD PASS ####
-        images = batch_pile[0].to(device_id, dtype=cast_dtype, non_blocking=True).unsqueeze(2)
+        images = (
+            batch_pile[0]
+            .to(device_id, dtype=cast_dtype, non_blocking=True)
+            .unsqueeze(2)
+        )
         input_ids = torch.stack([x[0] for x in batch_pile[1]]).squeeze(1)
         attention_mask = torch.stack([x[1] for x in batch_pile[1]]).squeeze(1)
         urls = batch_pile[2]
 
         # log num images
-        for n in torch.count_nonzero(input_ids == media_token_id, dim=1): num_images.update(n)
-        
+        for n in torch.count_nonzero(input_ids == media_token_id, dim=1):
+            num_images.update(n)
+
         # add urls to bloom filter if not already present
         for url in urls:
             if url in bloom_filter:
                 num_collisions += 1
             else:
                 bloom_filter.add(url)
-        
+
         # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
@@ -132,12 +141,15 @@ def train_one_epoch(
             ):
                 labels[i][label_idx] = -100
                 label_idx += 1
-            
+
             # get index of all endofchunk tokens in the sequence
             endofchunk_idxs = torch.where(labels[i] == endofchunk_token_id)[0]
             for endofchunk_idx in endofchunk_idxs:
                 token_idx = endofchunk_idx + 1
-                while token_idx < labels.shape[1] and labels[i][token_idx] != media_token_id:
+                while (
+                    token_idx < labels.shape[1]
+                    and labels[i][token_idx] != media_token_id
+                ):
                     labels[i][token_idx] = -100
                     token_idx += 1
 
@@ -151,7 +163,7 @@ def train_one_epoch(
                 attention_mask=attention_mask,
                 labels=labels,
             )[0]
-            
+
         # if loss is nan, skip this batch
         if torch.isnan(loss_pile):
             print("loss is nan, skipping this batch")
@@ -169,7 +181,7 @@ def train_one_epoch(
             + divided_loss_pile * args.loss_multiplier_pile
         )
         loss.backward()
-        
+
         #### MASK GRADIENTS FOR EMBEDDINGS ####
         # Note (anas): Do not apply weight decay to embeddings as it will break this function.
         def mask_embedding(m):
@@ -199,32 +211,55 @@ def train_one_epoch(
 
             if args.rank == 0 and args.report_to_wandb:
                 # compute within rank 0
-                laion_samples_per_second = args.gradient_accumulation_steps * args.batch_size_laion * args.world_size / step_time_m.val
-                laion_samples_per_second_per_gpu = args.gradient_accumulation_steps * args.batch_size_laion / step_time_m.val
+                laion_samples_per_second = (
+                    args.gradient_accumulation_steps
+                    * args.batch_size_laion
+                    * args.world_size
+                    / step_time_m.val
+                )
+                laion_samples_per_second_per_gpu = (
+                    args.gradient_accumulation_steps
+                    * args.batch_size_laion
+                    / step_time_m.val
+                )
 
-                c4_samples_per_second = args.gradient_accumulation_steps * args.batch_size_c4 * args.world_size / step_time_m.val
-                c4_samples_per_second_per_gpu = args.gradient_accumulation_steps * args.batch_size_c4 / step_time_m.val
+                c4_samples_per_second = (
+                    args.gradient_accumulation_steps
+                    * args.batch_size_c4
+                    * args.world_size
+                    / step_time_m.val
+                )
+                c4_samples_per_second_per_gpu = (
+                    args.gradient_accumulation_steps
+                    * args.batch_size_c4
+                    / step_time_m.val
+                )
 
                 wandb.log(
                     {
                         "data_time": data_time_m.avg,
-                        "step_time": step_time_m.avg, 
+                        "step_time": step_time_m.avg,
                         "laion_samples_per_second": laion_samples_per_second,
                         "laion_samples_per_second_per_gpu": laion_samples_per_second_per_gpu,
                         "c4_samples_per_second": c4_samples_per_second,
                         "c4_samples_per_second_per_gpu": c4_samples_per_second_per_gpu,
-                        "lr": optimizer.param_groups[0]['lr'], 
-                        "avg_num_images_per_c4_seq": num_images.avg, 
-                    }, 
+                        "lr": optimizer.param_groups[0]["lr"],
+                        "avg_num_images_per_c4_seq": num_images.avg,
+                    },
                     commit=False,
                 )
                 step_time_m.reset()
                 data_time_m.reset()
 
-                colision_percentage = (num_collisions / (args.batch_size_c4 * args.gradient_accumulation_steps)) * 100
-                wandb.log({"c4_batch_collision_percentage": colision_percentage}, commit=False)
+                colision_percentage = (
+                    num_collisions
+                    / (args.batch_size_c4 * args.gradient_accumulation_steps)
+                ) * 100
+                wandb.log(
+                    {"c4_batch_collision_percentage": colision_percentage}, commit=False
+                )
                 num_collisions = 0
-                
+
                 wandb.log(
                     {
                         "loss_laion": divided_loss_laion.item(),
@@ -236,7 +271,6 @@ def train_one_epoch(
                     {"loss_pile": divided_loss_pile.item(), "global_step": global_step},
                     commit=True,
                 )
-                
 
 
 def get_checkpoint(model):
