@@ -1,5 +1,3 @@
-from typing import List, Optional, Tuple, Union
-
 import torch.nn as nn
 
 from .helpers import GatedCrossAttentionBlock
@@ -65,7 +63,7 @@ class FlamingoLMMixin(nn.Module):
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
 
         Args:
-            media_token_id (_type_): _description_
+            media_token_id (int): The token id of the media token.
             vis_hidden_size (_type_): _description_
         """
         self.gated_cross_attn_layers = nn.ModuleList(
@@ -87,11 +85,11 @@ class FlamingoLMMixin(nn.Module):
             )
         )
         self.media_token_id = media_token_id
-        self.initalized_flamingo = True
+        self.initialized_flamingo = True
 
     def forward(self, *input, **kwargs):
         """Condition the Flamingo layers on the media locations before forward()"""
-        if not self.initalized_flamingo:
+        if not self.initialized_flamingo:
             raise ValueError(
                 "Flamingo layers are not initialized. Please call `init_flamingo` first."
             )
