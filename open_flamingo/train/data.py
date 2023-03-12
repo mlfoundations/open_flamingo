@@ -18,6 +18,7 @@ from nltk import sent_tokenize
 from PIL import Image
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
+import base64
 from webdataset.filters import _shuffle
 from webdataset.tariterators import (
     base_plus_ext,
@@ -26,7 +27,17 @@ from webdataset.tariterators import (
     valid_sample,
 )
 
+
+from PIL import Image
+import io
+
+
 Image.MAX_IMAGE_PIXELS = 1000000000
+MAX_NUM_TOKENS = 256
+MAX_NUM_IMAGES = 5
+TINY_IMAGE_SIZE_THRESHOLD = 1
+N_CHANNELS = 3
+INTERLEAVED_IMAGE_SIZE = 224
 
 try:
     import horovod.torch as hvd
@@ -231,6 +242,7 @@ class ResampledShards2(IterableDataset):
             # situation as different workers may wrap at different times (or not at all).
             self.epoch += 1
             epoch = self.epoch
+
         if self.deterministic:
             # reset seed w/ epoch if deterministic, worker seed should be deterministic due to arg.seed
             self.rng.seed(self.worker_seed() + epoch)
@@ -539,7 +551,6 @@ def get_dataset_fn(dataset_type):
 
 
 def get_data(args, image_processor, tokenizer, epoch=0):
-
     return get_dataset_fn(args.dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )
