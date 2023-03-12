@@ -41,8 +41,6 @@ def main():
     )
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
 
-    # From previous experiments other opt tokenizers may have a bug
-    # so we default to this one in any case they should all be the same.
     parser.add_argument(
         "--tokenizer_path",
         default="facebook/opt-30b",
@@ -52,7 +50,7 @@ def main():
     parser.add_argument(
         "--run_name",
         type=str,
-        default="large model test",
+        default="openflamingo3B",
         help="used to name saving directory and wandb run",
     )
     parser.add_argument("--use_media_placement_augmentation", action="store_true")
@@ -62,7 +60,12 @@ def main():
     parser.add_argument("--batch_size_c4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--resume_from_checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states",
+        default=None,
+    )
     parser.add_argument(
         "--delete_previous_checkpoint",
         action="store_true",
@@ -71,13 +74,12 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        # "s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
-        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
+        help="path to laion shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
     )
     parser.add_argument(
         "--c4_shards",
         type=str,
-        default="/mmfs1/gscratch/efml/anasa2/data/c4/c4-interleaved-shard-{000000..000100}.tar",
+        help="path to c4 shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
@@ -127,16 +129,11 @@ def main():
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
     parser.add_argument(
-        "--save_checkpoints_to_wandb", default=False, action="store_true"
-    )
-    parser.add_argument(
         "--wandb_project",
-        default="open-flamingo",
         type=str,
     )
     parser.add_argument(
         "--wandb_entity",
-        default="anas-awadalla",
         type=str,
     )
     parser.add_argument(

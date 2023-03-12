@@ -11,3 +11,5 @@ webdataset
 wandb
 nltk
 bloom_filter2
+scipy
+inflection

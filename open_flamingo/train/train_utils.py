@@ -1,7 +1,6 @@
 from contextlib import suppress
 
 import torch
-from einops import rearrange
 from tqdm import tqdm
 import time
 

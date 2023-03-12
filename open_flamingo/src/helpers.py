@@ -3,9 +3,8 @@ Taken from https://github.com/lucidrains/flamingo-pytorch
 """
 
 import torch
-import torch.nn.functional as F
 from einops import rearrange, repeat
-from einops_exts import rearrange_many, repeat_many
+from einops_exts import rearrange_many
 from torch import einsum, nn
 
 
