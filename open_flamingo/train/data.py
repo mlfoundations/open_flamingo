@@ -290,7 +290,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
 
     indices_replaced = torch.zeros(len(sentences), dtype=torch.bool)
     # replace 100% of sentences this is bad code atm and should be changed
-    indices_replaced[torch.rand(len(sentences)) <= 1.0] = True 
+    indices_replaced[torch.rand(len(sentences)) <= 1.0] = True
 
     if indices_replaced.sum() == 0:
         raise ValueError("No sentences to mask")
@@ -554,4 +554,3 @@ def get_data(args, image_processor, tokenizer, epoch=0):
     return get_dataset_fn(args.dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )
-
