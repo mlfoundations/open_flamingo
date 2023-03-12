@@ -9,7 +9,11 @@ This repo is still under development. You can expect us to release better perfor
 
 # Table of Contents
 - [Installation](#installation)
-- [API](#api)
+- [Approach](#approach)
+  * [Model architecture](#model-architecture)
+- [Usage](#usage)
+  * [Initializing an OpenFlamingo model](#initializing-an-openflamingo-model)
+  * [Generating text](#generating-text)
 - [Multimodal C4 dataset (MMC4)](#multimodal-c4-dataset-mmc4)
 - [Training](#training)
 - [Evaluation](#evaluation)
@@ -126,9 +130,7 @@ print("Generated text: ", tokenizer.decode(generated_text[0]))
 Coming soon!
 
 # Training
-Currently, we only support OPT models on the language side and CLIP on the vision side.
-
-To train a model, modify the following example command from the open_flamingo/train directory:
+To train a model, modify the following example command:
 ```
 torchrun --nnodes=1 --nproc_per_node=2
 train.py 
@@ -145,15 +147,14 @@ train.py
 --num_epochs 10
 ```
 
-If this is your first time running this command you will need to run:
+Note: if this is your first time training you will need to run the command below before running training:
+
 ```
 import nltk
 nltk.download('punkt')
 ```
-in a python shell before running training.
-
 # Evaluation
-Before evaluating the model, you will need to download the COCO and VQAv2 datasets. You will also need to install the coco evaluation package by running the following command:
+Before evaluating the model, you will also need to install the coco evaluation package by running the following command:
 ```
 pip install pycocoevalcap
 ```
@@ -183,8 +184,13 @@ python evaluate.py
 ``` 
 
 # Future plans
+- [ ] Add support for video input
+- [ ] Release better performing and larger OpenFlamingo models
+- [ ] Expand our evaluation suite
+- [ ] Add support for FSDP training
 
 # Team
+
 
 # Acknowledgments
 This code is based on Lucidrains' [flamingo implementation](https://github.com/lucidrains/flamingo-pytorch) and David Hansmair's [flamingo-mini repo](https://github.com/dhansmair/flamingo-mini). Thank you for making your code public!
