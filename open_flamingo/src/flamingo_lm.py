@@ -23,6 +23,9 @@ class FlamingoLayer(nn.Module):
     def condition_media_locations(self, media_locations):
         self.media_locations = media_locations
 
+    def condition_attend_previous(self, attend_previous):
+        self.attend_previous = attend_previous
+
     def forward(
         self,
         lang_x,
@@ -36,7 +39,10 @@ class FlamingoLayer(nn.Module):
             raise ValueError("media_locations must be conditioned before forward pass")
 
         lang_x = self.gated_cross_attn_layer(
-            lang_x, self.vis_x, media_locations=self.media_locations
+            lang_x,
+            self.vis_x,
+            media_locations=self.media_locations,
+            attend_previous=self.attend_previous,
         )
         lang_x = self.decoder_layer(
             lang_x, attention_mask=attention_mask, **decoder_layer_kwargs
@@ -58,7 +64,9 @@ class FlamingoLMMixin(nn.Module):
     def _set_decoder_layers(self, value):
         setattr_recursive(self, self.decoder_layers_attr_name, value)
 
-    def init_flamingo(self, media_token_id, vis_hidden_size):
+    def init_flamingo(
+        self, media_token_id, vis_hidden_size, use_media_placement_augmentation
+    ):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
 
@@ -85,6 +93,7 @@ class FlamingoLMMixin(nn.Module):
             )
         )
         self.media_token_id = media_token_id
+        self.use_media_placement_augmentation = use_media_placement_augmentation
         self.initialized_flamingo = True
 
     def forward(self, *input, **kwargs):
@@ -96,8 +105,13 @@ class FlamingoLMMixin(nn.Module):
 
         input_ids = kwargs["input_ids"] if "input_ids" in kwargs else input[0]
         media_locations = input_ids == self.media_token_id
-        for layer in self._get_decoder_layers():
+        attend_previous = (
+            (random.random() < 0.5) if self.use_media_placement_augmentation else False
+        )
+
+        for layer in self.get_decoder().layers:
             layer.condition_media_locations(media_locations)
+            layer.condition_attend_previous(attend_previous)
 
         return super().forward(
             *input, **kwargs
@@ -111,3 +125,4 @@ class FlamingoLMMixin(nn.Module):
         for layer in self._get_decoder_layers():
             layer.condition_vis_x(None)
             layer.condition_media_locations(None)
+            layer.condition_attend_previous(None)

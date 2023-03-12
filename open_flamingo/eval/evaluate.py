@@ -521,7 +521,6 @@ def evaluate_coco_flickr(
             length_penalty=length_penalty,
             input_ids=input_ids,
         )
-
         new_predictions = [
             postprocess_captioning_generation(out).replace('"', "")
             for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
