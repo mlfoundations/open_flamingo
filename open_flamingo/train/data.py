@@ -554,4 +554,3 @@ def get_data(args, image_processor, tokenizer, epoch=0):
     return get_dataset_fn(args.dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )
-
