@@ -1,18 +1,25 @@
 import ast
+import functools
 import json
 import logging
 import math
 import os
 import random
+import re
 import sys
 from dataclasses import dataclass
 from multiprocessing import Value
 
 
 import braceexpand
+import torch
+import torchvision
 import webdataset as wds
+from nltk import sent_tokenize
+from PIL import Image
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
+import base64
 from webdataset.filters import _shuffle
 from webdataset.tariterators import (
     base_plus_ext,
@@ -22,12 +29,15 @@ from webdataset.tariterators import (
 )
 
 
+
 _SHARD_SHUFFLE_SIZE = 2000
 _SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
 
 
+from PIL import Image
+import io
 class SharedEpoch:
     def __init__(self, epoch: int = 0):
         self.shared_epoch = Value("i", epoch)
@@ -91,6 +101,9 @@ def get_dataset_size(shards):
     return total_size, num_shards
 
 
+
+
+
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
     logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
@@ -147,6 +160,8 @@ def pytorch_worker_seed():
         return worker_info.seed
     # fallback to wds rank based seed
     return wds.utils.pytorch_worker_seed()
+
+
 
 
 class detshuffle2(wds.PipelineStage):
@@ -221,6 +236,9 @@ class ResampledShards2(IterableDataset):
             yield dict(url=self.rng.choice(self.urls))
 
 
+
+
+
 def get_shard_stats(args, input_shards):
     num_samples, num_shards = get_dataset_size(input_shards)
     num_samples = None
@@ -231,13 +249,10 @@ def get_shard_stats(args, input_shards):
                 "Currently, number of dataset samples must be specified for training dataset. "
                 "Please specify via `--train-num-samples` if no dataset length info present."
             )
-    return num_samples, num_shards
-
+    return num_samples,num_shards
 
 def prepare_dataloader(args, floor, num_samples, dataset):
-    num_samples, num_batches, num_worker_batches = recompute_samples_stats(
-        args, floor, num_samples
-    )
+    num_samples, num_batches, num_worker_batches = recompute_samples_stats(args, floor, num_samples)
     # each worker is iterating over this
     dataset = dataset.with_epoch(num_worker_batches)
     dataloader = wds.WebLoader(
@@ -252,7 +267,6 @@ def prepare_dataloader(args, floor, num_samples, dataset):
     dataloader.num_samples = num_samples
     return dataloader
 
-
 def recompute_samples_stats(args, floor, num_samples):
     # roll over and repeat a few samples to get same number of full batches on each node
     round_fn = math.floor if floor else math.ceil
@@ -262,8 +276,7 @@ def recompute_samples_stats(args, floor, num_samples):
     num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
     num_batches = num_worker_batches * num_workers
     num_samples = num_batches * global_batch_size
-    return num_samples, num_batches, num_worker_batches
-
+    return num_samples,num_batches,num_worker_batches
 
 def get_shard_stats(args, input_shards):
     num_samples, num_shards = get_dataset_size(input_shards)
@@ -275,7 +288,7 @@ def get_shard_stats(args, input_shards):
                 "Currently, number of dataset samples must be specified for training dataset. "
                 "Please specify via `--train-num-samples` if no dataset length info present."
             )
-    return num_samples, num_shards
+    return num_samples,num_shards
 
 
 def add_tar_to_samples_step(pipeline):
@@ -291,21 +304,19 @@ def add_tar_to_samples_step(pipeline):
         ]
     )
 
-
 def add_detshuffle2_step(shared_epoch, args, pipeline):
     pipeline.extend(
-        [
-            detshuffle2(
-                bufsize=_SHARD_SHUFFLE_SIZE,
-                initial=_SHARD_SHUFFLE_INITIAL,
-                seed=args.seed,
-                epoch=shared_epoch,
-            ),
-            wds.split_by_node,
-            wds.split_by_worker,
-        ]
-    )
-
+            [
+                detshuffle2(
+                    bufsize=_SHARD_SHUFFLE_SIZE,
+                    initial=_SHARD_SHUFFLE_INITIAL,
+                    seed=args.seed,
+                    epoch=shared_epoch,
+                ),
+                wds.split_by_node,
+                wds.split_by_worker,
+            ]
+        )
 
 def filter_no_caption_or_no_image(sample):
     return ("txt" in sample) and (
@@ -315,19 +326,7 @@ def filter_no_caption_or_no_image(sample):
 
 def filter_no_json_or_no_image(sample):
     has_json = "json" in sample
-    has_image = (
-        len(
-            dict(
-                filter(
-                    lambda item: item[0].endswith("png")
-                    or item[0].endswith("jpg")
-                    or item[0].endswith("jpeg"),
-                    sample.items(),
-                )
-            )
-        )
-        >= 1
-    )
+    has_image = len(dict(filter(lambda item: item[0].endswith("png") or item[0].endswith("jpg") or item[0].endswith("jpeg"), sample.items()))) >= 1
     return has_json and has_image
 
 
@@ -346,7 +345,6 @@ def add_image_text_data_processing_step(args, preprocess_data_fn, pipeline):
         ]
     )
 
-
 def add_pile_data_processing_step(args, preprocess_data_fn, pipeline):
     pipeline.extend(
         [
@@ -356,13 +354,12 @@ def add_pile_data_processing_step(args, preprocess_data_fn, pipeline):
         ]
     )
 
-
 def add_interleaved_data_processing_step(args, preprocess_data_fn, pipeline):
     pipeline.extend(
         [
             wds.select(filter_no_json_or_no_image),
             wds.decode("pilrgb", handler=log_and_continue),
-            wds.map(preprocess_data_fn[0], handler=log_and_continue),
+            wds.map(preprocess_data_fn[0],handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
         ]
     )

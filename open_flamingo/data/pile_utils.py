@@ -1,7 +1,7 @@
+
 import re
 import torch
 from nltk import sent_tokenize
-
 
 def preprocess_pile(sample, tokenizer, clip_processor):
     sample = sample[0].decode("utf-8")
@@ -10,6 +10,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     sample = re.sub(r"\s+", " ", sample)
     # remove multiple newlines delimiters
     sample = re.sub(r" +", " ", sample)
+
 
     sentences = sent_tokenize(sample)
     # remove sentences that are just punctuation
@@ -47,6 +48,7 @@ def preprocess_pile(sample, tokenizer, clip_processor):
     text = text.replace(" <|endofchunk|>", "<|endofchunk|>")
     text = text.replace("<image> ", "<image>")
     text = text.replace(" <image>", "<image>")
+
 
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"

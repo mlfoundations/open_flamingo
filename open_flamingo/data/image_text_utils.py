@@ -1,4 +1,6 @@
+
 import torchvision
+
 
 
 def preprocess_image(sample, image_processor):
@@ -7,7 +9,6 @@ def preprocess_image(sample, image_processor):
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
     image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
-
 
 def preprocess_text(sample, tokenizer):
     tokenizer.padding_side = "right"
