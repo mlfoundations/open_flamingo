@@ -321,7 +321,7 @@ def main():
 
             if args.delete_previous_checkpoint:
                 if epoch > 0:
-                    os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt") 
+                    os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
 
     if args.rank == 0:
         if not os.path.exists(args.run_name):
