@@ -45,7 +45,7 @@ class Flamingo(nn.Module):
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
             vis_hidden_size=self.vis_dim,
-            use_media_placement_augmentation=self.use_media_placement_augmentation
+            use_media_placement_augmentation=self.use_media_placement_augmentation,
         )
 
     def forward(
@@ -81,8 +81,7 @@ class Flamingo(nn.Module):
             pseudovision_attention_mask=pseudovision_attention_mask,
         )
 
-        output = self.lang_encoder(
-            lang_x, attention_mask=attention_mask, labels=labels)
+        output = self.lang_encoder(lang_x, attention_mask=attention_mask, labels=labels)
 
         self.lang_encoder.clear_conditioned_layers()
         return output
@@ -172,7 +171,8 @@ class Flamingo(nn.Module):
             pseudovision_attention_mask (torch.Tensor, optional): Attention mask for pseudovision_x.
         """
         assert (vision_x is None) ^ (
-            pseudovision_x is None), "Must provide either vision_x or pseudovision_x"
+            pseudovision_x is None
+        ), "Must provide either vision_x or pseudovision_x"
 
         if vision_x is not None:
             vision_features = self._encode_vision_x(vision_x)
@@ -201,13 +201,11 @@ class Flamingo(nn.Module):
                 # add a dimension v to match perceiver input
                 vision_x = vision_x.unsqueeze(-2)
             else:
-                vision_x = self.vision_encoder.vision_model(
-                    vision_x).last_hidden_state
-        vision_x = rearrange(
-            vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
-        
+                vision_x = self.vision_encoder.vision_model(vision_x).last_hidden_state
+        vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
+
         vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
-            
+
         return vision_x
 
     def _encode_pseudovision_x(
@@ -233,8 +231,7 @@ class Flamingo(nn.Module):
                 p=2, dim=-1, keepdim=True
             )
 
-        pseudovision_x = rearrange(
-            pseudovision_x, "(b T) d -> b T 1 1 d", b=b, T=T)
-        
+        pseudovision_x = rearrange(pseudovision_x, "(b T) d -> b T 1 1 d", b=b, T=T)
+
         pseudovision_x = self.perceiver(pseudovision_x)
         return pseudovision_x

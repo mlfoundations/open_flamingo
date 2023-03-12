@@ -6,17 +6,15 @@ import logging
 import math
 import os
 import random
-import re
 import sys
+import tarfile
 from dataclasses import dataclass
 from multiprocessing import Value
-import tarfile
 
 import braceexpand
 import torch
 import torchvision
 import webdataset as wds
-from nltk import sent_tokenize
 from PIL import Image
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
@@ -61,7 +59,7 @@ class DataInfo:
 
 
 def get_dataset_size(shards):
-    # shards_list = list(braceexpand.braceexpand(shards))
+    shards_list = list(braceexpand.braceexpand(shards))
     shards_list = shards
     dir_path = os.path.dirname(shards[0])
     sizes_filename = os.path.join(dir_path, "sizes.json")
@@ -169,6 +167,7 @@ def pytorch_worker_seed(increment=0):
     # fallback to wds rank based seed
     return wds.utils.pytorch_worker_seed()
 
+
 _SHARD_SHUFFLE_SIZE = 2000
 _SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
@@ -177,11 +176,11 @@ _SAMPLE_SHUFFLE_INITIAL = 1000
 
 class detshuffle2(wds.PipelineStage):
     def __init__(
-            self,
-            bufsize=1000,
-            initial=100,
-            seed=0,
-            epoch=-1,
+        self,
+        bufsize=1000,
+        initial=100,
+        seed=0,
+        epoch=-1,
     ):
         self.bufsize = bufsize
         self.initial = initial
@@ -205,6 +204,7 @@ class detshuffle2(wds.PipelineStage):
             seed = self.seed + epoch
         rng.seed(seed)
         return _shuffle(src, self.bufsize, self.initial, rng)
+
 
 class ResampledShards2(IterableDataset):
     """An iterable dataset yielding a list of urls."""
@@ -273,126 +273,69 @@ def preprocess_text(sample, tokenizer):
     )
     return text["input_ids"], text["attention_mask"]
 
-def preprocess_pile(sample, tokenizer, clip_processor):
-    sample = sample[0].decode("utf-8")
-
-    # remove multiple consecutive spaces
-    sample = re.sub(r"\s+", " ", sample)
-    # remove multiple newlines delimiters
-    sample = re.sub(r" +", " ", sample)
-
-    sentences = sent_tokenize(sample)
-    # remove sentences that are just punctuation
-    sentences = [s for s in sentences if not re.match(r"^\W+$", s)]
-
-    if len(sentences) == 0:
-        raise ValueError("No sentences in sample")
-
-    indices_replaced = torch.zeros(len(sentences), dtype=torch.bool)
-    # replace 100% of sentences this is bad code atm and should be changed
-    indices_replaced[torch.rand(len(sentences)) <= 1.0] = True 
-
-    if indices_replaced.sum() == 0:
-        raise ValueError("No sentences to mask")
-
-    # cap the number of sentences to replace to 10
-    if indices_replaced.sum() > 10:
-        true_indices = torch.nonzero(indices_replaced).squeeze()
-        overflowing = indices_replaced.sum() - 10
-        indices_replaced[
-            true_indices[torch.randperm(len(true_indices))[:overflowing]]
-        ] = False
-
-    chosen_sentences = [
-        sentences[i].strip()
-        for i in range(len(indices_replaced))
-        if indices_replaced[i]
-    ]
-
-    for i in range(len(sentences)):
-        if indices_replaced[i]:
-            sentences[i] = f"<|endofchunk|><image>{sentences[i]}"
-    text = " ".join(sentences)
-    text = text.replace("<|endofchunk|>", "", 1)
-    text = text.replace(" <|endofchunk|>", "<|endofchunk|>")
-    text = text.replace("<image> ", "<image>")
-    text = text.replace(" <image>", "<image>")
-
-    text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
-    tokenizer.padding_side = "right"
-    text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
-    )
-
-    clip_text_tensor = clip_processor.tokenizer(
-        chosen_sentences,
-        max_length=24,
-        truncation=True,
-        padding="max_length",
-        return_tensors="pt",
-    )
-
-    # pad to 10 sentences
-    if len(chosen_sentences) < 10:
-        zero_padding = torch.zeros((10 - len(chosen_sentences), 24), dtype=torch.long)
-        clip_text_tensor["input_ids"] = torch.cat(
-            (clip_text_tensor["input_ids"], zero_padding), dim=0
-        )
-        clip_text_tensor["attention_mask"] = torch.cat(
-            (clip_text_tensor["attention_mask"], zero_padding), dim=0
-        )
-
-    return (clip_text_tensor["input_ids"], clip_text_tensor["attention_mask"]), (
-        text_tensor["input_ids"],
-        text_tensor["attention_mask"],
-    )
 
 MIN_KB = 10
 MAX_NUM_IMAGES = 5
+
+
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
-    
+
     images, image_idxs = [], []
     for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
         # pick one image per sentence
-        if info["image_info"][image_path]["matched_text_index"] in image_idxs: continue
-        rawbytes = image_tar.extractfile(os.path.join(image_tar.getnames()[0], image_path)).read()
+        if info["image_info"][image_path]["matched_text_index"] in image_idxs:
+            continue
+        rawbytes = image_tar.extractfile(
+            os.path.join(image_tar.getnames()[0], image_path)
+        ).read()
 
         # filter to images >= 10KB
-        if len(rawbytes) // 1000 <= MIN_KB: continue
-        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold: continue
+        if len(rawbytes) // 1000 <= MIN_KB:
+            continue
+        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold:
+            continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
         image_idxs.append(info["image_info"][image_path]["matched_text_index"])
-    
+
     if len(images) == 0:
         raise ValueError("No images in sample")
 
     # filter out images that are exact duplicates
-    images_tensors = preprocess_image(images, clip_processor)   
+    images_tensors = preprocess_image(images, clip_processor)
     # _, unique = unique_ixs(images_tensors, dim=0)
-    keep_ixs =  range(min(len(images_tensors), MAX_NUM_IMAGES)) #unique[:MAX_NUM_IMAGES]
+    keep_ixs = range(
+        min(len(images_tensors), MAX_NUM_IMAGES)
+    )  # unique[:MAX_NUM_IMAGES]
     images_tensors = images_tensors[keep_ixs]
     # images = [images[ix] for ix in keep_ixs] # useful for debugging, but otherwise not used
     image_idxs = [image_idxs[ix] for ix in keep_ixs]
-    
+
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
-        zero_padding = torch.zeros((MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float)
+        zero_padding = torch.zeros(
+            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+        )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
     # add in <image> and <eoc> tokens
     # eoc after sentence = "sentence loss"
-    for ix in image_idxs: sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
-        
+    for ix in image_idxs:
+        sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
+
     text = " ".join(sentences)
-    text = text.replace("<|endofchunk|>", "", 1) # but remove first eoc
+    text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
     # whitespace cleanup
-    text = text.replace(" <|endofchunk|>", "<|endofchunk|>").replace("<image> ", "<image>").replace(" <image>", "<image>")
+    text = (
+        text.replace(" <|endofchunk|>", "<|endofchunk|>")
+        .replace("<image> ", "<image>")
+        .replace(" <image>", "<image>")
+    )
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
@@ -401,17 +344,23 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
 
     # reject sequences with too few images (after truncation)
     num_images = torch.count_nonzero(
-        text_tensor["input_ids"] == \
-        tokenizer.additional_special_tokens_ids[tokenizer.additional_special_tokens.index("<image>")]
+        text_tensor["input_ids"]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
     )
-    
+
     if num_images == 0:
         raise ValueError("No images in sample")
     # elif num_images == 1 and random.random() <= 0.5:
     #     raise ValueError("Only one image in sample")
 
-    return images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]), sample[2]
-    
+    return (
+        images_tensors,
+        (text_tensor["input_ids"], text_tensor["attention_mask"]),
+        sample[2],
+    )
+
 
 def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.shards
@@ -438,7 +387,10 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         pipeline = [wds.SimpleShardList(input_shards)]
 
     preprocess_fn = functools.partial(
-        preprocess_interleaved, clip_processor=image_processor, tokenizer=tokenizer, sim_threshold=args.c4_textsim_threshold
+        preprocess_interleaved,
+        clip_processor=image_processor,
+        tokenizer=tokenizer,
+        sim_threshold=args.c4_textsim_threshold,
     )
 
     # at this point we have an iterator over all the shards
@@ -506,98 +458,6 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
 
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
-def get_pile_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
-    input_shards = args.shards
-    assert input_shards is not None
-    resampled = getattr(args, "dataset_resampled", False)
-
-    num_samples, num_shards = get_dataset_size(input_shards)
-    num_samples = None
-    if not num_samples:
-        num_samples = args.train_num_samples
-        if not num_samples:
-            raise RuntimeError(
-                "Currently, number of dataset samples must be specified for training dataset. "
-                "Please specify via `--train-num-samples` if no dataset length info present."
-            )
-
-    # create a shared epoch store to sync epoch to dataloader worker proc
-    shared_epoch = SharedEpoch(epoch=epoch)
-    if resampled:
-        pipeline = [
-            ResampledShards2(input_shards, deterministic=True, epoch=shared_epoch)
-        ]
-    else:
-        pipeline = [wds.SimpleShardList(input_shards)]
-
-    preprocess_fn = functools.partial(
-        preprocess_pile, clip_processor=image_processor, tokenizer=tokenizer
-    )
-
-    # at this point we have an iterator over all the shards
-    if not resampled:
-        pipeline.extend(
-            [
-                detshuffle2(
-                    bufsize=_SHARD_SHUFFLE_SIZE,
-                    initial=_SHARD_SHUFFLE_INITIAL,
-                    seed=args.seed,
-                    epoch=shared_epoch,
-                ),
-                wds.split_by_node,
-                wds.split_by_worker,
-            ]
-        )
-    pipeline.extend(
-        [
-            # at this point, we have an iterator over the shards assigned to each worker at each node
-            # wds.tarfile_to_samples(handler=log_and_continue),
-            tarfile_to_samples_nothrow,
-            wds.shuffle(
-                bufsize=_SAMPLE_SHUFFLE_SIZE,
-                initial=_SAMPLE_SHUFFLE_INITIAL,
-            ),
-        ]
-    )
-
-    pipeline.extend(
-        [
-            wds.to_tuple("txt"),
-            # wds.map(preprocess_fn, handler=log_and_continue),
-            # wds.batched(args.batch_size, partial=False),
-            # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
-        ]
-    )
-
-    dataset = wds.DataPipeline(*pipeline)
-    if not resampled:
-        assert (
-            num_shards >= args.workers * args.world_size
-        ), "number of shards must be >= total workers"
-    # roll over and repeat a few samples to get same number of full batches on each node
-    round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
-    num_batches = round_fn(num_samples / global_batch_size)
-    num_workers = max(1, args.workers)
-    num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
-    num_batches = num_worker_batches * num_workers
-    num_samples = num_batches * global_batch_size
-    # each worker is iterating over this
-    dataset = dataset.with_epoch(num_worker_batches)
-
-    dataloader = wds.WebLoader(
-        dataset,
-        batch_size=None,
-        shuffle=False,
-        num_workers=args.workers,
-        persistent_workers=True,
-    )
-
-    # add meta-data to dataloader instance for convenience
-    dataloader.num_batches = num_batches
-    dataloader.num_samples = num_samples
-
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.shards
@@ -662,7 +522,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
             wds.batched(args.batch_size, partial=False),
             wds.map_tuple(
-                preprocess_image_fn, preprocess_text_fn,  handler=log_and_continue
+                preprocess_image_fn, preprocess_text_fn, handler=log_and_continue
             ),
         ]
     )
@@ -701,16 +561,13 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 def get_dataset_fn(dataset_type):
     if dataset_type == "image_text":
         return get_wds_dataset
-    elif dataset_type == "pile":
-        return get_pile_dataset
     elif dataset_type == "c4":
         return get_interleaved_dataset
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
-    
+
 
 def get_data(args, image_processor, tokenizer, epoch=0):
-
     return get_dataset_fn(args.dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )

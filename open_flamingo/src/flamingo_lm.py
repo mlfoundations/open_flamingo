@@ -41,7 +41,6 @@ class FlamingoLayer(nn.Module):
         output_attentions=False,
         use_cache=False,
     ):
-
         if self.vis_x is None:
             raise ValueError("vis_x must be conditioned before forward pass")
 
@@ -49,7 +48,10 @@ class FlamingoLayer(nn.Module):
             raise ValueError("media_locations must be conditioned before forward pass")
 
         lang_x = self.gated_cross_attn_layer(
-            lang_x, self.vis_x, media_locations=self.media_locations, attend_previous=self.attend_previous,
+            lang_x,
+            self.vis_x,
+            media_locations=self.media_locations,
+            attend_previous=self.attend_previous,
         )
         lang_x = self.decoder_layer(
             lang_x,
@@ -82,7 +84,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         self.initalized_flamingo = False
         self.media_token_id = None
 
-    def init_flamingo(self, media_token_id, vis_hidden_size, use_media_placement_augmentation):
+    def init_flamingo(
+        self, media_token_id, vis_hidden_size, use_media_placement_augmentation
+    ):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
 
@@ -221,7 +225,9 @@ class OPTForCausalLMFlamingo(OPTPreTrainedModel):
         )
 
         media_locations = input_ids == self.media_token_id
-        attend_previous = (random.random() < 0.5) if self.use_media_placement_augmentation else False
+        attend_previous = (
+            (random.random() < 0.5) if self.use_media_placement_augmentation else False
+        )
 
         for layer in self.get_decoder().layers:
             layer.condition_media_locations(media_locations)

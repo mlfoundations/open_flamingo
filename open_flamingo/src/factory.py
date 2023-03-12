@@ -54,11 +54,11 @@ def create_model_and_transforms(
         text_tokenizer.encode("<image>")[-1],
         **flamingo_kwargs,
     )
-    
+
     # Freeze all parameters
     model.requires_grad_(False)
     assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
-    
+
     # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
     model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)

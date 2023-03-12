@@ -77,7 +77,7 @@ class PerceiverResampler(nn.Module):
         num_latents=64,
         max_num_media=None,
         max_num_frames=None,
-        ff_mult=4
+        ff_mult=4,
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
@@ -138,7 +138,13 @@ class PerceiverResampler(nn.Module):
 
 class MaskedCrossAttention(nn.Module):
     def __init__(
-        self, *, dim, dim_visual, dim_head=64, heads=8, only_attend_immediate_media=True,
+        self,
+        *,
+        dim,
+        dim_visual,
+        dim_head=64,
+        heads=8,
+        only_attend_immediate_media=True,
     ):
         super().__init__()
         self.scale = dim_head**-0.5
@@ -186,12 +192,17 @@ class MaskedCrossAttention(nn.Module):
             text_time = media_locations.cumsum(dim=-1)
             media_time = torch.arange(T_img, device=x.device) + 1
 
-            if not attend_previous: 
+            if not attend_previous:
                 text_time[~media_locations] += 1
                 # make sure max is still the number of images in the sequence
-                text_time[text_time > repeat(
-                    torch.count_nonzero(media_locations, dim=1), "b -> b i", i=text_time.shape[1]
-                )] = 0
+                text_time[
+                    text_time
+                    > repeat(
+                        torch.count_nonzero(media_locations, dim=1),
+                        "b -> b i",
+                        i=text_time.shape[1],
+                    )
+                ] = 0
 
             # text time must equal media time if only attending to most immediate image
             # otherwise, as long as text time is greater than media time (if attending to all previous images / media)
@@ -228,7 +239,7 @@ class GatedCrossAttentionBlock(nn.Module):
         dim_head=64,
         heads=8,
         ff_mult=4,
-        only_attend_immediate_media=True
+        only_attend_immediate_media=True,
     ):
         super().__init__()
         self.attn = MaskedCrossAttention(
@@ -251,7 +262,13 @@ class GatedCrossAttentionBlock(nn.Module):
         attend_previous=True,
     ):
         x = (
-            self.attn(x, media, media_locations=media_locations, attend_previous=attend_previous) * self.attn_gate.tanh()
+            self.attn(
+                x,
+                media,
+                media_locations=media_locations,
+                attend_previous=attend_previous,
+            )
+            * self.attn_gate.tanh()
             + x
         )
         x = self.ff(x) * self.ff_gate.tanh() + x
