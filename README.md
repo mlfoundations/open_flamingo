@@ -84,19 +84,27 @@ query_image = Image.open(
 
 """
 Step 2: Preprocessing images
-Details: For OpenFlamingo, we expect the image to be a torch tensor of shape batch_size x num_media x num_frames x channels x height x width. In this case batch_size = 1, num_media = 3, num_frames = 1 (this will always be one expect for video which we don't support yet), channels = 3, height = 224, width = 224.
+Details: For OpenFlamingo, we expect the image to be a torch tensor of shape 
+ batch_size x num_media x num_frames x channels x height x width. 
+ In this case batch_size = 1, num_media = 3, num_frames = 1 
+ (this will always be one expect for video which we don't support yet), 
+ channels = 3, height = 224, width = 224.
 """
-vis_x = image_processor(images=[demo_image_one, demo_image_two, query_image], return_tensors="pt")
+vis_x = image_processor(images=[demo_image_one, demo_image_two, query_image], 
+ return_tensors="pt")
 vis_x = vis_x.unsqueeze(1).unsqueeze(1)
 
 
 """
 Step 3: Preprocessing text
-Details: In the text we expect an <image> special token to indicate where an image is. We also expect an <|endofchunk|> special token to indicate the end of the text portion associated with an image.
+Details: In the text we expect an <image> special token to indicate where an image is.
+ We also expect an <|endofchunk|> special token to indicate the end of the text 
+ portion associated with an image.
 """
 tokenizer.padding_side = "left" # For generation padding tokens should be on the left
 lang_x = tokenizer(
-    ["<image>An image of two cats.<|endofchunk|><image>An image of a soccer player shooting a ball.<|endofchunk|><image>An image of"],
+    ["<image>An image of two cats.<|endofchunk|><image>An image of a soccer player"
+     " shooting a ball.<|endofchunk|><image>An image of"],
     max_length=128,
     padding=True,
     return_tensors="pt",
