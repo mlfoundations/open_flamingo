@@ -8,8 +8,7 @@ def postprocess_classification_generation(predictions) -> str:
     return re.split("Prompt|Completion", predictions, 1)[0]
 
 
-def compute_classification_accuracy(
-        predictions: Sequence[Dict[str, str]]) -> float:
+def compute_classification_accuracy(predictions: Sequence[Dict[str, str]]) -> float:
     """Compute the accuracy of a sequence of predictions."""
 
     def _preprocess_fn(s):
@@ -18,13 +17,15 @@ def compute_classification_accuracy(
 
     is_correct = [
         _preprocess_fn(x["prediction"]) == _preprocess_fn(x["class_label"])
-        for x in predictions]
+        for x in predictions
+    ]
 
     return np.mean(is_correct).item()
 
 
-def compute_shifted_logits_and_labels(outputs, encodings, tokenizer) -> Tuple[
-    torch.Tensor, torch.Tensor]:
+def compute_shifted_logits_and_labels(
+    logits: torch.Tensor, encodings, tokenizer, eoc_token_id
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Helper function to compute shifted logits and labels.
 
     This allows for straightforward computation of the loss on shift_logits
@@ -41,8 +42,10 @@ def compute_shifted_logits_and_labels(outputs, encodings, tokenizer) -> Tuple[
     """
 
     labels = encodings["input_ids"].clone()
-    # convert padding tokens to -100 so they are ignored in loss
+
+    # convert padding and EOC tokens to -100 so they are ignored in loss
     labels[labels == tokenizer.pad_token_id] = -100
+    labels[labels == eoc_token_id] = -100
 
     # Convert all tokens in prefix until separator to -100 so they are
     # ignored in loss
@@ -51,25 +54,28 @@ def compute_shifted_logits_and_labels(outputs, encodings, tokenizer) -> Tuple[
         # since the first non-padding token of the sequence will also be
         # eos_token (because bos_token and eos_token are the same for
         # the tokenizer).
-        end_of_prefix = -labels[idx].tolist()[::-1].index(
-            tokenizer.eos_token_id) - 1
-        labels[idx, :end_of_prefix + 1] = -100
+        end_of_prefix = -labels[idx].tolist()[::-1].index(tokenizer.eos_token_id) - 1
+        labels[idx, : end_of_prefix + 1] = -100
 
     # Shift so that tokens < n predict n. The shifted tensors both have
     # shape [batch_size, seq_len - 1].
-    shift_logits = outputs.logits[..., :-1, :].contiguous()
+    shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
+
     return shift_logits, shift_labels
 
 
-def compute_per_sample_probs(encodings, tokenizer, outputs) -> torch.Tensor:
+def compute_per_sample_probs(
+    encodings, tokenizer, logits: torch.Tensor, eoc_token_id
+) -> torch.Tensor:
     """Helper function to compute per-sample probability of the input sequence.
 
     Assumes <eos token> is used to separate inputs from targets in the
     prompt text
     """
     shift_logits, shift_labels = compute_shifted_logits_and_labels(
-        outputs, encodings, tokenizer)
+        logits, encodings, tokenizer, eoc_token_id
+    )
 
     # Tuple of tensors for unmasked label tokens. The first element of the
     # tuple contains the batch indices; the second element contains the
@@ -85,8 +91,9 @@ def compute_per_sample_probs(encodings, tokenizer, outputs) -> torch.Tensor:
 
     # Sanity check that every element in batch has at least one unmasked
     # target token
-    assert torch.all(torch.bincount(target_idxs[:, 0]) != 0), \
-        "At least one element in batch has no unmasked target tokens."
+    assert torch.all(
+        torch.bincount(target_idxs[:, 0]) != 0
+    ), "At least one element in batch has no unmasked target tokens."
 
     # Renormalize over tokens to make sure they are proper probabilities via
     # softmax over the token dimension.
@@ -101,14 +108,15 @@ def compute_per_sample_probs(encodings, tokenizer, outputs) -> torch.Tensor:
     return target_probs
 
 
-def compute_per_sample_loss(encodings, tokenizer, outputs) -> torch.Tensor:
+def compute_per_sample_loss(encodings, tokenizer, logits, eoc_token_id) -> torch.Tensor:
     """Helper function to compute per-sample classification loss.
 
     Assumes <eos token> is used to separate inputs from targets in the
     prompt text
     """
     shift_logits, shift_labels = compute_shifted_logits_and_labels(
-        outputs, encodings, tokenizer)
+        logits, encodings, tokenizer, eoc_token_id
+    )
 
     device = shift_logits.device
 
@@ -120,7 +128,8 @@ def compute_per_sample_loss(encodings, tokenizer, outputs) -> torch.Tensor:
     loss = torch.nn.functional.cross_entropy(
         shift_logits.view(-1, shift_logits.size(-1)),
         shift_labels.view(-1).to(device),
-        reduction="none")
+        reduction="none",
+    )
 
     # Reshape to [batch_size, seq_len - 1]
     loss = loss.view(shift_logits.size(0), shift_logits.size(1)).cpu()

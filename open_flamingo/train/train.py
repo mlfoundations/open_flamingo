@@ -1,6 +1,7 @@
 """ Main training script """
 
 import argparse
+import copy
 import glob
 import os
 import random
@@ -8,6 +9,7 @@ import random
 import numpy as np
 import torch
 import wandb
+from bloom_filter2 import BloomFilter
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -39,8 +41,6 @@ def main():
     )
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
 
-    # From previous experiments other opt tokenizers may have a bug
-    # so we default to this one in any case they should all be the same.
     parser.add_argument(
         "--tokenizer_path",
         default="facebook/opt-30b",
@@ -50,16 +50,22 @@ def main():
     parser.add_argument(
         "--run_name",
         type=str,
-        default="large model test",
+        default="openflamingo3B",
         help="used to name saving directory and wandb run",
     )
+    parser.add_argument("--use_media_placement_augmentation", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
     # Sum of gradient optimization batch size
-    parser.add_argument("--batch_size_pile", type=int, default=128)
+    parser.add_argument("--batch_size_c4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--resume_from_checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states",
+        default=None,
+    )
     parser.add_argument(
         "--delete_previous_checkpoint",
         action="store_true",
@@ -68,17 +74,22 @@ def main():
     parser.add_argument(
         "--laion_shards",
         type=str,
-        default="s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar",
+        help="path to laion shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
     )
     parser.add_argument(
-        "--pile_shards",
+        "--c4_shards",
         type=str,
-        default="/fsx/home-anasawadalla/pile/shard-{000000..000169}.tar",
+        help="path to c4 shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
-    parser.add_argument("--lr_scheduler", default="constant", type=str)
-    parser.add_argument("--loss_multiplier_pile", type=float, default=1.0)
+    parser.add_argument(
+        "--lr_scheduler",
+        default="constant",
+        type=str,
+        help="constant, linear, or cosine",
+    )
+    parser.add_argument("--loss_multiplier_c4", type=float, default=1.0)
     parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
@@ -90,7 +101,7 @@ def main():
     )
     # data args
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--train_num_samples_pile", type=int, default=10000)
+    parser.add_argument("--train_num_samples_c4", type=int, default=10000)
     parser.add_argument("--train_num_samples_laion", type=int, default=10000)
     parser.add_argument("--dataset_resampled", action="store_true")
     # distributed training args
@@ -118,38 +129,34 @@ def main():
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
     parser.add_argument(
-        "--save_checkpoints_to_wandb", default=False, action="store_true"
-    )
-    parser.add_argument(
         "--wandb_project",
-        default="open-flamingo",
         type=str,
     )
     parser.add_argument(
         "--wandb_entity",
-        default="anas-awadalla",
         type=str,
     )
-
-    # if torch.cuda.is_available():
-    #   # This enables tf32 on Ampere GPUs which is only 8% slower than
-    #   # float16 and almost as accurate as float32
-    #   # This was a default in pytorch until 1.12
-    #   torch.backends.cuda.matmul.allow_tf32 = True
-    #   torch.backends.cudnn.benchmark = True
-    #   torch.backends.cudnn.deterministic = False
+    parser.add_argument(
+        "--c4_textsim_threshold",
+        default=30,
+        type=float,
+        help="threshold for filtering images in c4 based on image-text similarity",
+    )
 
     args = parser.parse_args()
 
     if args.laion_shards.startswith("s3"):
         args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
 
+    if args.c4_shards.startswith("s3"):
+        args.c4_shards = f"pipe:aws s3 cp {args.c4_shards} -"
+
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
-        args.train_num_samples_pile // args.batch_size_pile
-    ), "number of samples per epoch must be equal for pile and laion"
+        args.train_num_samples_c4 // args.batch_size_c4
+    ), "number of samples per epoch must be equal for mmc4 and laion"
 
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
@@ -169,7 +176,10 @@ def main():
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         use_local_files=args.offline,
+        use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
+
+    assert model.use_projection_vector is False, "projection vector not desired"
 
     random_seed(args.seed, args.rank)
 
@@ -188,17 +198,21 @@ def main():
 
     ddp_model = DDP(model, device_ids=[device_id])
 
-    args.shards = args.laion_shards
-    args.dataset_type = "image_text"
-    args.batch_size = args.batch_size_laion
-    args.train_num_samples = args.train_num_samples_laion
-    laion_dataset = get_data(args, image_processor, tokenizer)
+    # copy args to avoid modifying the original args
+    # NOTE: this is a hack, we should refactor the data loading code to not require this.
+    laion_args = copy.deepcopy(args)
+    laion_args.shards = args.laion_shards
+    laion_args.dataset_type = "image_text"
+    laion_args.batch_size = args.batch_size_laion
+    laion_args.train_num_samples = args.train_num_samples_laion
+    laion_dataset = get_data(laion_args, image_processor, tokenizer)
 
-    args.shards = args.pile_shards
-    args.dataset_type = "pile"
-    args.batch_size = args.batch_size_pile
-    args.train_num_samples = args.train_num_samples_pile
-    pile_dataset = get_data(args, image_processor, tokenizer)
+    c4_args = copy.deepcopy(args)
+    c4_args.shards = args.c4_shards
+    c4_args.dataset_type = "c4"
+    c4_args.batch_size = args.batch_size_c4
+    c4_args.train_num_samples = args.train_num_samples_c4
+    c4_dataset = get_data(c4_args, image_processor, tokenizer)
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -213,10 +227,12 @@ def main():
             )
 
         for n, p in model.named_parameters():
+            # if p.requires_grad:
             if apply_decay(n):
                 params_with_wd.append(p)
             else:
                 params_without_wd.append(p)
+
         return [
             {"params": params_with_wd, "weight_decay": args.weight_decay},
             {"params": params_without_wd, "weight_decay": 0.0},
@@ -263,11 +279,15 @@ def main():
 
     ddp_model.train()
 
+    # create a bloom filter to keep track of samples we have seen
+    # this is to avoid duplicates
+    bloom_filter = BloomFilter(max_elements=15000000, error_rate=0.001)
+
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
         laion_loader = laion_dataset.dataloader
-        pile_dataset.set_epoch(epoch)
-        pile_loader = pile_dataset.dataloader
+        c4_dataset.set_epoch(epoch)
+        c4_loader = c4_dataset.dataloader
 
         train_one_epoch(
             args=args,
@@ -277,9 +297,10 @@ def main():
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             laion_loader=laion_loader,
-            pile_loader=pile_loader,
+            c4_loader=c4_loader,
             device_id=device_id,
             wandb=wandb,
+            bloom_filter=bloom_filter,
         )
 
         if args.rank == 0:
