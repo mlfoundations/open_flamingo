@@ -157,12 +157,6 @@ train.py
 --num_epochs 10
 ```
 
-Note: if this is your first time training you will need to run the command below before running training:
-
-```
-import nltk
-nltk.download('punkt')
-```
 # Evaluation
 Before evaluating the model, you will also need to install the coco evaluation package by running the following command:
 ```
