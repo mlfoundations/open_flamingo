@@ -118,24 +118,24 @@ parser.add_argument(
 parser.add_argument(
     "--coco_annotations_json_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/coco/annotations/captions_train2017.json",
+    default=None,
 )
 
 ## VQAV2 Dataset
 parser.add_argument(
     "--vqav2_image_dir_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/vqav2/train2014",
+    default=None,
 )
 parser.add_argument(
     "--vqav2_questions_json_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/vqav2/v2_OpenEnded_mscoco_train2014_questions.json",
+    default=None,
 )
 parser.add_argument(
     "--vqav2_annotations_json_path",
     type=str,
-    default="/fsx/home-anasawadalla/data/vqav2/v2_mscoco_train2014_annotations.json",
+    default=None,
 )
 
 ## OK-VQA Dataset
@@ -497,7 +497,7 @@ def evaluate_coco_flickr(
         tokenizer.padding_side = "left"
         encodings = tokenizer(
             batch_text,
-            padding="longest,
+            padding="longest",
             truncation=True,
             return_tensors="pt",
             max_length=2000,
