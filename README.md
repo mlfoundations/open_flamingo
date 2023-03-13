@@ -35,15 +35,6 @@ Alternatively, to install the package in an existing environment, run
 pip install open_flamingo
 ```
 
-# Approach
-OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. [Multimodal C4](#multimodal-c4-dataset-mmc4)) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context training.
-
-## Model architecture
-OpenFlamingo seeks to fuse pretrained a vision encoder and a language model using cross attention layers. The model architecture is shown below.
-
-![OpenFlamingo architecture](docs/flamingo.png) 
-Credit: [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model)
-    
 # Usage
 We provide an initial [OpenFlamingo 3B model](https://huggingface.co/open-flamingo/flamingo3B) using a CLIP ViT-Large vision encoder and an OPT 1.3B language encoder. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [OPT](https://huggingface.co/models?search=opt) models, [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
 
@@ -124,6 +115,15 @@ generated_text = model.generate(
 
 print("Generated text: ", tokenizer.decode(generated_text[0]))
 ```
+
+# Approach
+OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. [Multimodal C4](#multimodal-c4-dataset-mmc4)) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context training.
+
+## Model architecture
+OpenFlamingo seeks to fuse pretrained a vision encoder and a language model using cross attention layers. The model architecture is shown below.
+
+![OpenFlamingo architecture](docs/flamingo.png) 
+Credit: [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model)
 
 # Multimodal C4 dataset (MMC4)
 
