@@ -205,7 +205,7 @@ python evaluate.py
 # Acknowledgments
 This code is based on Lucidrains' [flamingo implementation](https://github.com/lucidrains/flamingo-pytorch) and David Hansmair's [flamingo-mini repo](https://github.com/dhansmair/flamingo-mini). Thank you for making your code public!
 
-We would also like to thank [Jean-Baptiste Alayrac](https://www.jbalayrac.com) and [Antoine Miech](https://antoine77340.github.io) for their advice.
+We would also like to thank [Jean-Baptiste Alayrac](https://www.jbalayrac.com) and [Antoine Miech](https://antoine77340.github.io) for their advice and thanks to [Stability AI](https://stability.ai) for providing us with compute resources to train these models.
 
 # Citing
 If you found this repository useful, please consider citing:
