@@ -78,7 +78,8 @@ demo_image_two = Image.open(
 
 query_image = Image.open(
     requests.get(
-        "https://upload.wikimedia.org/wikipedia/commons/e/e4/Latte_and_dark_coffee.jpg", stream=True
+        "https://upload.wikimedia.org/wikipedia/commons/e/e4/Latte_and_dark_coffee.jpg", 
+        stream=True
     ).raw
 )
 
