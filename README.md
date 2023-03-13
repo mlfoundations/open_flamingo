@@ -71,7 +71,8 @@ demo_image_one = Image.open(
 
 demo_image_two = Image.open(
     requests.get(
-        "https://upload.wikimedia.org/wikipedia/commons/a/ad/Football_in_Bloomington%2C_Indiana%2C_1996.jpg", stream=True
+        "https://upload.wikimedia.org/wikipedia/commons/a/ad/Football_in_Bloomington%2C_Indiana%2C_1996.jpg",
+        stream=True
     ).raw
 )
 
