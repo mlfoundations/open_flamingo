@@ -39,17 +39,17 @@ parser.add_argument(
 )
 
 # Trial arguments
-parser.add_argument("--shots", nargs="+", default=[0, 8, 32], type=int)
+parser.add_argument("--shots", nargs="+", default=[0, 4, 8, 16, 32], type=int)
 parser.add_argument(
     "--num_trials",
     type=int,
-    default=2,
+    default=1,
     help="Number of trials to run for each shot using different demonstrations",
 )
 parser.add_argument(
     "--trial_seeds",
     nargs="+",
-    default=[0, 1, 2],
+    default=[0],
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
