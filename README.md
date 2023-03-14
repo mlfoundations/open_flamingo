@@ -2,7 +2,7 @@
 
 ## Note: I see there are many folks that have starred the repo. Welcome! We are preparing things for release in under 24 hours. I would wait until then to use the repo :).
 
-[![PyPI version](https://badge.fury.io/py/open-flamingo.svg)](https://badge.fury.io/py/open-flamingo)
+[![PyPI version](https://badge.fury.io/py/open_flamingo.svg)](https://badge.fury.io/py/open_flamingo)
 
 Blog post (coming soon) | Twitter thread (coming soon) | Paper (coming soon)
 
@@ -35,7 +35,7 @@ conda env create -f environment.yml
 
 Alternatively, to install the package in an existing environment, run 
 ```
-pip install open_flamingo
+pip install open-flamingo
 ```
 
 # Usage
