@@ -14,8 +14,8 @@ This repo is still under development. You can expect us to release better perfor
 - [Usage](#usage)
   * [Initializing an OpenFlamingo model](#initializing-an-openflamingo-model)
   * [Generating text](#generating-text)
-- [Multimodal C4 dataset (MMC4)](#multimodal-c4-dataset-mmc4)
 - [Training](#training)
+  * [Dataset](#dataset)
 - [Evaluation](#evaluation)
 - [Future plans](#future-plans)
 - [Team](#team)
@@ -135,10 +135,6 @@ OpenFlamingo seeks to fuse pretrained a vision encoder and a language model usin
 ![OpenFlamingo architecture](docs/flamingo.png) 
 Credit: [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model)
 
-# Multimodal C4 dataset (MMC4)
-
-Coming soon!
-
 # Training
 To train a model, modify the following example command:
 ```
@@ -156,6 +152,11 @@ train.py
 --dataset_resampled
 --num_epochs 10
 ```
+
+## Dataset
+We expect all our training datasets to be [WebDataset](https://github.com/webdataset/webdataset) shards.
+We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and multimodal C4 (coming soon). By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and the multimodal C4 dataset comes packaged in the WebDataset format.
+
 
 # Evaluation
 Before evaluating the model, you will also need to install the coco evaluation package by running the following command:
