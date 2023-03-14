@@ -4,7 +4,7 @@
 
 [![PyPI version](https://badge.fury.io/py/open-flamingo.svg)](https://badge.fury.io/py/open-flamingo)
 
-Blog post(coming soon) | Twitter thread(coming soon) | Paper (coming soon)
+Blog post (coming soon) | Twitter thread (coming soon) | Paper (coming soon)
 
 Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 3B model](#api) trained on a new Multimodal C4 dataset. Please refer to our blog post for more details.
 
@@ -134,7 +134,7 @@ print("Generated text: ", tokenizer.decode(generated_text[0]))
 ```
 
 # Approach
-OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. [Multimodal C4](#multimodal-c4-dataset-mmc4)) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context training.
+OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. Multimodal C4) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context training.
 
 ## Model architecture
 OpenFlamingo seeks to fuse pretrained a vision encoder and a language model using cross attention layers. The model architecture is shown below.
@@ -148,16 +148,20 @@ To train a model, modify the following example command:
 torchrun --nnodes=1 --nproc_per_node=2
 train.py 
 --run_name flamingo3B
---batch_size_c4 8
---batch_size_laion 16
---train_num_samples_c4 10000
---train_num_samples_laion 20000
---laion_shards /laion2B/{000000..231349}.tar
---c4_shards /c4/{0000..0169}.tar
---vision_encoder_path openai/clip-vit-large-patch14
---lm_path facebook/opt-1.3b
---dataset_resampled
---num_epochs 10
+--lm_path facebook/opt-1.3b \
+--dataset_resampled \
+--batch_size_c4 4 \
+--batch_size_laion 8 \
+--train_num_samples_c4 125000 \
+--train_num_samples_laion 250000 \
+--loss_multiplier_laion 0.2 \
+--workers=6 \
+--report_to_wandb \
+--num_epochs 250 \
+--lr_scheduler constant \
+--warmup_steps 5000 \
+--use_media_placement_augmentation \
+--c4_textsim_threshold 30
 ```
 
 ## Dataset
@@ -166,7 +170,10 @@ We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laio
 
 
 # Evaluation
-Before evaluating the model, you will also need to install the coco evaluation package by running the following command:
+We currently support running evaluations on [COCO](https://cocodataset.org/#home), [VQAv2](https://visualqa.org/index.html), [OKVQA](https://okvqa.allenai.org), [Flickr30k](https://www.kaggle.com/datasets/hsankesara/flickr-image-dataset), and [ImageNet](https://image-net.org/index.php). Note that currently these evaluations are ran in validation mode (as specified in the Flamingo paper). We will be adding support for running evaluations in test mode in the future. Moreover we will be adding support [very soon](https://github.com/mlfoundations/open_flamingo/pull/93) for querying demonstrations directly from the training dataset rather than picking a fixed set of demonstrations for evaluation. 
+
+
+Before evaluating the model, you will need to install the coco evaluation package by running the following command:
 ```
 pip install pycocoevalcap
 ```
@@ -177,7 +184,7 @@ import nltk
 nltk.download('wordnet')
 ```
 
-To evaluate the model, use script open_flamingo/eval/evaluate.py with the following arguments:
+To evaluate the model, use script open_flamingo/eval/evaluate.py. For example, to evaluate the model on COCO and VQAv2, run the following command:
 
 ```
 python evaluate.py
