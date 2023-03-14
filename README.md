@@ -155,7 +155,7 @@ train.py
 
 ## Dataset
 We expect all our training datasets to be [WebDataset](https://github.com/webdataset/webdataset) shards.
-We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and multimodal C4 (coming soon). By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and the multimodal C4 dataset comes packaged in the WebDataset format.
+We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and multimodal C4 (coming soon) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and the multimodal C4 dataset comes packaged in the WebDataset format.
 
 
 # Evaluation
