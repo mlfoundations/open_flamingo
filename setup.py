@@ -6,16 +6,17 @@ if __name__ == "__main__":
     with Path(Path(__file__).parent, "README.md").open(encoding="utf-8") as file:
         long_description = file.read()
 
-    def _read_reqs(relpath):
-        fullpath = os.path.join(os.path.dirname(__file__), relpath)
-        with open(fullpath) as f:
-            return [
-                s.strip()
-                for s in f.readlines()
-                if (s.strip() and not s.startswith("#"))
-            ]
+    # TODO: This is a hack to get around the fact that we can't read the requirements.txt file, we should fix this.
+    # def _read_reqs(relpath):
+    #     fullpath = os.path.join(Path(__file__).parent, relpath)
+    #     with open(fullpath) as f:
+    #         return [
+    #             s.strip()
+    #             for s in f.readlines()
+    #             if (s.strip() and not s.startswith("#"))
+    #         ]
 
-    REQUIREMENTS = _read_reqs("requirements.txt")
+    REQUIREMENTS = ["einops", "einops-exts", "transformers", "torch", "torchvision", "pillow", "more-itertools", "datasets", "braceexpand", "webdataset", "wandb", "nltk", "bloom_filter2", "scipy", "inflection"]
 
     setup(
         name="open_flamingo",
@@ -23,12 +24,12 @@ if __name__ == "__main__":
         include_package_data=True,
         version="1.0.0",
         license="MIT",
-        description="A library for training Flamingo models",
+        description="A library for training large visual language models",
         long_description=long_description,
         long_description_content_type="text/markdown",
         data_files=[(".", ["README.md"])],
         keywords=["machine learning"],
-        install_requires=REQUIREMENTS,
+        install_requires=[]
         classifiers=[
             "Development Status :: 4 - Beta",
             "Intended Audience :: Developers",
