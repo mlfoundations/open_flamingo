@@ -6,7 +6,7 @@
 
 Blog post(coming soon) | Twitter thread(coming soon) | Paper (coming soon)
 
-Welcome to our open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 3B model](#api) trained on the [Multimodal C4 dataset](#multimodal-c4-dataset-mmc4). Please refer to our blog post for more details.
+Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 3B model](#api) trained on a new Multimodal C4 dataset. Please refer to our blog post for more details.
 
 This repo is still under development. You can expect us to release better performing and larger Flamingo models soon. If you have any questions, please feel free to open an issue. We also welcome pull requests!
 
@@ -39,7 +39,7 @@ pip install open_flamingo
 ```
 
 # Usage
-We provide an initial [OpenFlamingo 3B model](https://huggingface.co/open-flamingo/flamingo3B) using a CLIP ViT-Large vision encoder and an OPT 1.3B language encoder. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [OPT](https://huggingface.co/models?search=opt) models, [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
+We provide an initial [OpenFlamingo 3B model](https://huggingface.co/openflamingo/OpenFlamingo-3b) using a CLIP ViT-Large vision encoder and an OPT 1.3B language encoder. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [OPT](https://huggingface.co/models?search=opt), [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
 
 ## Initializing an OpenFlamingo model
 ``` python
@@ -52,8 +52,12 @@ model, image_processor, tokenizer = create_model_and_transforms(
     tokenizer_path="facebook/opt-1.3b",
 )
 
-# If you have a checkpoint do:
-model.load_state_dict(torch.load("path/to/checkpoint.pt"), strict=False)
+# grab model checkpoint from huggingface hub
+from huggingface_hub import hf_hub_download
+import torch
+
+checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-3b", "checkpoint.pt")
+model.load_state_dict(torch.load(checkpoint_path), strict=False)
 ```
 
 ## Generating text
@@ -74,14 +78,14 @@ demo_image_one = Image.open(
 
 demo_image_two = Image.open(
     requests.get(
-        "https://upload.wikimedia.org/wikipedia/commons/a/ad/Football_in_Bloomington%2C_Indiana%2C_1996.jpg",
+        "http://images.cocodataset.org/test-stuff2017/000000028137.jpg",
         stream=True
     ).raw
 )
 
 query_image = Image.open(
     requests.get(
-        "https://upload.wikimedia.org/wikipedia/commons/e/e4/Latte_and_dark_coffee.jpg", 
+        "http://images.cocodataset.org/test-stuff2017/000000028352.jpg", 
         stream=True
     ).raw
 )
@@ -95,9 +99,9 @@ Details: For OpenFlamingo, we expect the image to be a torch tensor of shape
  (this will always be one expect for video which we don't support yet), 
  channels = 3, height = 224, width = 224.
 """
-vis_x = image_processor(images=[demo_image_one, demo_image_two, query_image], 
- return_tensors="pt")
-vis_x = vis_x.unsqueeze(1).unsqueeze(1)
+vision_x = image_processor(images=[demo_image_one, demo_image_two, query_image], 
+ return_tensors="pt")["pixel_values"]
+vision_x = vision_x.unsqueeze(1).unsqueeze(0)
 
 
 """
@@ -108,8 +112,7 @@ Details: In the text we expect an <image> special token to indicate where an ima
 """
 tokenizer.padding_side = "left" # For generation padding tokens should be on the left
 lang_x = tokenizer(
-    ["<image>An image of two cats.<|endofchunk|><image>An image of a soccer player"
-     " shooting a ball.<|endofchunk|><image>An image of"],
+    ["<image>An image of two cats.<|endofchunk|><image>An image of a bathroom sink.<|endofchunk|><image>An image of"],
     max_length=128,
     padding=True,
     return_tensors="pt",
@@ -120,10 +123,11 @@ lang_x = tokenizer(
 Step 4: Generate text
 """
 generated_text = model.generate(
-    vis_x=vis_x,
+    vision_x=vision_x,
     lang_x=lang_x["input_ids"],
     attention_mask=lang_x["attention_mask"],
-    max_new_tokens=20
+    max_new_tokens=20,
+    num_beams=3,
 )
 
 print("Generated text: ", tokenizer.decode(generated_text[0]))
@@ -144,12 +148,12 @@ To train a model, modify the following example command:
 torchrun --nnodes=1 --nproc_per_node=2
 train.py 
 --run_name flamingo3B
---batch_size_pile 8
+--batch_size_c4 8
 --batch_size_laion 16
---train_num_samples_pile 10000
+--train_num_samples_c4 10000
 --train_num_samples_laion 20000
---laion_shards s3://s-datasets/laion5b/laion2B-data/{000000..231349}.tar
---pile_shards /fsx/home-anasawadalla/pile/shard-{000000..000169}.tar
+--laion_shards /laion2B/{000000..231349}.tar
+--c4_shards /c4/{0000..0169}.tar
 --vision_encoder_path openai/clip-vit-large-patch14
 --lm_path facebook/opt-1.3b
 --dataset_resampled
@@ -219,9 +223,11 @@ If you found this repository useful, please consider citing:
 ```
 
 ```
-@article{Alayrac2022Flamingo,
-    title   = {Flamingo: a Visual Language Model for Few-Shot Learning},
-    author  = {Jean-Baptiste Alayrac et al},
-    year    = {2022}
+@article{Alayrac2022FlamingoAV,
+  title={Flamingo: a Visual Language Model for Few-Shot Learning},
+  author={Jean-Baptiste Alayrac and Jeff Donahue and Pauline Luc and Antoine Miech and Iain Barr and Yana Hasson and Karel Lenc and Arthur Mensch and Katie Millican and Malcolm Reynolds and Roman Ring and Eliza Rutherford and Serkan Cabi and Tengda Han and Zhitao Gong and Sina Samangooei and Marianne Monteiro and Jacob Menick and Sebastian Borgeaud and Andy Brock and Aida Nematzadeh and Sahand Sharifzadeh and Mikolaj Binkowski and Ricardo Barreira and Oriol Vinyals and Andrew Zisserman and Karen Simonyan},
+  journal={ArXiv},
+  year={2022},
+  volume={abs/2204.14198}
 }
 ```
