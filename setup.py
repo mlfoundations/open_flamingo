@@ -29,7 +29,7 @@ if __name__ == "__main__":
         long_description_content_type="text/markdown",
         data_files=[(".", ["README.md"])],
         keywords=["machine learning"],
-        install_requires=[]
+        install_requires=REQUIREMENTS,
         classifiers=[
             "Development Status :: 4 - Beta",
             "Intended Audience :: Developers",
