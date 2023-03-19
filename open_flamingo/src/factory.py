@@ -10,6 +10,7 @@ def create_model_and_transforms(
     clip_processor_path: str,
     lang_encoder_path: str,
     tokenizer_path: str,
+    cross_attn_every_n_layers: int = 1,
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
     **flamingo_kwargs,
@@ -23,6 +24,7 @@ def create_model_and_transforms(
         clip_processor_path (str): path to pretrained clip processor
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
+        cross_attn_every_n_layers (int, optional): determines how often to add a cross-attention layer. Defaults to 1.
         use_local_files (bool, optional): whether to use local files. Defaults to False.
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
     Returns:
@@ -64,6 +66,7 @@ def create_model_and_transforms(
         lang_encoder,
         text_tokenizer.encode("<|endofchunk|>")[-1],
         text_tokenizer.encode("<image>")[-1],
+        cross_attn_every_n_layers=cross_attn_every_n_layers,
         **flamingo_kwargs,
     )
 

@@ -14,6 +14,7 @@ class Flamingo(nn.Module):
         media_token_id: int,
         vis_dim: int = None,
         use_projection_vector: bool = False,
+        cross_attn_every_n_layers: int = 1,
         use_media_placement_augmentation: bool = False,
     ):
         """
@@ -25,7 +26,8 @@ class Flamingo(nn.Module):
             vis_dim (int, optional): Dimension of the visual features. Defaults to CLIP's vision_encoder's hidden size.
                 Visual features are projected to match this shape along the last dimension.
             use_projection_vector (bool, optional): Whether to use the CLIP projection output for the visual features. Defaults to False.
-            use_media_placement_augmentation (bool, optional): Whether to randomly assign images to the preceding or following text. Defaults to False.
+            cross_attn_every_n_layers (int, optional): How often to apply cross attention after transformer layer. Defaults to 1.
+            use_media_placement_augmentation (bool, optional): Whether to randomly assign images to the preceding or following text in training. Defaults to False.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id
@@ -45,6 +47,7 @@ class Flamingo(nn.Module):
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
             vis_hidden_size=self.vis_dim,
+            cross_attn_every_n_layers=cross_attn_every_n_layers,
             use_media_placement_augmentation=self.use_media_placement_augmentation,
         )
 
