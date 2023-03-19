@@ -43,8 +43,7 @@ def train_one_epoch(
         num_batches_per_epoch_laion == num_batches_per_epoch_mmc4
     ), "Number of batches in laion and mmc4 datasets must be the same"
     num_batches_per_epoch = num_batches_per_epoch_mmc4
-
-    print(f"Number of batches per epoch: {num_batches_per_epoch}")
+    total_training_steps = num_batches_per_epoch * args.num_epochs
 
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
@@ -67,7 +66,10 @@ def train_one_epoch(
 
     # loop through dataloader
     for num_steps, (batch_laion, batch_mmc4) in tqdm(
-        enumerate(zip(laion_loader, mmc4_loader)), disable=args.rank != 0
+        enumerate(zip(laion_loader, mmc4_loader)),
+        disable=args.rank != 0,
+        total=total_training_steps,
+        initial=(epoch * num_batches_per_epoch),
     ):
         data_time_m.update(time.time() - end)
 
@@ -243,6 +245,12 @@ def train_one_epoch(
                     {"loss_mmc4": divided_loss_mmc4.item(), "global_step": global_step},
                     commit=True,
                 )
+
+        # Log loss to console
+        if ((num_steps + 1) % args.logging_steps == 0) and args.rank == 0:
+            print(
+                f"Step {num_steps+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f})"
+            )
 
 
 def get_checkpoint(model):
