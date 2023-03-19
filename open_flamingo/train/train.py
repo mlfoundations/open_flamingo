@@ -40,12 +40,17 @@ def main():
         help="path to clip processor defaults to vision_encoder_path",
     )
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
-
     parser.add_argument(
         "--tokenizer_path",
         default="facebook/opt-30b",
         type=str,
         help="path to tokenizer",
+    )
+    parser.add_argument(
+        "--cross_attn_every_n_layers"
+        type=int,
+        default=1,
+        help="how often to add a cross-attention layer after each transformer layer",
     )
     parser.add_argument(
         "--run_name",
@@ -184,6 +189,7 @@ def main():
         else args.vision_encoder_path,
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
+        cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
         use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
