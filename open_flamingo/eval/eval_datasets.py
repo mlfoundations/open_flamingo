@@ -8,30 +8,6 @@ from torchvision.datasets import ImageFolder
 from open_flamingo.eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
 
 
-# class OKVQADataset(Dataset):
-#     def __init__(self, data_dir, split):
-#         if split not in ["validation", "test"]:
-#             raise ValueError("Split must be either validation or test")
-#         self.data_type = "train2014" if split == "validation" else "val2014"
-#         self.data_dir = data_dir
-#         self.annotations = json.load(
-#             open(f"{self.data_dir}/mscoco_{self.data_type}_annotations.json"))["annotations"]
-#         self.questions = json.load(open(f"{self.data_dir}/OpenEnded_mscoco_{self.data_type}_questions.json"))[
-#             "questions"
-#         ]
-
-#     def __len__(self):
-#         return len(self.annotations)
-
-#     def __getitem__(self, idx):
-#         image = Image.open(
-#             f"{self.data_dir}/{self.data_type}/COCO_{self.data_type}_{self.annotations[idx]['image_id']:012d}.jpg"
-#         )
-#         question = self.questions[idx]["question"]
-#         answers = [x["answer"] for x in self.annotations[idx]["answers"]]
-#         return {"image": image, "question": question, "answers": answers}
-
-
 class COCOFlickrDataset(Dataset):
     def __init__(
         self,
@@ -50,7 +26,7 @@ class COCOFlickrDataset(Dataset):
         if self.is_flickr:
             return f"{self.image_dir_path}/{self.annotations[idx]['image_id']}.jpg"
         else:
-            return f"{self.image_dir_path}/{self.annotations[idx]['image_id']:012d}.jpg"
+            return f"{self.image_dir_path}/COCO_train2014_{self.annotations[idx]['image_id']:012d}.jpg"
 
     def __getitem__(self, idx):
         image = Image.open(self.get_img_path(idx))
