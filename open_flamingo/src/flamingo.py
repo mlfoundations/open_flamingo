@@ -12,7 +12,7 @@ class Flamingo(nn.Module):
         lang_encoder: nn.Module,
         eoc_token_id: int,
         media_token_id: int,
-        vis_dim: int = 512,
+        vis_dim: int = None,
         use_projection_vector: bool = False,
         use_media_placement_augmentation: bool = False,
     ):
