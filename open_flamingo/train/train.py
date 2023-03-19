@@ -204,19 +204,8 @@ def main():
 
     ddp_model = DDP(model, device_ids=[device_id])
 
-    # copy args to avoid modifying the original args
-    # NOTE: this is a hack, we should refactor the data loading code to not require this.
-    laion_args = copy.deepcopy(args)
-    laion_args.shards = args.laion_shards
-    laion_args.batch_size = args.batch_size_laion
-    laion_args.train_num_samples = args.train_num_samples_laion
-    laion_dataset = get_data(laion_args, image_processor, tokenizer, "image_text")
-
-    c4_args = copy.deepcopy(args)
-    c4_args.shards = args.mmc4_shards
-    c4_args.batch_size = args.batch_size_mmc4
-    c4_args.train_num_samples = args.train_num_samples_mmc4
-    c4_dataset = get_data(c4_args, image_processor, tokenizer, "mmc4")
+    laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
+    mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -296,8 +285,8 @@ def main():
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
         laion_loader = laion_dataset.dataloader
-        c4_dataset.set_epoch(epoch)
-        c4_loader = c4_dataset.dataloader
+        mmc4_dataset.set_epoch(epoch)
+        mmc4_loader = mmc4_dataset.dataloader
 
         train_one_epoch(
             args=args,
@@ -307,7 +296,7 @@ def main():
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             laion_loader=laion_loader,
-            mmc4_loader=c4_loader,
+            mmc4_loader=mmc4_loader,
             device_id=device_id,
             wandb=wandb,
         )
