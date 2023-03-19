@@ -209,9 +209,6 @@ python evaluate.py
 - [ ] Expand our evaluation suite
 - [ ] Add support for FSDP training
 
-# Team
-
-
 # Acknowledgments
 This code is based on Lucidrains' [flamingo implementation](https://github.com/lucidrains/flamingo-pytorch) and David Hansmair's [flamingo-mini repo](https://github.com/dhansmair/flamingo-mini). Thank you for making your code public!
 
