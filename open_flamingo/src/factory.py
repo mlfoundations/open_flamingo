@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, CLIPProcessor, CLIPModel, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPModel, CLIPProcessor
 
 from .flamingo import Flamingo
 from .flamingo_lm import FlamingoLMMixin
@@ -24,6 +24,7 @@ def create_model_and_transforms(
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
         use_local_files (bool, optional): whether to use local files. Defaults to False.
+        decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
         Image processor: Pipeline to preprocess input images
@@ -98,4 +99,5 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "gptj": "transformer.h",
     "gpt-j": "transformer.h",
     "pythia": "gpt_neox.layers",
+    "llama": "model.layers",
 }

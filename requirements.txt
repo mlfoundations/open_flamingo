@@ -1,6 +1,6 @@
 einops
 einops-exts
-transformers
+git+https://github.com/huggingface/transformers
 torch
 torchvision
 pillow
@@ -10,6 +10,5 @@ braceexpand
 webdataset
 wandb
 nltk
-bloom_filter2
 scipy
 inflection

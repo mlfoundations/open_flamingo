@@ -1,8 +1,8 @@
+import time
 from contextlib import suppress
 
 import torch
 from tqdm import tqdm
-import time
 
 
 def get_cast_dtype(precision: str):
@@ -29,21 +29,20 @@ def train_one_epoch(
     model,
     epoch,
     laion_loader,
-    c4_loader,
+    mmc4_loader,
     tokenizer,
     optimizer,
     lr_scheduler,
     device_id,
     wandb,
-    bloom_filter,
 ):
     num_batches_per_epoch_laion = laion_loader.num_batches
-    num_batches_per_epoch_c4 = c4_loader.num_batches
+    num_batches_per_epoch_mmc4 = mmc4_loader.num_batches
 
     assert (
-        num_batches_per_epoch_laion == num_batches_per_epoch_c4
+        num_batches_per_epoch_laion == num_batches_per_epoch_mmc4
     ), "Number of batches in laion and mmc4 datasets must be the same"
-    num_batches_per_epoch = num_batches_per_epoch_c4
+    num_batches_per_epoch = num_batches_per_epoch_mmc4
 
     print(f"Number of batches per epoch: {num_batches_per_epoch}")
 
@@ -66,11 +65,9 @@ def train_one_epoch(
     )  # avg time to load one batch of both C4 AND laion (= 1 batch regardless of gradient accum)
     end = time.time()
 
-    num_collisions = 0
-
     # loop through dataloader
-    for num_steps, (batch_laion, batch_c4) in tqdm(
-        enumerate(zip(laion_loader, c4_loader)), disable=args.rank != 0
+    for num_steps, (batch_laion, batch_mmc4) in tqdm(
+        enumerate(zip(laion_loader, mmc4_loader)), disable=args.rank != 0
     ):
         data_time_m.update(time.time() - end)
 
@@ -106,18 +103,12 @@ def train_one_epoch(
 
         #### C4 FORWARD PASS ####
         images = (
-            batch_c4[0].to(device_id, dtype=cast_dtype, non_blocking=True).unsqueeze(2)
+            batch_mmc4[0]
+            .to(device_id, dtype=cast_dtype, non_blocking=True)
+            .unsqueeze(2)
         )
-        input_ids = torch.stack([x[0] for x in batch_c4[1]]).squeeze(1)
-        attention_mask = torch.stack([x[1] for x in batch_c4[1]]).squeeze(1)
-        urls = batch_c4[2]
-
-        # add urls to bloom filter if not already present
-        for url in urls:
-            if url in bloom_filter:
-                num_collisions += 1
-            else:
-                bloom_filter.add(url)
+        input_ids = torch.stack([x[0] for x in batch_mmc4[1]]).squeeze(1)
+        attention_mask = torch.stack([x[1] for x in batch_mmc4[1]]).squeeze(1)
 
         # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
         labels = input_ids.clone()
@@ -148,7 +139,7 @@ def train_one_epoch(
         labels.to(device_id)
 
         with autocast():
-            loss_c4 = model(
+            loss_mmc4 = model(
                 vision_x=images,
                 lang_x=input_ids,
                 attention_mask=attention_mask,
@@ -156,7 +147,7 @@ def train_one_epoch(
             )[0]
 
             # if loss is nan, skip this batch
-            if torch.isnan(loss_c4):
+            if torch.isnan(loss_mmc4):
                 print("loss is nan, skipping this batch")
                 print("input_ids: ", tokenizer.batch_decode(input_ids))
                 print("labels: ", labels)
@@ -164,12 +155,12 @@ def train_one_epoch(
                 optimizer.zero_grad()
                 continue
 
-        divided_loss_c4 = loss_c4 / args.gradient_accumulation_steps
+        divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
 
         #### BACKWARD PASS ####
         loss = (
             divided_loss_laion * args.loss_multiplier_laion
-            + divided_loss_c4 * args.loss_multiplier_c4
+            + divided_loss_mmc4 * args.loss_multiplier_mmc4
         )
         loss.backward()
 
@@ -216,13 +207,13 @@ def train_one_epoch(
 
                 c4_samples_per_second = (
                     args.gradient_accumulation_steps
-                    * args.batch_size_c4
+                    * args.batch_size_mmc4
                     * args.world_size
                     / step_time_m.val
                 )
                 c4_samples_per_second_per_gpu = (
                     args.gradient_accumulation_steps
-                    * args.batch_size_c4
+                    * args.batch_size_mmc4
                     / step_time_m.val
                 )
 
@@ -241,15 +232,6 @@ def train_one_epoch(
                 step_time_m.reset()
                 data_time_m.reset()
 
-                colision_percentage = (
-                    num_collisions
-                    / (args.batch_size_c4 * args.gradient_accumulation_steps)
-                ) * 100
-                wandb.log(
-                    {"c4_batch_collision_percentage": colision_percentage}, commit=False
-                )
-                num_collisions = 0
-
                 wandb.log(
                     {
                         "loss_laion": divided_loss_laion.item(),
@@ -258,7 +240,7 @@ def train_one_epoch(
                     commit=False,
                 )
                 wandb.log(
-                    {"loss_c4": divided_loss_c4.item(), "global_step": global_step},
+                    {"loss_mmc4": divided_loss_mmc4.item(), "global_step": global_step},
                     commit=True,
                 )
 

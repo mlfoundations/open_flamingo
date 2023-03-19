@@ -1,4 +1,5 @@
 import ast
+import base64
 import functools
 import io
 import json
@@ -18,7 +19,6 @@ import webdataset as wds
 from PIL import Image
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
-import base64
 from webdataset.filters import _shuffle
 from webdataset.tariterators import (
     base_plus_ext,
@@ -26,11 +26,6 @@ from webdataset.tariterators import (
     url_opener,
     valid_sample,
 )
-
-
-from PIL import Image
-import io
-
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
@@ -320,12 +315,8 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
 
     # filter out images that are exact duplicates
     images_tensors = preprocess_image(images, clip_processor)
-    # _, unique = unique_ixs(images_tensors, dim=0)
-    keep_ixs = range(
-        min(len(images_tensors), MAX_NUM_IMAGES)
-    )  # unique[:MAX_NUM_IMAGES]
+    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
-    # images = [images[ix] for ix in keep_ixs] # useful for debugging, but otherwise not used
     image_idxs = [image_idxs[ix] for ix in keep_ixs]
 
     # pad to 5 images
@@ -364,25 +355,26 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
 
     if num_images == 0:
         raise ValueError("No images in sample")
-    # elif num_images == 1 and random.random() <= 0.5:
-    #     raise ValueError("Only one image in sample")
+    elif (
+        num_images == 1 and random.random() <= 0.5
+    ):  # 50% chance of keeping single image samples
+        raise ValueError("Only one image in sample")
 
     return (
         images_tensors,
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
-        sample[2],
     )
 
 
-def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
-    input_shards = args.shards
+def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
+    input_shards = args.mmc4_shards
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False)
 
     num_samples, num_shards = get_dataset_size(input_shards)
     num_samples = None
     if not num_samples:
-        num_samples = args.train_num_samples
+        num_samples = args.train_num_samples_mmc4
         if not num_samples:
             raise RuntimeError(
                 "Currently, number of dataset samples must be specified for training dataset. "
@@ -402,7 +394,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         preprocess_interleaved,
         clip_processor=image_processor,
         tokenizer=tokenizer,
-        sim_threshold=args.c4_textsim_threshold,
+        sim_threshold=args.mmc4_textsim_threshold,
     )
 
     # at this point we have an iterator over all the shards
@@ -433,10 +425,9 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
 
     pipeline.extend(
         [
-            wds.to_tuple("json", "tar", "__key__", handler=log_and_continue),
+            wds.to_tuple("json", "tar", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
-            wds.batched(args.batch_size, partial=False),
-            # wds.map_tuple(preprocess_image_fn, preprocess_text_fn, handler=log_and_continue),
+            wds.batched(args.batch_size_mmc4, partial=False),
         ]
     )
 
@@ -447,7 +438,7 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
         ), "number of shards must be >= total workers"
     # roll over and repeat a few samples to get same number of full batches on each node
     round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
+    global_batch_size = args.batch_size_mmc4 * args.world_size
     num_batches = round_fn(num_samples / global_batch_size)
     num_workers = max(1, args.workers)
     num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
@@ -471,15 +462,15 @@ def get_interleaved_dataset(args, image_processor, tokenizer, epoch=0, floor=Fal
     return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
-def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
-    input_shards = args.shards
+def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
+    input_shards = args.laion_shards
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False)
 
     num_samples, num_shards = get_dataset_size(input_shards)
     num_samples = None
     if not num_samples:
-        num_samples = args.train_num_samples
+        num_samples = args.train_num_samples_laion
         if not num_samples:
             raise RuntimeError(
                 "Currently, number of dataset samples must be specified for training dataset. "
@@ -532,7 +523,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
             wds.select(filter_no_caption_or_no_image),
             wds.decode("pilrgb", handler=log_and_continue),
             wds.to_tuple("jpg;png;jpeg", "txt", handler=log_and_continue),
-            wds.batched(args.batch_size, partial=False),
+            wds.batched(args.batch_size_laion, partial=False),
             wds.map_tuple(
                 preprocess_image_fn, preprocess_text_fn, handler=log_and_continue
             ),
@@ -546,7 +537,7 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         ), "number of shards must be >= total workers"
     # roll over and repeat a few samples to get same number of full batches on each node
     round_fn = math.floor if floor else math.ceil
-    global_batch_size = args.batch_size * args.world_size
+    global_batch_size = args.batch_size_laion * args.world_size
     num_batches = round_fn(num_samples / global_batch_size)
     num_workers = max(1, args.workers)
     num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
@@ -572,14 +563,14 @@ def get_wds_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
 def get_dataset_fn(dataset_type):
     if dataset_type == "image_text":
-        return get_wds_dataset
-    elif dataset_type == "c4":
-        return get_interleaved_dataset
+        return get_laion_dataset
+    elif dataset_type == "mmc4":
+        return get_mmc4_dataset
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
 
-def get_data(args, image_processor, tokenizer, epoch=0):
-    return get_dataset_fn(args.dataset_type)(
+def get_data(args, image_processor, tokenizer, dataset_type, epoch=0):
+    return get_dataset_fn(dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )

@@ -1,3 +1,5 @@
+import random
+
 import torch.nn as nn
 
 from .helpers import GatedCrossAttentionBlock

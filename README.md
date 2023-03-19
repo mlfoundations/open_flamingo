@@ -1,7 +1,5 @@
 # 🦩 OpenFlamingo
 
-## Note: I see there are many folks that have starred the repo. Welcome! We are preparing things for release in under 24 hours. I would wait until then to use the repo :).
-
 [![PyPI version](https://badge.fury.io/py/open_flamingo.svg)](https://badge.fury.io/py/open_flamingo)
 
 Blog post (coming soon) | Twitter thread (coming soon) | Paper (coming soon)
@@ -39,7 +37,7 @@ pip install open-flamingo
 ```
 
 # Usage
-We provide an initial [OpenFlamingo 3B model](https://huggingface.co/openflamingo/OpenFlamingo-3b) using a CLIP ViT-Large vision encoder and an OPT 1.3B language encoder. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [OPT](https://huggingface.co/models?search=opt), [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
+We provide an initial [OpenFlamingo 3B model](https://huggingface.co/openflamingo/OpenFlamingo-3b) using a CLIP ViT-Large vision encoder and an OPT 1.3B language encoder. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [LLaMA](https://huggingface.co/models?search=llama), [OPT](https://huggingface.co/models?search=opt), [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
 
 ## Initializing an OpenFlamingo model
 ``` python
@@ -150,9 +148,9 @@ train.py
 --run_name flamingo3B
 --lm_path facebook/opt-1.3b \
 --dataset_resampled \
---batch_size_c4 4 \
+--batch_size_mmc4 4 \
 --batch_size_laion 8 \
---train_num_samples_c4 125000 \
+--train_num_samples_mmc4 125000 \
 --train_num_samples_laion 250000 \
 --loss_multiplier_laion 0.2 \
 --workers=6 \
@@ -161,12 +159,12 @@ train.py
 --lr_scheduler constant \
 --warmup_steps 5000 \
 --use_media_placement_augmentation \
---c4_textsim_threshold 30
+--mmc4_textsim_threshold 30
 ```
 
 ## Dataset
 We expect all our training datasets to be [WebDataset](https://github.com/webdataset/webdataset) shards.
-We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and multimodal C4 (coming soon) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and the multimodal C4 dataset comes packaged in the WebDataset format.
+We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and Multimodal C4 (coming soon) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and Multimodal C4 comes packaged in the WebDataset format.
 
 
 # Evaluation
@@ -226,7 +224,7 @@ If you found this repository useful, please consider citing:
     month = march,
     year = 2023,
     note = {If you use this software, please cite it as below.},
-    ... TBD
+    ... TBD}
 ```
 
 ```
