@@ -9,13 +9,13 @@ import random
 import numpy as np
 import torch
 import wandb
-from bloom_filter2 import BloomFilter
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
 from train_utils import get_checkpoint, train_one_epoch
 from transformers import (
     get_constant_schedule_with_warmup,
+    get_cosine_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
 
@@ -56,8 +56,11 @@ def main():
     parser.add_argument("--use_media_placement_augmentation", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--num_epochs", type=int, default=1)
+    parser.add_argument(
+        "--logging_steps", type=int, default=100, help="log loss every n steps"
+    )
     # Sum of gradient optimization batch size
-    parser.add_argument("--batch_size_c4", type=int, default=128)
+    parser.add_argument("--batch_size_mmc4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument(
@@ -77,7 +80,7 @@ def main():
         help="path to laion shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
     )
     parser.add_argument(
-        "--c4_shards",
+        "--mmc4_shards",
         type=str,
         help="path to c4 shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
     )
@@ -89,7 +92,7 @@ def main():
         type=str,
         help="constant, linear, or cosine",
     )
-    parser.add_argument("--loss_multiplier_c4", type=float, default=1.0)
+    parser.add_argument("--loss_multiplier_mmc4", type=float, default=1.0)
     parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
@@ -101,7 +104,7 @@ def main():
     )
     # data args
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--train_num_samples_c4", type=int, default=10000)
+    parser.add_argument("--train_num_samples_mmc4", type=int, default=10000)
     parser.add_argument("--train_num_samples_laion", type=int, default=10000)
     parser.add_argument("--dataset_resampled", action="store_true")
     # distributed training args
@@ -137,10 +140,16 @@ def main():
         type=str,
     )
     parser.add_argument(
-        "--c4_textsim_threshold",
+        "--save_checkpoints_to_wandb",
+        default=False,
+        action="store_true",
+        help="save checkpoints to wandb",
+    )
+    parser.add_argument(
+        "--mmc4_textsim_threshold",
         default=30,
         type=float,
-        help="threshold for filtering images in c4 based on image-text similarity",
+        help="threshold for filtering images in mmc4 based on image-text similarity",
     )
 
     args = parser.parse_args()
@@ -148,14 +157,14 @@ def main():
     if args.laion_shards.startswith("s3"):
         args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
 
-    if args.c4_shards.startswith("s3"):
-        args.c4_shards = f"pipe:aws s3 cp {args.c4_shards} -"
+    if args.mmc4_shards.startswith("s3"):
+        args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
-        args.train_num_samples_c4 // args.batch_size_c4
+        args.train_num_samples_mmc4 // args.batch_size_mmc4
     ), "number of samples per epoch must be equal for mmc4 and laion"
 
     if args.offline:
@@ -198,21 +207,8 @@ def main():
 
     ddp_model = DDP(model, device_ids=[device_id])
 
-    # copy args to avoid modifying the original args
-    # NOTE: this is a hack, we should refactor the data loading code to not require this.
-    laion_args = copy.deepcopy(args)
-    laion_args.shards = args.laion_shards
-    laion_args.dataset_type = "image_text"
-    laion_args.batch_size = args.batch_size_laion
-    laion_args.train_num_samples = args.train_num_samples_laion
-    laion_dataset = get_data(laion_args, image_processor, tokenizer)
-
-    c4_args = copy.deepcopy(args)
-    c4_args.shards = args.c4_shards
-    c4_args.dataset_type = "c4"
-    c4_args.batch_size = args.batch_size_c4
-    c4_args.train_num_samples = args.train_num_samples_c4
-    c4_dataset = get_data(c4_args, image_processor, tokenizer)
+    laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
+    mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
 
     def get_grouped_params(model):
         params_with_wd, params_without_wd = [], []
@@ -241,11 +237,20 @@ def main():
     optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
 
     total_training_steps = (
-        (args.train_num_samples) // (args.batch_size * args.world_size)
+        (args.train_num_samples_mmc4) // (args.batch_size_mmc4 * args.world_size)
     ) * args.num_epochs
-    print(f"Total training steps: {total_training_steps}")
+
+    if args.rank == 0:
+        print(f"Total training steps: {total_training_steps}")
+
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=total_training_steps,
+        )
+    elif args.lr_scheduler == "cosine":
+        lr_scheduler = get_cosine_schedule_with_warmup(
             optimizer,
             num_warmup_steps=args.warmup_steps,
             num_training_steps=total_training_steps,
@@ -270,7 +275,8 @@ def main():
 
     resume_from_epoch = 0
     if args.resume_from_checkpoint is not None:
-        print(f"Loading checkpoint from {args.resume_from_checkpoint}")
+        if args.rank == 0:
+            print(f"Loading checkpoint from {args.resume_from_checkpoint}")
         checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
         ddp_model.load_state_dict(checkpoint["model_state_dict"], False)
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -279,15 +285,11 @@ def main():
 
     ddp_model.train()
 
-    # create a bloom filter to keep track of samples we have seen
-    # this is to avoid duplicates
-    bloom_filter = BloomFilter(max_elements=15000000, error_rate=0.001)
-
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
         laion_loader = laion_dataset.dataloader
-        c4_dataset.set_epoch(epoch)
-        c4_loader = c4_dataset.dataloader
+        mmc4_dataset.set_epoch(epoch)
+        mmc4_loader = mmc4_dataset.dataloader
 
         train_one_epoch(
             args=args,
@@ -297,10 +299,9 @@ def main():
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             laion_loader=laion_loader,
-            c4_loader=c4_loader,
+            mmc4_loader=mmc4_loader,
             device_id=device_id,
             wandb=wandb,
-            bloom_filter=bloom_filter,
         )
 
         if args.rank == 0:

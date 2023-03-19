@@ -1,6 +1,6 @@
-from setuptools import setup, find_packages
 from pathlib import Path
-import os
+
+from setuptools import find_packages, setup
 
 if __name__ == "__main__":
     with Path(Path(__file__).parent, "README.md").open(encoding="utf-8") as file:
@@ -16,13 +16,28 @@ if __name__ == "__main__":
     #             if (s.strip() and not s.startswith("#"))
     #         ]
 
-    REQUIREMENTS = ["einops", "einops-exts", "transformers", "torch", "torchvision", "pillow", "more-itertools", "datasets", "braceexpand", "webdataset", "wandb", "nltk", "bloom_filter2", "scipy", "inflection"]
+    REQUIREMENTS = [
+        "einops",
+        "einops-exts",
+        "transformers",
+        "torch",
+        "torchvision",
+        "pillow",
+        "more-itertools",
+        "datasets",
+        "braceexpand",
+        "webdataset",
+        "wandb",
+        "nltk",
+        "scipy",
+        "inflection",
+    ]
 
     setup(
         name="open_flamingo",
         packages=find_packages(),
         include_package_data=True,
-        version="1.0.0",
+        version="0.0.1",
         license="MIT",
         description="A library for training large visual language models",
         long_description=long_description,
