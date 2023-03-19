@@ -19,7 +19,7 @@ if __name__ == "__main__":
     REQUIREMENTS = [
         "einops",
         "einops-exts",
-        "git+https://github.com/huggingface/transformers",
+        "transformers @ git+https://github.com/huggingface/transformers",
         "torch",
         "torchvision",
         "pillow",
