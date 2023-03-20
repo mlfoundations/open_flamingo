@@ -115,8 +115,6 @@ Details: In the text we expect an <image> special token to indicate where an ima
 tokenizer.padding_side = "left" # For generation padding tokens should be on the left
 lang_x = tokenizer(
     ["<image>An image of two cats.<|endofchunk|><image>An image of a bathroom sink.<|endofchunk|><image>An image of"],
-    max_length=128,
-    padding=True,
     return_tensors="pt",
 )
 
@@ -174,7 +172,7 @@ To evaluate the model, use script open_flamingo/eval/evaluate.py. For example, t
 
 ```
 python evaluate.py
---lm_path facebook/opt-1.3b
+--lm_path facebook/opt-1.3b 
 --lm_tokenizer_path facebook/opt-1.3b
 --clip_path openai/clip-vit-large-patch14
 --checkpoint_path path/to/checkpoint.pt
