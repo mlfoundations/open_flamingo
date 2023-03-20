@@ -50,15 +50,15 @@ from open_flamingo import create_model_and_transforms
 model, image_processor, tokenizer = create_model_and_transforms(
     clip_vision_encoder_path="openai/clip-vit-large-patch14",
     clip_processor_path="openai/clip-vit-large-patch14",
-    lang_encoder_path="facebook/opt-1.3b",
-    tokenizer_path="facebook/opt-1.3b",
+    lang_encoder_path="<path to llama weights in HuggingFace format>",
+    tokenizer_path="<path to llama tokenizer in HuggingFace format>",
 )
 
 # grab model checkpoint from huggingface hub
 from huggingface_hub import hf_hub_download
 import torch
 
-checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-3b", "checkpoint.pt")
+checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-9B", "checkpoint.pt")
 model.load_state_dict(torch.load(checkpoint_path), strict=False)
 ```
 
