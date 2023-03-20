@@ -249,7 +249,7 @@ def train_one_epoch(
         # Log loss to console
         if ((num_steps + 1) % args.logging_steps == 0) and args.rank == 0:
             print(
-                f"Step {num_steps+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f})"
+                f"Step {num_steps+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f}"
             )
 
 

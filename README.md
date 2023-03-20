@@ -19,7 +19,6 @@ This repo is still under development. You can expect us to release better perfor
   * [Dataset](#dataset)
 - [Evaluation](#evaluation)
 - [Future plans](#future-plans)
-- [Team](#team)
 - [Acknowledgments](#acknowledgments)
 - [Citing](#citing)
 
@@ -147,23 +146,7 @@ Credit: [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-
 # Training
 To train a model, modify the following example command:
 ```
-torchrun --nnodes=1 --nproc_per_node=2
-train.py 
---run_name flamingo3B
---lm_path facebook/opt-1.3b \
---dataset_resampled \
---batch_size_mmc4 4 \
---batch_size_laion 8 \
---train_num_samples_mmc4 125000 \
---train_num_samples_laion 250000 \
---loss_multiplier_laion 0.2 \
---workers=6 \
---report_to_wandb \
---num_epochs 250 \
---lr_scheduler constant \
---warmup_steps 5000 \
---use_media_placement_augmentation \
---mmc4_textsim_threshold 30
+torchrun --nnodes=1 --nproc_per_node=4 train.py --run_name flamingo3B --lm_path facebook/opt-1.3b --tokenizer_path facebook/opt-1.3b --dataset_resampled --laion_shards "/path/to/shards/shard-{0000..0999}.tar" --mmc4_shards "/path/to/shards/shard-{0000..0999}.tar" --batch_size_mmc4 4 --batch_size_laion 8 --train_num_samples_mmc4 125000 --train_num_samples_laion 250000 --loss_multiplier_laion 0.2 --workers=6 --report_to_wandb --num_epochs 250 --lr_scheduler constant --warmup_steps 5000 --use_media_placement_augmentation --mmc4_textsim_threshold 30
 ```
 
 ## Dataset

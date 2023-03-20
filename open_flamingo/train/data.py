@@ -111,7 +111,7 @@ def filter_no_caption_or_no_image(sample):
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
-    if "No images in sample" in str(exn):
+    if "No images in sample" in str(exn) or "Only one image in sample" in str(exn): # Avoid spamming logs with these
         return True
     logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
     return True
