@@ -25,22 +25,23 @@ This repo is still under development. You can expect us to release better perfor
 
 # Installation
 
-To create a conda environment for running OpenFlamingo, run
-
-```
-conda env create -f environment.yml
-```
-
-Alternatively, to install the package in an existing environment, run 
+To install the package in an existing environment, run 
 ```
 pip install open-flamingo
+```
+
+or to create a conda environment for running OpenFlamingo, run
+```
+conda env create -f environment.yml
 ```
 
 # Usage
 We provide an initial [OpenFlamingo 3B model](https://huggingface.co/openflamingo/OpenFlamingo-3b) using a CLIP ViT-Large vision encoder and an OPT 1.3B language encoder. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [LLaMA](https://huggingface.co/models?search=llama), [OPT](https://huggingface.co/models?search=opt), [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
 
-NOTE: To use LLaMA models, you will need to install the latest version of transformers via 
-```pip install git+https://github.com/huggingface/transformers```
+#### NOTE: To use LLaMA models, you will need to install the latest version of transformers via 
+```
+pip install git+https://github.com/huggingface/transformers
+```
 
 ## Initializing an OpenFlamingo model
 ``` python
