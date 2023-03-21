@@ -12,3 +12,4 @@ wandb
 nltk
 scipy
 inflection
+sentencepiece
