@@ -4,7 +4,7 @@
 
 Blog post (coming soon) | Twitter thread (coming soon) | Paper (coming soon)
 
-Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 3B model](#api) trained on a new Multimodal C4 dataset. Please refer to our blog post for more details.
+Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 9B model](#api) trained on a new Multimodal C4 dataset. Please refer to our blog post for more details.
 
 This repo is still under development. You can expect us to release better performing and larger Flamingo models soon. If you have any questions, please feel free to open an issue. We also welcome pull requests!
 
@@ -35,7 +35,7 @@ conda env create -f environment.yml
 ```
 
 # Usage
-We provide an initial [OpenFlamingo 3B model](https://huggingface.co/openflamingo/OpenFlamingo-9B) using a CLIP ViT-Large vision encoder and a LLaMA-7B language model. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [LLaMA](https://huggingface.co/models?search=llama), [OPT](https://huggingface.co/models?search=opt), [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
+We provide an initial [OpenFlamingo 9B model](https://huggingface.co/openflamingo/OpenFlamingo-9B) using a CLIP ViT-Large vision encoder and a LLaMA-7B language model. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [LLaMA](https://huggingface.co/models?search=llama), [OPT](https://huggingface.co/models?search=opt), [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
 
 #### NOTE: To use LLaMA models, you will need to install the latest version of transformers via
 ```
@@ -143,7 +143,7 @@ OpenFlamingo seeks to fuse pretrained a vision encoder and a language model usin
 Credit: [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model)
 
 # Training
-To train a model, modify the following example command:
+To train a model, modify the following example command, which uses OPT 1.3B as an example LM:
 ```
 torchrun --nnodes=1 --nproc_per_node=4 train.py --run_name flamingo3B --lm_path facebook/opt-1.3b --tokenizer_path facebook/opt-1.3b --dataset_resampled --laion_shards "/path/to/shards/shard-{0000..0999}.tar" --mmc4_shards "/path/to/shards/shard-{0000..0999}.tar" --batch_size_mmc4 4 --batch_size_laion 8 --train_num_samples_mmc4 125000 --train_num_samples_laion 250000 --loss_multiplier_laion 0.2 --workers=6 --report_to_wandb --num_epochs 250 --lr_scheduler constant --warmup_steps 5000 --use_media_placement_augmentation --mmc4_textsim_threshold 30
 ```
@@ -168,7 +168,7 @@ import nltk
 nltk.download('wordnet')
 ```
 
-To evaluate the model, use script open_flamingo/eval/evaluate.py. For example, to evaluate the model on COCO and VQAv2, run the following command:
+To evaluate the model, use script open_flamingo/eval/evaluate.py. For example, to evaluate the model on COCO and VQAv2, run the following command which uses OPT 1.3B as an example LM:
 
 ```
 python evaluate.py
@@ -190,6 +190,7 @@ python evaluate.py
 - [ ] Add support for video input
 - [ ] Release better performing and larger OpenFlamingo models
 - [ ] Expand our evaluation suite
+- [ ] Migrate to OpenCLIP to support a broader range of pre-trained vision models
 - [ ] Add support for FSDP training
 
 # Acknowledgments
