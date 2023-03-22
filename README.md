@@ -4,9 +4,9 @@
 
 Blog post (coming soon) | Twitter thread (coming soon) | Paper (coming soon)
 
-Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 9B model](#api) trained on a new Multimodal C4 dataset. Please refer to our blog post for more details.
+Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 9B model](#api) trained on a new Multimodal C4 dataset (coming soon). Please refer to our blog post for more details.
 
-This repo is still under development. You can expect us to release better performing and larger Flamingo models soon. If you have any questions, please feel free to open an issue. We also welcome pull requests!
+This repo is still under development, and we hope to release better performing and larger OpenFlamingo models soon. If you have any questions, please feel free to open an issue. We also welcome contributions!
 
 # Table of Contents
 - [Installation](#installation)
@@ -19,6 +19,7 @@ This repo is still under development. You can expect us to release better perfor
   * [Dataset](#dataset)
 - [Evaluation](#evaluation)
 - [Future plans](#future-plans)
+- [Team](#team)
 - [Acknowledgments](#acknowledgments)
 - [Citing](#citing)
 
@@ -193,6 +194,14 @@ python evaluate.py
 - [ ] Migrate to OpenCLIP to support a broader range of pre-trained vision models
 - [ ] Add support for FSDP training
 
+# Team
+
+OpenFlamingo is developed by:
+
+[Anas Awadalla](https://anas-awadalla.streamlit.app/), [Irena Gao](https://i-gao.github.io/), [Joshua Gardner](https://homes.cs.washington.edu/~jpgard/), [Jack Hessel](https://jmhessel.com/), [Yusuf Hanafy](https://www.linkedin.com/in/yusufhanafy/), [Wanrong Zhu](https://wanrong-zhu.com/), [Kalyani Marathe](https://sites.google.com/uw.edu/kalyanimarathe/home?authuser=0), [Yonatan Bitton](https://yonatanbitton.github.io/), [Samir Gadre](https://sagadre.github.io/), [Jenia Jitsev](https://scholar.google.de/citations?user=p1FuAMkAAAAJ&hl=en), [Simon Kornblith](https://simonster.com/), [Pang Wei Koh](https://koh.pw/), [Gabriel Ilharco](https://gabrielilharco.com/), [Mitchell Wortsman](https://mitchellnw.github.io/), [Ludwig Schmidt](https://people.csail.mit.edu/ludwigs/).
+
+The team is primarily from the University of Washington, Stanford, AI2, UCSB, and Google.
+
 # Acknowledgments
 This code is based on Lucidrains' [flamingo implementation](https://github.com/lucidrains/flamingo-pytorch) and David Hansmair's [flamingo-mini repo](https://github.com/dhansmair/flamingo-mini). Thank you for making your code public!
 
@@ -203,12 +212,11 @@ If you found this repository useful, please consider citing:
 
 ```
 @software{open_flamingo,
-    author = {...},
+    author = {Awadalla, Anas and Gao, Irena and Gardner, Joshua and Hessel, Jack and Hanafy, Yusuf and Zhu, Wanrong and Marathe, Kalyani and Bitton, Yonatan and Gadre, Samir and Jitsev, Jenia and Kornblith, Simon and Koh, Pang Wei and Ilharco, Gabriel and Wortsman, Mitchell and Schmidt, Ludwig},
     title = {OpenFlamingo},
     month = march,
     year = 2023,
-    note = {If you use this software, please cite it as below.},
-    ... TBD}
+}
 ```
 
 ```
