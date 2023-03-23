@@ -53,6 +53,7 @@ model, image_processor, tokenizer = create_model_and_transforms(
     clip_processor_path="openai/clip-vit-large-patch14",
     lang_encoder_path="<path to llama weights in HuggingFace format>",
     tokenizer_path="<path to llama tokenizer in HuggingFace format>",
+    cross_attn_every_n_layers=4
 )
 
 # grab model checkpoint from huggingface hub
