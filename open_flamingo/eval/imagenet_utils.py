@@ -345,7 +345,6 @@ def compute_per_sample_probs_and_loss(
         _imagenet_prompt, eoc_token, eoc_token_id,
         batch_size, tokenizer, tokenizer_kwargs, device, context_len, model,
         context_precomputed) -> Tuple[torch.Tensor, torch.Tensor]:
-
     batch_text = [context_text
                   + _imagenet_prompt(imagenet_class_name, False)
                   + eoc_token] * batch_size
@@ -417,9 +416,7 @@ def get_imagenet_prompt(x: dict, eos_token: str,
 def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
           batch, in_context_samples,
           batch_size: int, tokenizer_kwargs: Dict[str, Any],
-          num_shots: int, effective_num_shots: int,
-          eoc_token: str, eoc_token_id: int,
-          ):
+          num_shots: int, effective_num_shots: int):
     """Each subprocess will run this function on a different
     GPU which is indicated by the parameter `rank`."""
     device = torch.device(f"cuda:{rank}")
