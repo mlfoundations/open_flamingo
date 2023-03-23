@@ -4,7 +4,6 @@ from math import ceil
 import os
 import uuid
 from collections import defaultdict
-from typing import Callable
 
 import more_itertools
 import numpy as np
@@ -17,11 +16,10 @@ from tqdm import tqdm
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
+from open_flamingo.eval.evaluation_utils import FlamingoModelLoader, \
+    get_context_images, get_context_text, prepare_batch_images
 from open_flamingo.eval.imagenet_utils import openai_imagenet_classnames, \
-    IMAGENET_1K_CLASS_ID_TO_LABEL, compute_per_sample_probs_and_loss
-
-from open_flamingo.src.factory import create_model_and_transforms
-from open_flamingo.src.flamingo import Flamingo
+    IMAGENET_1K_CLASS_ID_TO_LABEL
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--lm_path", type=str, default="facebook/opt-1.3b")
@@ -148,27 +146,17 @@ parser.add_argument("--imagenet_root",
 def main():
     args = parser.parse_args()
 
-    # load model
-    flamingo, image_processor, tokenizer = create_model_and_transforms(
-        args.clip_path,
-        args.clip_path,
-        args.lm_path,
-        args.lm_tokenizer_path,
-    )
-
-    checkpoint = torch.load(args.checkpoint_path, map_location="cpu")[
-        "model_state_dict"
-    ]
-    # remove the "module." prefix from the keys
-    checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
-
-    flamingo.load_state_dict(checkpoint, strict=False)
-    flamingo.to(args.device if args.device >= 0 else "cpu")
+    flamingo_loader = FlamingoModelLoader(
+        clip_path=args.clip_path,
+        lm_path=args.lm_path,
+        lm_tokenizer_path=args.lm_tokenizer_path,
+        checkpoint_path=args.checkpoint_path)
 
     results = defaultdict(list)
 
     if args.eval_flickr30:
         print("Evaluating on Flickr30...")
+        flamingo, image_processor, tokenizer = flamingo_loader.load(args.device)
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
@@ -195,6 +183,7 @@ def main():
     if args.eval_coco:
 
         print("Evaluating on COCO...")
+        flamingo, image_processor, tokenizer = flamingo_loader.load(args.device)
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
@@ -219,6 +208,7 @@ def main():
     if args.eval_ok_vqa:
 
         print("Evaluating on OK-VQA...")
+        flamingo, image_processor, tokenizer = flamingo_loader.load(args.device)
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
@@ -246,6 +236,7 @@ def main():
     if args.eval_vqav2:
 
         print("Evaluating on VQAv2...")
+        flamingo, image_processor, tokenizer = flamingo_loader.load(args.device)
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
@@ -276,9 +267,7 @@ def main():
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
                 imagenet_score = evaluate_imagenet(
-                    model=flamingo,
-                    tokenizer=tokenizer,
-                    image_processor=image_processor,
+                    flamingo_loader=flamingo_loader,
                     batch_size=args.batch_size,
                     num_samples=args.num_samples,
                     num_shots=shot,
@@ -320,62 +309,6 @@ def prepare_eval_samples_and_dataset(full_dataset, random_indices,
     eval_dataset = torch.utils.data.Subset(
         full_dataset, random_indices[effective_num_shots:])
     return in_context_samples, eval_dataset
-
-
-def get_context_images(image_processor, in_context_samples, num_shots):
-    if num_shots > 0:
-        context_images = image_processor(
-            images=[s["image"] for s in in_context_samples],
-            return_tensors="pt",
-        )["pixel_values"]
-        context_images = context_images.unsqueeze(1).unsqueeze(0)
-    else:
-        context_images = None
-    return context_images
-
-
-def get_context_text(get_prompt: Callable[[dict], str], in_context_samples,
-                     effective_num_shots, num_shots) -> str:
-    context_text = (
-        "".join([get_prompt(s) for s in in_context_samples]
-                ) if effective_num_shots > 0 else ""
-    )
-
-    if num_shots == 0:
-        context_text = context_text.replace("<image>", "")
-    return context_text
-
-
-def prepare_batch_images(batch, image_processor, context_images,
-                         num_shots) -> torch.Tensor:
-    """Helper function to prepare images from a batch.
-
-    Args:
-        batch: the batch of inputs.
-        image_processor: the image processor.
-        context_images: context images to prepend to the batch image.
-        num_shots: number of shots; should be identical to number of context
-            images.
-    Returns:
-        Tensor of shape [batch_size, num_shots + 1, 1, num_channels, h, w].
-    """
-    batch_images = None
-    for b in batch:
-        b_image = image_processor(images=[b["image"]], return_tensors="pt")[
-            "pixel_values"
-        ]
-        b_image = b_image.unsqueeze(1).unsqueeze(0)
-        b_image = (
-            torch.cat([context_images, b_image], dim=1)
-            if num_shots > 0
-            else b_image
-        )
-
-        if batch_images is None:
-            batch_images = b_image
-        else:
-            batch_images = torch.cat([batch_images, b_image], dim=0)
-    return batch_images
 
 
 def get_outputs(model, batch_images, device, attention_mask,
@@ -670,9 +603,7 @@ def evaluate_vqa(
 
 
 def evaluate_imagenet(
-        model: Flamingo,
-        tokenizer,
-        image_processor,
+        flamingo_loader: FlamingoModelLoader,
         batch_size: int,
         imagenet_root: str,
         seed: int = 42,
@@ -684,9 +615,7 @@ def evaluate_imagenet(
     Evaluate a model on ImageNet dataset.
 
     Args:
-        model (Flamingo): model to evaluate
-        tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
-        image_processor (transformers.ImageProcessor): image processor for the model
+        flamingo_loader: FlamingoModelLoader to use.
         batch_size (int): batch size
         imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
@@ -697,6 +626,7 @@ def evaluate_imagenet(
     Returns:
         float: accuracy score
     """
+    # flamingo, image_processor, tokenizer = flamingo_loader.load(device)
 
     full_dataset = ImageNetDataset(root=imagenet_root)
 
@@ -710,32 +640,10 @@ def evaluate_imagenet(
     random_indices = get_random_indices(num_samples, effective_num_shots,
                                         full_dataset, seed)
 
-    eoc_token = "<|endofchunk|>"
-    eoc_token_id = tokenizer.additional_special_tokens_ids[
-        tokenizer.additional_special_tokens.index(eoc_token)]
-
-    # Padding from right allows efficient precomputing of context activations.
-    tokenizer.padding_side = "right"
-
-    def _imagenet_prompt(class_name, is_context: bool = True):
-        """Construct an imagenet prompt for a given label."""
-        prefix = "<image>A photo of a "
-        if is_context:
-            return prefix + class_name.strip()
-        else:
-            # Not a context example; insert EOS token before the class name
-            # so that we can compute the loss on the class name tokens only.
-            return prefix + tokenizer.eos_token + class_name.strip()
-
-    def get_imagenet_prompt(x: dict, is_context: bool = True) -> str:
-        """Construct an ImageNet prompt for an example, using its label."""
-        return _imagenet_prompt(x['class_name'], is_context=is_context)
-
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset, random_indices=random_indices,
         effective_num_shots=effective_num_shots)
 
-    model.eval()
     # Predictions based on the class target sequence with the maximal
     # predicted probability
     predictions_max_prob = []
@@ -744,14 +652,10 @@ def evaluate_imagenet(
     predictions_min_loss = []
     labels = []
 
-    context_images = get_context_images(image_processor=image_processor,
-                                        in_context_samples=in_context_samples,
-                                        num_shots=num_shots)
-
-    context_text = get_context_text(get_imagenet_prompt,
-                                    in_context_samples=in_context_samples,
-                                    effective_num_shots=effective_num_shots,
-                                    num_shots=num_shots)
+    # TODO(jpgard): move the rest of this logic into the
+    #  imagenet_utils.infer() function or another appropriate location. Since
+    #  it uses the image_processor it will probably need to go there, and we
+    #  simply send the in_context_samples along with the batch.
 
     # kwargs to use when calling tokenizer
     tokenizer_kwargs = {'return_tensors': 'pt',
@@ -763,25 +667,6 @@ def evaluate_imagenet(
         print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
         batch_per_class_probs = []
         batch_per_class_losses = []
-        batch_images = prepare_batch_images(batch=batch,
-                                            image_processor=image_processor,
-                                            context_images=context_images,
-                                            num_shots=num_shots)
-
-        # Process the images only once.
-        batch_images = batch_images.to(device)
-
-        model._process_media(vision_x=batch_images)
-
-        # Process the context text only once.
-        context_encodings = tokenizer([context_text] * batch_size,
-                                      **tokenizer_kwargs)
-        context_ids = context_encodings['input_ids'].to(device)
-        context_len = context_ids.shape[-1]
-        context_precomputed = model(None, context_ids,
-                                    use_cached_vision_x=True,
-                                    clear_conditioned_layers=False,
-                                    use_cache=True)
 
         device = device if device >= 0 else "cpu"
 
@@ -794,28 +679,30 @@ def evaluate_imagenet(
         device_count = torch.cuda.device_count()
 
         for rank in range(device_count):
-            p = mp.Process(target=infer, args=(rank, queue, model))
+            p = mp.Process(target=infer, kwargs={
+                "rank": rank,
+                "queue": queue,
+                "flamingo_loader": flamingo_loader,
+                "batch": batch,
+                "in_context_samples": in_context_samples,
+                "batch_size": batch_size,
+                "tokenizer_kwargs": tokenizer_kwargs,
+                "num_shots": num_shots,
+                "effective_num_shots": effective_num_shots,
+            })
             p.start()
             processes.append(p)
 
         for imagenet_class_name in tqdm(openai_imagenet_classnames[:32]):
             queue.put((imagenet_class_name, context_text, context_ids))
 
-            # per_sample_probs, per_sample_loss = \
-            #     compute_per_sample_probs_and_loss(
-            #         imagenet_class_name, context_text, context_ids,
-            #         _imagenet_prompt, eoc_token, eoc_token_id, batch_size,
-            #         tokenizer, tokenizer_kwargs, device, context_len,
-            #         model, context_precomputed)
-            #
-            # batch_per_class_probs.append(per_sample_probs.detach())
-            # batch_per_class_losses.append(per_sample_loss.detach())
-
         for _ in range(device_count):
             queue.put(None)  # sentinel value to signal subprocesses to exit
         for p in processes:
             p.join()  # wait for all subprocesses to finish
         return 0.
+
+        import ipdb;ipdb.set_trace()
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
         # the (probability or loss) for batch element i on imagenet class j.

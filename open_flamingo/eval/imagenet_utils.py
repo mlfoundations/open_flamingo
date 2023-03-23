@@ -1,6 +1,10 @@
+from typing import Dict, Any, Tuple
+
 import torch
 from open_flamingo.eval.classification import compute_per_sample_probs, \
     compute_per_sample_loss
+from open_flamingo.eval.evaluation_utils import FlamingoModelLoader, \
+    get_context_images, get_context_text, prepare_batch_images
 
 # classnames via https://github.com/mlfoundations/wise-ft/blob/master/src/datasets/imagenet_classnames.py#L1
 openai_imagenet_classnames = [
@@ -335,10 +339,13 @@ IMAGENET_1K_CLASS_ID_TO_LABEL = dict(zip(range(len(openai_imagenet_classnames)),
 
 
 def compute_per_sample_probs_and_loss(
-        imagenet_class_name, context_text, context_ids,
+        imagenet_class_name: str,
+        context_text: str,
+        context_ids: torch.Tensor,
         _imagenet_prompt, eoc_token, eoc_token_id,
         batch_size, tokenizer, tokenizer_kwargs, device, context_len, model,
-        context_precomputed):
+        context_precomputed) -> Tuple[torch.Tensor, torch.Tensor]:
+
     batch_text = [context_text
                   + _imagenet_prompt(imagenet_class_name, False)
                   + eoc_token] * batch_size
@@ -386,21 +393,96 @@ def compute_per_sample_probs_and_loss(
         tokenizer=tokenizer,
         logits=logits,
         eoc_token_id=eoc_token_id)
-    return per_sample_loss, per_sample_probs
+    return per_sample_probs, per_sample_loss
 
 
-def infer(rank, queue, model):
+def _imagenet_prompt(class_name, eos_token: str, is_context: bool = True):
+    """Construct an imagenet prompt for a given label."""
+    prefix = "<image>A photo of a "
+    if is_context:
+        return prefix + class_name.strip()
+    else:
+        # Not a context example; insert EOS token before the class name
+        # so that we can compute the loss on the class name tokens only.
+        return prefix + eos_token + class_name.strip()
+
+
+def get_imagenet_prompt(x: dict, eos_token: str,
+                        is_context: bool = True) -> str:
+    """Construct an ImageNet prompt for an example, using its label."""
+    return _imagenet_prompt(x['class_name'], is_context=is_context,
+                            eos_token=eos_token)
+
+
+def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
+          batch, in_context_samples,
+          batch_size: int, tokenizer_kwargs: Dict[str, Any],
+          num_shots: int, effective_num_shots: int,
+          eoc_token: str, eoc_token_id: int,
+          ):
     """Each subprocess will run this function on a different
     GPU which is indicated by the parameter `rank`."""
     device = torch.device(f"cuda:{rank}")
+    print(f'loading model on device {rank}...')
+    model, image_processor, tokenizer = flamingo_loader.load(device)
     model.to(device)
+    model.eval()
+    print(f'finished loading model on device {rank}.')
+
+    print(f'processing context images and text on device {rank}.')
+    context_images = get_context_images(image_processor=image_processor,
+                                        in_context_samples=in_context_samples,
+                                        num_shots=num_shots)
+
+    context_text = get_context_text(get_imagenet_prompt,
+                                    in_context_samples=in_context_samples,
+                                    effective_num_shots=effective_num_shots,
+                                    num_shots=num_shots)
+
+    batch_images = prepare_batch_images(batch=batch,
+                                        image_processor=image_processor,
+                                        context_images=context_images,
+                                        num_shots=num_shots)
+    # Process the images only once.
+    batch_images = batch_images.to(device)
+    model._process_media(vision_x=batch_images)
+
+    # Process the context text only once.
+    context_encodings = tokenizer([context_text] * batch_size,
+                                  **tokenizer_kwargs)
+    context_ids = context_encodings['input_ids'].to(device)
+    context_len = context_ids.shape[-1]
+    context_precomputed = model(None, context_ids,
+                                use_cached_vision_x=True,
+                                clear_conditioned_layers=False,
+                                use_cache=True)
+    print(f'finished processing context images and text on device {rank}.')
+
+    # Padding from right allows efficient precomputing of context activations.
+    tokenizer.padding_side = "right"
+
     while True:
+
         item = queue.get()
+
         if item is None:  # check for sentinel value
             break
+
         else:
-            x, context_text, context_ids = item
-        context_ids = context_ids.to(device)
+            imagenet_class_name, context_text, context_ids = item
+            per_sample_probs, per_sample_loss = \
+                compute_per_sample_probs_and_loss(
+                    imagenet_class_name, context_text, context_ids,
+                    _imagenet_prompt, tokenizer.eoc_token,
+                    tokenizer.eoc_token_id, batch_size,
+                    tokenizer, tokenizer_kwargs, device, context_len,
+                    model, context_precomputed)
+            print(f"computed per sample probs on device {rank}.")
+
         # model(x)
-        del context_ids  # free memory
+        # free memory
+        # del context_ids
+        # del context_images
+        # del context_text
+        # ...
         print(f"Inference on process {rank} for x {x}")
