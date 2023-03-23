@@ -487,5 +487,5 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
                     model, context_precomputed)
             print(f"successfully computed per sample probs on device {rank} "
                   f"for class {imagenet_class_name}.")
-            per_sample_probs = per_sample_probs.detach().cpu().numpy()
+            per_sample_probs = per_sample_probs.detach().cpu()
             return_dict[imagenet_class_id] = per_sample_probs
