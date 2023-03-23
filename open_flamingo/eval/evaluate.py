@@ -693,7 +693,8 @@ def evaluate_imagenet(
             p.start()
             processes.append(p)
 
-        for imagenet_class_name in tqdm(openai_imagenet_classnames[:32]):
+        for imagenet_class_name in tqdm(openai_imagenet_classnames[:32],
+                                        desc="building imagenet queue"):
             queue.put((imagenet_class_name))
 
         for _ in range(device_count):
@@ -702,7 +703,7 @@ def evaluate_imagenet(
             p.join()  # wait for all subprocesses to finish
         return 0.
 
-        import ipdb;ipdb.set_trace()
+        import ipdb; ipdb.set_trace()
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
         # the (probability or loss) for batch element i on imagenet class j.

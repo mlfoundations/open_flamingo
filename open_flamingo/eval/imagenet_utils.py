@@ -427,6 +427,11 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
     model.eval()
     print(f'finished loading model on device {rank}.')
 
+    eoc_token = "<|endofchunk|>"
+    eoc_token_id = tokenizer.additional_special_tokens_ids[
+        tokenizer.additional_special_tokens.index(eoc_token)
+    ]
+
     print(f'processing context images and text on device {rank}.')
     context_images = get_context_images(image_processor=image_processor,
                                         in_context_samples=in_context_samples,
@@ -470,19 +475,22 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
 
         else:
             imagenet_class_name = item
+            print(
+                f"got class {imagenet_class_name} on process {rank}; "
+                f"running eval...")
             per_sample_probs, per_sample_loss = \
                 compute_per_sample_probs_and_loss(
                     imagenet_class_name, context_text, context_ids,
-                    _imagenet_prompt, tokenizer.eoc_token,
-                    tokenizer.eoc_token_id, batch_size,
+                    _imagenet_prompt, eoc_token,
+                    eoc_token_id, batch_size,
                     tokenizer, tokenizer_kwargs, device, context_len,
                     model, context_precomputed)
-            print(f"computed per sample probs on device {rank}.")
+            print(f"successfully computed per sample probs on device {rank} "
+                  f"for class {imagenet_class_name}.")
 
-        # model(x)
+            # model(x)
         # free memory
         # del context_ids
         # del context_images
         # del context_text
         # ...
-        print(f"Inference on process {rank} for x {x}")
