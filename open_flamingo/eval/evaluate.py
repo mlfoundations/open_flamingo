@@ -694,6 +694,7 @@ def evaluate_imagenet(
             queue.put(None)  # sentinel value to signal subprocesses to exit
         for p in processes:
             p.join()  # wait for all subprocesses to finish
+            p.close()
 
         batch_per_class_probs = [val for _, val in sorted(return_dict.items(),
                                                           key=lambda x: x[0])]
