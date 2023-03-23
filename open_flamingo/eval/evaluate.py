@@ -415,7 +415,7 @@ def evaluate_coco_flickr(
     image_dir_path,
     annotations_json_path,
     seed=42,
-    max_generation_length=10,
+    max_generation_length=20,
     num_beams=3,
     length_penalty=-2.0,
     num_samples=5000,
