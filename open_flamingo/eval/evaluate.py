@@ -688,21 +688,18 @@ def evaluate_imagenet(
             p.start()
             processes.append(p)
 
+        manager = mp.Manager()
+        return_dict = manager.dict()
+
         for imagenet_class_id, imagenet_class_name in tqdm(
                 enumerate(openai_imagenet_classnames[:32]),
                 desc="building imagenet queue"):
-            queue.put((imagenet_class_id, imagenet_class_name))
+            queue.put((imagenet_class_id, imagenet_class_name, return_dict))
 
         for _ in range(device_count):
             queue.put(None)  # sentinel value to signal subprocesses to exit
-        # for p in processes:
-        #     p.join()  # wait for all subprocesses to finish
-        rets = []
         for p in processes:
-            ret = queue.get()  # will block
-            rets.append(ret)
-        for p in processes:
-            p.join()
+            p.join()  # wait for all subprocesses to finish
 
         import ipdb;
         ipdb.set_trace()

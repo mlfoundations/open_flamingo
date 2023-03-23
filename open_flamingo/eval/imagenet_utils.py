@@ -474,7 +474,7 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
             break
 
         else:
-            imagenet_class_id, imagenet_class_name = item
+            imagenet_class_id, imagenet_class_name, return_dict = item
             print(
                 f"got class {imagenet_class_name} ({imagenet_class_id}) "
                 f"on process {rank}; running eval...")
@@ -488,11 +488,4 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
             print(f"successfully computed per sample probs on device {rank} "
                   f"for class {imagenet_class_name}.")
             per_sample_probs = per_sample_probs.detach().cpu().numpy()
-            return (imagenet_class_id, per_sample_probs)
-
-            # model(x)
-        # free memory
-        # del context_ids
-        # del context_images
-        # del context_text
-        # ...
+            return_dict[imagenet_class_id] = per_sample_probs
