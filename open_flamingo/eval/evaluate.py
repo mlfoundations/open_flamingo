@@ -652,11 +652,6 @@ def evaluate_imagenet(
     predictions_min_loss = []
     labels = []
 
-    # TODO(jpgard): move the rest of this logic into the
-    #  imagenet_utils.infer() function or another appropriate location. Since
-    #  it uses the image_processor it will probably need to go there, and we
-    #  simply send the in_context_samples along with the batch.
-
     # kwargs to use when calling tokenizer
     tokenizer_kwargs = {'return_tensors': 'pt',
                         'padding': True,
@@ -693,17 +688,20 @@ def evaluate_imagenet(
             p.start()
             processes.append(p)
 
-        for imagenet_class_name in tqdm(openai_imagenet_classnames[:32],
-                                        desc="building imagenet queue"):
-            queue.put((imagenet_class_name))
+        for imagenet_class_id, imagenet_class_name in tqdm(
+                enumerate(openai_imagenet_classnames[:32]),
+                desc="building imagenet queue"):
+            queue.put((imagenet_class_id, imagenet_class_name))
 
         for _ in range(device_count):
             queue.put(None)  # sentinel value to signal subprocesses to exit
         for p in processes:
             p.join()  # wait for all subprocesses to finish
-        return 0.
 
-        import ipdb; ipdb.set_trace()
+        import ipdb;
+        ipdb.set_trace()
+
+        return 0.
 
         # Tensor of shape [batch_size, 1000] where the [i,j]th element is
         # the (probability or loss) for batch element i on imagenet class j.

@@ -474,11 +474,11 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
             break
 
         else:
-            imagenet_class_name = item
+            imagenet_class_id, imagenet_class_name = item
             print(
-                f"got class {imagenet_class_name} on process {rank}; "
-                f"running eval...")
-            per_sample_probs, per_sample_loss = \
+                f"got class {imagenet_class_name} ({imagenet_class_id}) "
+                f"on process {rank}; running eval...")
+            per_sample_probs, _ = \
                 compute_per_sample_probs_and_loss(
                     imagenet_class_name, context_text, context_ids,
                     _imagenet_prompt, eoc_token,
@@ -487,6 +487,8 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
                     model, context_precomputed)
             print(f"successfully computed per sample probs on device {rank} "
                   f"for class {imagenet_class_name}.")
+            per_sample_probs = per_sample_probs.detach().cpu().numpy()
+            return (imagenet_class_id, per_sample_probs)
 
             # model(x)
         # free memory
