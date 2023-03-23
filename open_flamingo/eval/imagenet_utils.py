@@ -421,7 +421,7 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
     GPU which is indicated by the parameter `rank`."""
     device = torch.device(f"cuda:{rank}")
     print(f'loading model on device {rank}...')
-    model, image_processor, tokenizer = flamingo_loader.load(device)
+    model, image_processor, tokenizer = flamingo_loader.load(rank)
     model.to(device)
     model.eval()
     print(f'finished loading model on device {rank}.')
@@ -466,7 +466,7 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
             break
 
         else:
-            imagenet_class_name, context_text, context_ids = item
+            imagenet_class_name = item
             per_sample_probs, per_sample_loss = \
                 compute_per_sample_probs_and_loss(
                     imagenet_class_name, context_text, context_ids,

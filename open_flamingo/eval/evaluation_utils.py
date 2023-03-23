@@ -13,7 +13,7 @@ class FlamingoModelLoader:
     lm_tokenizer_path: str
     checkpoint_path: str
 
-    def load(self, device) -> Tuple[Flamingo, Any, Any]:
+    def load(self, device: int) -> Tuple[Flamingo, Any, Any]:
         """Instantiate the model, load from the checkpoint, and return it."""
         flamingo, image_processor, tokenizer = create_model_and_transforms(
             self.clip_path,

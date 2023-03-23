@@ -694,7 +694,7 @@ def evaluate_imagenet(
             processes.append(p)
 
         for imagenet_class_name in tqdm(openai_imagenet_classnames[:32]):
-            queue.put((imagenet_class_name, context_text, context_ids))
+            queue.put((imagenet_class_name))
 
         for _ in range(device_count):
             queue.put(None)  # sentinel value to signal subprocesses to exit
