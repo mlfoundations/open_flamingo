@@ -695,8 +695,14 @@ def evaluate_imagenet(
 
         for _ in range(device_count):
             queue.put(None)  # sentinel value to signal subprocesses to exit
+        # for p in processes:
+        #     p.join()  # wait for all subprocesses to finish
+        rets = []
         for p in processes:
-            p.join()  # wait for all subprocesses to finish
+            ret = queue.get()  # will block
+            rets.append(ret)
+        for p in processes:
+            p.join()
 
         import ipdb;
         ipdb.set_trace()
