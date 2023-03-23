@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Dict, Any, Tuple
 
 import torch
@@ -431,7 +432,9 @@ def infer(rank, queue, flamingo_loader: FlamingoModelLoader,
                                         in_context_samples=in_context_samples,
                                         num_shots=num_shots)
 
-    context_text = get_context_text(get_imagenet_prompt,
+    _get_imagenet_prompt = partial(get_imagenet_prompt,
+                                   eos_token=tokenizer.eos_token)
+    context_text = get_context_text(_get_imagenet_prompt,
                                     in_context_samples=in_context_samples,
                                     effective_num_shots=effective_num_shots,
                                     num_shots=num_shots)
