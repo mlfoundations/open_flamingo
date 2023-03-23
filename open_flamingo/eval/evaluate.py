@@ -687,10 +687,8 @@ def evaluate_imagenet(
         manager = mp.Manager()
         return_dict = manager.dict()
 
-        for imagenet_class_id, imagenet_class_name in tqdm(
-                enumerate(openai_imagenet_classnames[:32]),
-                desc="building imagenet queue"):
-            queue.put((imagenet_class_id, imagenet_class_name, return_dict))
+        for class_id, class_name in enumerate(openai_imagenet_classnames):
+            queue.put((class_id, class_name, return_dict))
 
         for _ in range(device_count):
             queue.put(None)  # sentinel value to signal subprocesses to exit
