@@ -12,7 +12,7 @@ class Flamingo(nn.Module):
         lang_encoder: nn.Module,
         eoc_token_id: int,
         media_token_id: int,
-        vis_dim: int = None,
+        vis_dim: int,
         use_projection_vector: bool = False,
         cross_attn_every_n_layers: int = 1,
         use_media_placement_augmentation: bool = False,
@@ -23,7 +23,7 @@ class Flamingo(nn.Module):
             lang_encoder (nn.Module): HF causal language model
             eoc_token_id (int): Token id for <|endofchunk|>
             media_token_id (int): Token id for <image>
-            vis_dim (int, optional): Dimension of the visual features. Defaults to CLIP's vision_encoder's hidden size.
+            vis_dim (int): Dimension of the visual features.
                 Visual features are projected to match this shape along the last dimension.
             use_projection_vector (bool, optional): Whether to use the CLIP projection output for the visual features. Defaults to False.
             cross_attn_every_n_layers (int, optional): How often to apply cross attention after transformer layer. Defaults to 1.
@@ -34,11 +34,7 @@ class Flamingo(nn.Module):
         self.media_token_id = media_token_id
         self.use_projection_vector = use_projection_vector
         self.use_media_placement_augmentation = use_media_placement_augmentation
-
-        self.vis_dim = (
-            vis_dim if vis_dim is not None else vision_encoder.vision_cfg.width
-        )
-
+        self.vis_dim = vis_dim
         self.vision_encoder = vision_encoder
         self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder

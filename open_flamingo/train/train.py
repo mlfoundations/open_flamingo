@@ -32,10 +32,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--vision_encoder_path", default="ViT-H-14", type=str)
     parser.add_argument(
-        "--vision_encoder_pretrained",
-        default="laion2b_s32b_b79k",
-        type=str,
-        help="path to clip pretraining dataset",
+        "--vision_encoder_pretrained", default="laion2b_s32b_b79k", type=str
     )
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
     parser.add_argument(
