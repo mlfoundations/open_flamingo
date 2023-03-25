@@ -30,9 +30,7 @@ def random_seed(seed=42, rank=0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--vision_encoder_path", default="ViT-H-14", type=str
-    )
+    parser.add_argument("--vision_encoder_path", default="ViT-H-14", type=str)
     parser.add_argument(
         "--vision_encoder_pretrained",
         default="laion2b_s32b_b79k",
