@@ -36,7 +36,7 @@ def create_model_and_transforms(
     vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
         clip_vision_encoder_path, pretrained=clip_vision_encoder_pretrained
     )
-    
+
     text_tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, local_files_only=use_local_files
     )
@@ -64,7 +64,9 @@ def create_model_and_transforms(
         lang_encoder,
         text_tokenizer.encode("<|endofchunk|>")[-1],
         text_tokenizer.encode("<image>")[-1],
-        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"]["width"],
+        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+            "width"
+        ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
         **flamingo_kwargs,
     )
