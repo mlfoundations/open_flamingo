@@ -36,9 +36,7 @@ class Flamingo(nn.Module):
         self.use_media_placement_augmentation = use_media_placement_augmentation
 
         self.vis_dim = (
-            vis_dim
-            if vis_dim is not None
-            else vision_encoder.config.vision_config.hidden_size
+            vis_dim if vis_dim is not None else vision_encoder.vision_cfg.width
         )
 
         self.vision_encoder = vision_encoder
