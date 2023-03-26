@@ -13,3 +13,4 @@ nltk
 scipy
 inflection
 sentencepiece
+open_clip_torch

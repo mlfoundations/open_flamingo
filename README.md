@@ -49,8 +49,8 @@ Use this [script](https://github.com/huggingface/transformers/blob/main/src/tran
 from open_flamingo import create_model_and_transforms
 
 model, image_processor, tokenizer = create_model_and_transforms(
-    clip_vision_encoder_path="openai/clip-vit-large-patch14",
-    clip_processor_path="openai/clip-vit-large-patch14",
+    clip_vision_encoder_path="ViT-L-14",
+    clip_vision_encoder_pretrained="openai",
     lang_encoder_path="<path to llama weights in HuggingFace format>",
     tokenizer_path="<path to llama tokenizer in HuggingFace format>",
     cross_attn_every_n_layers=4
@@ -103,10 +103,9 @@ Details: For OpenFlamingo, we expect the image to be a torch tensor of shape
  (this will always be one expect for video which we don't support yet), 
  channels = 3, height = 224, width = 224.
 """
-vision_x = image_processor(images=[demo_image_one, demo_image_two, query_image], 
- return_tensors="pt")["pixel_values"]
+vision_x = [image_processor(demo_image_one).unsqueeze(0), image_processor(demo_image_two).unsqueeze(0), image_processor(query_image).unsqueeze(0)]
+vision_x = torch.cat(vision_x, dim=0)
 vision_x = vision_x.unsqueeze(1).unsqueeze(0)
-
 
 """
 Step 3: Preprocessing text

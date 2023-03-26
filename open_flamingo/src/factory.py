@@ -1,4 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPModel, CLIPProcessor
+import open_clip
 
 from .flamingo import Flamingo
 from .flamingo_lm import FlamingoLMMixin
@@ -7,7 +8,7 @@ from .utils import extend_instance
 
 def create_model_and_transforms(
     clip_vision_encoder_path: str,
-    clip_processor_path: str,
+    clip_vision_encoder_pretrained: str,
     lang_encoder_path: str,
     tokenizer_path: str,
     cross_attn_every_n_layers: int = 1,
@@ -20,8 +21,8 @@ def create_model_and_transforms(
     Appends special tokens to the tokenizer and freezes backbones.
 
     Args:
-        clip_vision_encoder_path (str): path to pretrained clip model
-        clip_processor_path (str): path to pretrained clip processor
+        clip_vision_encoder_path (str): path to pretrained clip model (e.g. "ViT-B-32")
+        clip_vision_encoder_pretrained (str): name of pretraining dataset for clip model (e.g. "laion2b_s32b_b79k")
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
         cross_attn_every_n_layers (int, optional): determines how often to add a cross-attention layer. Defaults to 1.
@@ -32,12 +33,11 @@ def create_model_and_transforms(
         Image processor: Pipeline to preprocess input images
         Tokenizer: A tokenizer for the language model
     """
-    vision_encoder = CLIPModel.from_pretrained(
-        clip_vision_encoder_path, local_files_only=use_local_files
+    vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
+        clip_vision_encoder_path, pretrained=clip_vision_encoder_pretrained
     )
-    image_processor = CLIPProcessor.from_pretrained(
-        clip_processor_path, local_files_only=use_local_files
-    )
+    # set the vision encoder to output the visual features
+    vision_encoder.visual.output_tokens = True
 
     text_tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, local_files_only=use_local_files
@@ -66,6 +66,9 @@ def create_model_and_transforms(
         lang_encoder,
         text_tokenizer.encode("<|endofchunk|>")[-1],
         text_tokenizer.encode("<image>")[-1],
+        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+            "width"
+        ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
         **flamingo_kwargs,
     )

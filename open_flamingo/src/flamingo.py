@@ -12,8 +12,7 @@ class Flamingo(nn.Module):
         lang_encoder: nn.Module,
         eoc_token_id: int,
         media_token_id: int,
-        vis_dim: int = None,
-        use_projection_vector: bool = False,
+        vis_dim: int,
         cross_attn_every_n_layers: int = 1,
         use_media_placement_augmentation: bool = False,
     ):
@@ -23,24 +22,16 @@ class Flamingo(nn.Module):
             lang_encoder (nn.Module): HF causal language model
             eoc_token_id (int): Token id for <|endofchunk|>
             media_token_id (int): Token id for <image>
-            vis_dim (int, optional): Dimension of the visual features. Defaults to CLIP's vision_encoder's hidden size.
+            vis_dim (int): Dimension of the visual features.
                 Visual features are projected to match this shape along the last dimension.
-            use_projection_vector (bool, optional): Whether to use the CLIP projection output for the visual features. Defaults to False.
             cross_attn_every_n_layers (int, optional): How often to apply cross attention after transformer layer. Defaults to 1.
             use_media_placement_augmentation (bool, optional): Whether to randomly assign images to the preceding or following text in training. Defaults to False.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
-        self.use_projection_vector = use_projection_vector
         self.use_media_placement_augmentation = use_media_placement_augmentation
-
-        self.vis_dim = (
-            vis_dim
-            if vis_dim is not None
-            else vision_encoder.config.vision_config.hidden_size
-        )
-
+        self.vis_dim = vis_dim
         self.vision_encoder = vision_encoder
         self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder
@@ -198,13 +189,7 @@ class Flamingo(nn.Module):
 
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         with torch.no_grad():
-            if self.use_projection_vector:
-                vision_x = self.vision_encoder.get_image_features(vision_x)
-                vision_x = vision_x / vision_x.norm(p=2, dim=-1, keepdim=True)
-                # add a dimension v to match perceiver input
-                vision_x = vision_x.unsqueeze(-2)
-            else:
-                vision_x = self.vision_encoder.vision_model(vision_x).last_hidden_state
+            vision_x = self.vision_encoder.visual(vision_x)[1]
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
 
         vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)

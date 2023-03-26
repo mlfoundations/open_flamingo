@@ -30,15 +30,8 @@ def random_seed(seed=42, rank=0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--vision_encoder_path", default="openai/clip-vit-large-patch14", type=str
-    )
-    parser.add_argument(
-        "--clip_processor_path",
-        default=None,
-        type=str,
-        help="path to clip processor defaults to vision_encoder_path",
-    )
+    parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
+    parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
     parser.add_argument(
         "--tokenizer_path",
@@ -184,17 +177,13 @@ def main():
 
     model, image_processor, tokenizer = create_model_and_transforms(
         args.vision_encoder_path,
-        args.clip_processor_path
-        if args.clip_processor_path
-        else args.vision_encoder_path,
+        args.vision_encoder_pretrained,
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
         use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
-
-    assert model.use_projection_vector is False, "projection vector not desired"
 
     random_seed(args.seed, args.rank)
 
