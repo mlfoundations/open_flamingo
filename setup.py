@@ -31,6 +31,8 @@ if __name__ == "__main__":
         "nltk",
         "scipy",
         "inflection",
+        "sentencepiece",
+        "open_clip_torch"
     ]
 
     setup(
