@@ -203,7 +203,7 @@ OpenFlamingo is developed by:
 The team is primarily from the University of Washington, Stanford, AI2, UCSB, and Google.
 
 # Acknowledgments
-This code is based on Lucidrains' [flamingo implementation](https://github.com/lucidrains/flamingo-pytorch) and David Hansmair's [flamingo-mini repo](https://github.com/dhansmair/flamingo-mini). Thank you for making your code public!
+This code is based on Lucidrains' [flamingo implementation](https://github.com/lucidrains/flamingo-pytorch) and David Hansmair's [flamingo-mini repo](https://github.com/dhansmair/flamingo-mini). Thank you for making your code public! We also thank the [OpenCLIP](https://github.com/mlfoundations/open_clip) team as we use their data loading code and taking inspiration from their library design.
 
 We would also like to thank [Jean-Baptiste Alayrac](https://www.jbalayrac.com) and [Antoine Miech](https://antoine77340.github.io) for their advice and thanks to [Stability AI](https://stability.ai) for providing us with compute resources to train these models.
 
