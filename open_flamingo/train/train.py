@@ -31,9 +31,7 @@ def random_seed(seed=42, rank=0):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
-    parser.add_argument(
-        "--vision_encoder_pretrained", default="openai", type=str
-    )
+    parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
     parser.add_argument(
         "--tokenizer_path",

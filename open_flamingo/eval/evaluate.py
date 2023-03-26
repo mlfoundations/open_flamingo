@@ -346,7 +346,9 @@ def prepare_eval_samples_and_dataset(full_dataset, random_indices, effective_num
 
 def get_context_images(image_processor, in_context_samples, num_shots):
     if num_shots > 0:
-        context_images = [image_processor(s["image"]).unsqueeze(0) for s in in_context_samples]
+        context_images = [
+            image_processor(s["image"]).unsqueeze(0) for s in in_context_samples
+        ]
         context_images = torch.cat(context_images, dim=0)
         context_images = context_images.unsqueeze(1).unsqueeze(0)
     else:
