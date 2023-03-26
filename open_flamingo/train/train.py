@@ -30,9 +30,9 @@ def random_seed(seed=42, rank=0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--vision_encoder_path", default="ViT-H-14", type=str)
+    parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
     parser.add_argument(
-        "--vision_encoder_pretrained", default="laion2b_s32b_b79k", type=str
+        "--vision_encoder_pretrained", default="openai", type=str
     )
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
     parser.add_argument(
@@ -186,8 +186,6 @@ def main():
         use_local_files=args.offline,
         use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
-
-    assert model.use_projection_vector is False, "projection vector not desired"
 
     random_seed(args.seed, args.rank)
 

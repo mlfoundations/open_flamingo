@@ -30,9 +30,15 @@ from open_flamingo.src.flamingo import Flamingo
 parser = argparse.ArgumentParser()
 parser.add_argument("--lm_path", type=str, default="facebook/opt-1.3b")
 parser.add_argument("--lm_tokenizer_path", type=str, default="facebook/opt-30b")
-parser.add_argument("--clip_path", type=str, default="openai/clip-vit-large-patch14")
+parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
+parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
 parser.add_argument("--checkpoint_path", type=str, required=True)
-
+parser.add_argument(
+    "--cross_attn_every_n_layers",
+    type=int,
+    default=1,
+    help="how often to add a cross-attention layer after each transformer layer",
+)
 parser.add_argument(
     "--results_file", type=str, default=None, help="JSON file to save results"
 )
@@ -170,10 +176,11 @@ def main():
 
     # load model
     flamingo, image_processor, tokenizer = create_model_and_transforms(
-        args.clip_path,
-        args.clip_path,
+        args.vision_encoder_path,
+        args.vision_encoder_pretrained,
         args.lm_path,
         args.lm_tokenizer_path,
+        cross_attn_every_n_layers=args.cross_attn_every_n_layers,
     )
 
     checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
@@ -339,10 +346,8 @@ def prepare_eval_samples_and_dataset(full_dataset, random_indices, effective_num
 
 def get_context_images(image_processor, in_context_samples, num_shots):
     if num_shots > 0:
-        context_images = image_processor(
-            images=[s["image"] for s in in_context_samples],
-            return_tensors="pt",
-        )["pixel_values"]
+        context_images = [image_processor(s["image"]).unsqueeze(0) for s in in_context_samples]
+        context_images = torch.cat(context_images, dim=0)
         context_images = context_images.unsqueeze(1).unsqueeze(0)
     else:
         context_images = None
@@ -369,10 +374,7 @@ def get_context_text(
 def prepare_batch_images(batch, image_processor, context_images, num_shots):
     batch_images = None
     for b in batch:
-        b_image = image_processor(images=[b["image"]], return_tensors="pt")[
-            "pixel_values"
-        ]
-        b_image = b_image.unsqueeze(1).unsqueeze(0)
+        b_image = image_processor(b["image"]).unsqueeze(0).unsqueeze(1).unsqueeze(0)
         b_image = (
             torch.cat([context_images, b_image], dim=1) if num_shots > 0 else b_image
         )

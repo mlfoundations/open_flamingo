@@ -36,6 +36,8 @@ def create_model_and_transforms(
     vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
         clip_vision_encoder_path, pretrained=clip_vision_encoder_pretrained
     )
+    # set the vision encoder to output the visual features
+    vision_encoder.visual.output_tokens = True
 
     text_tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, local_files_only=use_local_files
