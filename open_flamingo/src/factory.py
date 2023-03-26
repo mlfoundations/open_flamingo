@@ -1,4 +1,4 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPModel, CLIPProcessor
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import open_clip
 
 from .flamingo import Flamingo
