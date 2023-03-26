@@ -166,6 +166,7 @@ parser.add_argument(
 ## Imagenet dataset
 parser.add_argument("--imagenet_root", type=str, default="/tmp")
 
+
 def main():
     args = parser.parse_args()
 
@@ -388,6 +389,7 @@ def prepare_batch_images(batch, image_processor, context_images, num_shots):
 
 def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
     return [random.sample(query_set, num_samples) for _ in range(batch_size)]
+
 
 def get_outputs(
     model,
@@ -826,15 +828,16 @@ def evaluate_imagenet(
             image_processor=image_processor,
             in_context_samples=in_context_samples,
             num_shots=num_shots,
-        ) for _ in range(batch_size)
+        )
+        for _ in range(batch_size)
     ]
 
     context_text = get_context_text(
-            get_imagenet_prompt,
-            in_context_samples=in_context_samples,
-            effective_num_shots=effective_num_shots,
-            num_shots=num_shots,
-        )
+        get_imagenet_prompt,
+        in_context_samples=in_context_samples,
+        effective_num_shots=effective_num_shots,
+        num_shots=num_shots,
+    )
 
     # kwargs to use when calling tokenizer
     tokenizer_kwargs = {
