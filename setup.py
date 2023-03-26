@@ -32,7 +32,7 @@ if __name__ == "__main__":
         "scipy",
         "inflection",
         "sentencepiece",
-        "open_clip_torch"
+        "open_clip_torch",
     ]
 
     setup(
