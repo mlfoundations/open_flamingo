@@ -2,7 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/open_flamingo.svg)](https://badge.fury.io/py/open_flamingo)
 
-Blog post (coming soon) | Twitter thread (coming soon) | Paper (coming soon)
+Blog post (coming soon) | Paper (coming soon)
 
 Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 9B model](#api) trained on a new Multimodal C4 dataset (coming soon). Please refer to our blog post for more details.
 
