@@ -179,12 +179,7 @@ def main():
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
     )
 
-    checkpoint = torch.load(args.checkpoint_path, map_location="cpu")[
-        "model_state_dict"
-    ]
-    # remove the "module." prefix from the keys
-    checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
-
+    checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
     flamingo.load_state_dict(checkpoint, strict=False)
     flamingo.to(args.device if args.device >= 0 else "cpu")
 
