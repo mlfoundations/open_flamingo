@@ -146,7 +146,24 @@ Credit: [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-
 # Training
 To train a model, modify the following example command, which uses OPT 1.3B as an example LM:
 ```
-torchrun --nnodes=1 --nproc_per_node=4 train.py --run_name flamingo3B --lm_path facebook/opt-1.3b --tokenizer_path facebook/opt-1.3b --dataset_resampled --laion_shards "/path/to/shards/shard-{0000..0999}.tar" --mmc4_shards "/path/to/shards/shard-{0000..0999}.tar" --batch_size_mmc4 4 --batch_size_laion 8 --train_num_samples_mmc4 125000 --train_num_samples_laion 250000 --loss_multiplier_laion 0.2 --workers=6 --report_to_wandb --num_epochs 250 --lr_scheduler constant --warmup_steps 5000 --use_media_placement_augmentation --mmc4_textsim_threshold 30
+torchrun --nnodes=1 --nproc_per_node=4 train.py \
+--run_name flamingo3B \
+--lm_path facebook/opt-1.3b \
+--tokenizer_path facebook/opt-1.3b \
+--dataset_resampled \
+--laion_shards "/path/to/shards/shard-{0000..0999}.tar" \
+--mmc4_shards "/path/to/shards/shard-{0000..0999}.tar" \
+--batch_size_mmc4 4 \
+--batch_size_laion 8 \
+--train_num_samples_mmc4 125000 \
+--train_num_samples_laion 250000 \
+--loss_multiplier_laion 0.2 \
+--workers=6 \
+--num_epochs 250 \
+--lr_scheduler constant \
+--warmup_steps 5000 \
+--use_media_placement_augmentation \
+--mmc4_textsim_threshold 30
 ```
 
 ## Dataset
@@ -171,18 +188,18 @@ nltk.download('wordnet')
 To evaluate the model, use script open_flamingo/eval/evaluate.py. For example, to evaluate the model on COCO and VQAv2, run the following command which uses OPT 1.3B as an example LM:
 
 ```
-python evaluate.py
---lm_path facebook/opt-1.3b 
---lm_tokenizer_path facebook/opt-1.3b
---clip_path openai/clip-vit-large-patch14
---checkpoint_path path/to/checkpoint.pt
---device 0
---coco_image_dir_path path/to/coco/images
---coco_annotations_json_path path/to/coco/captions_train2017.json
---vqav2_image_dir_path path/to/vqav2/images
---vqav2_annotations_json_path path/to/vqav2/v2_mscoco_train2014_annotations.json
---vqav2_questions_json_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json
---eval_coco
+python evaluate.py \
+--lm_path facebook/opt-1.3b \
+--lm_tokenizer_path facebook/opt-1.3b \
+--clip_path openai/clip-vit-large-patch14 \
+--checkpoint_path path/to/checkpoint.pt \
+--device 0 \
+--coco_image_dir_path path/to/coco/images \
+--coco_annotations_json_path path/to/coco/captions_train2017.json \
+--vqav2_image_dir_path path/to/vqav2/images \
+--vqav2_annotations_json_path path/to/vqav2/v2_mscoco_train2014_annotations.json \
+--vqav2_questions_json_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json \
+--eval_coco \
 --eval_vqav2
 ``` 
 
