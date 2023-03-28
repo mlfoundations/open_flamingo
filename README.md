@@ -226,11 +226,15 @@ We would also like to thank [Jean-Baptiste Alayrac](https://www.jbalayrac.com) a
 If you found this repository useful, please consider citing:
 
 ```
-@software{open_flamingo,
-    author = {Awadalla, Anas and Gao, Irena and Gardner, Joshua and Hessel, Jack and Hanafy, Yusuf and Zhu, Wanrong and Marathe, Kalyani and Bitton, Yonatan and Gadre, Samir and Jitsev, Jenia and Kornblith, Simon and Koh, Pang Wei and Ilharco, Gabriel and Wortsman, Mitchell and Schmidt, Ludwig},
-    title = {OpenFlamingo},
-    month = march,
-    year = 2023,
+@software{anas_awadalla_2023_7733589,
+  author = {Awadalla, Anas and Gao, Irena and Gardner, Joshua and Hessel, Jack and Hanafy, Yusuf and Zhu, Wanrong and Marathe, Kalyani and Bitton, Yonatan and Gadre, Samir and Jitsev, Jenia and Kornblith, Simon and Koh, Pang Wei and Ilharco, Gabriel and Wortsman, Mitchell and Schmidt, Ludwig},
+  title = {OpenFlamingo},
+  month        = mar,
+  year         = 2023,
+  publisher    = {Zenodo},
+  version      = {v0.1.1},
+  doi          = {10.5281/zenodo.7733589},
+  url          = {https://doi.org/10.5281/zenodo.7733589}
 }
 ```
 
