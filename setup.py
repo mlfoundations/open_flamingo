@@ -41,7 +41,7 @@ if __name__ == "__main__":
         include_package_data=True,
         version="0.0.1",
         license="MIT",
-        description="A library for training large visual language models",
+        description="An open-source framework for training large multimodal models",
         long_description=long_description,
         long_description_content_type="text/markdown",
         data_files=[(".", ["README.md"])],
