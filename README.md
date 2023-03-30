@@ -189,9 +189,10 @@ To evaluate the model, use script open_flamingo/eval/evaluate.py. For example, t
 
 ```
 python evaluate.py \
---lm_path facebook/opt-1.3b \
---lm_tokenizer_path facebook/opt-1.3b \
---clip_path openai/clip-vit-large-patch14 \
+--lm_path <path to llama model> \
+--lm_tokenizer_path <path to llama tokenizer> \
+--vision_encoder_path ViT-L-14 \
+--vision_encoder_pretrained openai \
 --checkpoint_path path/to/checkpoint.pt \
 --device 0 \
 --coco_image_dir_path path/to/coco/images \
@@ -200,7 +201,7 @@ python evaluate.py \
 --vqav2_annotations_json_path path/to/vqav2/v2_mscoco_train2014_annotations.json \
 --vqav2_questions_json_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json \
 --eval_coco \
---eval_vqav2
+--eval_vqav2 \
 ``` 
 
 # Future plans
