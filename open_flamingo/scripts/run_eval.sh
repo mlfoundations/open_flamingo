@@ -36,7 +36,7 @@ python open_flamingo/eval/evaluate.py \
     --results_file $RESULTS_FILE \
     --eval_coco \
     --eval_vqav2 \
-    --num_samples 16 \
+    --num_samples 5000 \
     --shots 8 \
     --num_trials 1 \
 
