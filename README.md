@@ -185,23 +185,7 @@ import nltk
 nltk.download('wordnet')
 ```
 
-To evaluate the model, use script open_flamingo/eval/evaluate.py. For example, to evaluate the model on COCO and VQAv2, run the following command which uses OPT 1.3B as an example LM:
-
-```
-python evaluate.py \
---lm_path facebook/opt-1.3b \
---lm_tokenizer_path facebook/opt-1.3b \
---clip_path openai/clip-vit-large-patch14 \
---checkpoint_path path/to/checkpoint.pt \
---device 0 \
---coco_image_dir_path path/to/coco/images \
---coco_annotations_json_path path/to/coco/captions_train2017.json \
---vqav2_image_dir_path path/to/vqav2/images \
---vqav2_annotations_json_path path/to/vqav2/v2_mscoco_train2014_annotations.json \
---vqav2_questions_json_path path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json \
---eval_coco \
---eval_vqav2
-``` 
+To evaluate the model, run the script at `open_flamingo/scripts/run_eval.sh`
 
 # Future plans
 - [ ] Add support for video input
