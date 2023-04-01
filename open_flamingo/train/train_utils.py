@@ -87,7 +87,9 @@ def train_one_epoch(
                 .unsqueeze(1)
             )
 
-            input_ids = batch_laion[1][0].to(device_id, dtype=cast_dtype, non_blocking=True)
+            input_ids = batch_laion[1][0].to(
+                device_id, dtype=cast_dtype, non_blocking=True
+            )
             attention_mask = batch_laion[1][1].to(
                 device_id, dtype=cast_dtype, non_blocking=True
             )
@@ -125,7 +127,8 @@ def train_one_epoch(
                 # remove loss for any token before the first <image> token
                 label_idx = 0
                 while (
-                        label_idx < labels.shape[1] and labels[i][label_idx] != media_token_id
+                    label_idx < labels.shape[1]
+                    and labels[i][label_idx] != media_token_id
                 ):
                     labels[i][label_idx] = -100
                     label_idx += 1
@@ -135,8 +138,8 @@ def train_one_epoch(
                 for endofchunk_idx in endofchunk_idxs:
                     token_idx = endofchunk_idx + 1
                     while (
-                            token_idx < labels.shape[1]
-                            and labels[i][token_idx] != media_token_id
+                        token_idx < labels.shape[1]
+                        and labels[i][token_idx] != media_token_id
                     ):
                         labels[i][token_idx] = -100
                         token_idx += 1
@@ -165,8 +168,8 @@ def train_one_epoch(
 
             #### BACKWARD PASS ####
             loss = (
-                    divided_loss_laion * args.loss_multiplier_laion
-                    + divided_loss_mmc4 * args.loss_multiplier_mmc4
+                divided_loss_laion * args.loss_multiplier_laion
+                + divided_loss_mmc4 * args.loss_multiplier_mmc4
             )
             loss.backward()
 
@@ -175,7 +178,9 @@ def train_one_epoch(
             def mask_embedding(m):
                 if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
                     zero_mask = torch.zeros_like(m.weight.grad)
-                    zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+                    zero_mask[media_token_id] = torch.ones_like(
+                        zero_mask[media_token_id]
+                    )
                     zero_mask[endofchunk_token_id] = torch.ones_like(
                         zero_mask[endofchunk_token_id]
                     )
@@ -187,7 +192,7 @@ def train_one_epoch(
 
             # step optimizer and log
             if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
-                    num_steps == num_batches_per_epoch - 1
+                num_steps == num_batches_per_epoch - 1
             ):
                 optimizer.step()
                 lr_scheduler.step()
@@ -200,27 +205,27 @@ def train_one_epoch(
                 if args.rank == 0 and args.report_to_wandb:
                     # compute within rank 0
                     laion_samples_per_second = (
-                            args.gradient_accumulation_steps
-                            * args.batch_size_laion
-                            * args.world_size
-                            / step_time_m.val
+                        args.gradient_accumulation_steps
+                        * args.batch_size_laion
+                        * args.world_size
+                        / step_time_m.val
                     )
                     laion_samples_per_second_per_gpu = (
-                            args.gradient_accumulation_steps
-                            * args.batch_size_laion
-                            / step_time_m.val
+                        args.gradient_accumulation_steps
+                        * args.batch_size_laion
+                        / step_time_m.val
                     )
 
                     c4_samples_per_second = (
-                            args.gradient_accumulation_steps
-                            * args.batch_size_mmc4
-                            * args.world_size
-                            / step_time_m.val
+                        args.gradient_accumulation_steps
+                        * args.batch_size_mmc4
+                        * args.world_size
+                        / step_time_m.val
                     )
                     c4_samples_per_second_per_gpu = (
-                            args.gradient_accumulation_steps
-                            * args.batch_size_mmc4
-                            / step_time_m.val
+                        args.gradient_accumulation_steps
+                        * args.batch_size_mmc4
+                        / step_time_m.val
                     )
 
                     wandb.log(
@@ -246,7 +251,10 @@ def train_one_epoch(
                         commit=False,
                     )
                     wandb.log(
-                        {"loss_mmc4": divided_loss_mmc4.item(), "global_step": global_step},
+                        {
+                            "loss_mmc4": divided_loss_mmc4.item(),
+                            "global_step": global_step,
+                        },
                         commit=True,
                     )
 
@@ -258,10 +266,10 @@ def train_one_epoch(
     else:
         # loop through dataloader
         for num_steps, batch_laion in tqdm(
-                enumerate(laion_loader),
-                disable=args.rank != 0,
-                total=total_training_steps,
-                initial=(epoch * num_batches_per_epoch),
+            enumerate(laion_loader),
+            disable=args.rank != 0,
+            total=total_training_steps,
+            initial=(epoch * num_batches_per_epoch),
         ):
             data_time_m.update(time.time() - end)
 
@@ -275,7 +283,9 @@ def train_one_epoch(
                 .unsqueeze(1)
             )
 
-            input_ids = batch_laion[1][0].to(device_id, dtype=cast_dtype, non_blocking=True)
+            input_ids = batch_laion[1][0].to(
+                device_id, dtype=cast_dtype, non_blocking=True
+            )
             attention_mask = batch_laion[1][1].to(
                 device_id, dtype=cast_dtype, non_blocking=True
             )
@@ -301,7 +311,9 @@ def train_one_epoch(
             def mask_embedding(m):
                 if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
                     zero_mask = torch.zeros_like(m.weight.grad)
-                    zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+                    zero_mask[media_token_id] = torch.ones_like(
+                        zero_mask[media_token_id]
+                    )
                     zero_mask[endofchunk_token_id] = torch.ones_like(
                         zero_mask[endofchunk_token_id]
                     )
@@ -313,7 +325,7 @@ def train_one_epoch(
 
             # step optimizer and log
             if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
-                    num_steps == num_batches_per_epoch - 1
+                num_steps == num_batches_per_epoch - 1
             ):
                 optimizer.step()
                 lr_scheduler.step()
@@ -326,15 +338,15 @@ def train_one_epoch(
                 if args.rank == 0 and args.report_to_wandb:
                     # compute within rank 0
                     laion_samples_per_second = (
-                            args.gradient_accumulation_steps
-                            * args.batch_size_laion
-                            * args.world_size
-                            / step_time_m.val
+                        args.gradient_accumulation_steps
+                        * args.batch_size_laion
+                        * args.world_size
+                        / step_time_m.val
                     )
                     laion_samples_per_second_per_gpu = (
-                            args.gradient_accumulation_steps
-                            * args.batch_size_laion
-                            / step_time_m.val
+                        args.gradient_accumulation_steps
+                        * args.batch_size_laion
+                        / step_time_m.val
                     )
 
                     wandb.log(
