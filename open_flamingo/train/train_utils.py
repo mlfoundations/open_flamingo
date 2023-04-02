@@ -75,306 +75,268 @@ def train_one_epoch(
             total=total_training_steps,
             initial=(epoch * num_batches_per_epoch),
         ):
-            data_time_m.update(time.time() - end)
-
-            global_step = num_steps + epoch * num_batches_per_epoch
-
-            #### LAION FORWARD PASS ####
-            images = (
-                batch_laion[0]
-                .to(device_id, dtype=cast_dtype, non_blocking=True)
-                .unsqueeze(1)
-                .unsqueeze(1)
+            end, step_time_m, data_time_m, optimizer, lr_scheduler = train_step(
+                batch_laion=batch_laion,
+                batch_mmc4=batch_mmc4,
+                model=model,
+                tokenizer=tokenizer,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+                args=args,
+                device_id=device_id,
+                num_steps=num_steps,
+                epoch=epoch,
+                num_batches_per_epoch=num_batches_per_epoch,
+                autocast=autocast,
+                cast_dtype=cast_dtype,
+                media_token_id=media_token_id,
+                endofchunk_token_id=endofchunk_token_id,
+                end=end,
+                step_time_m=step_time_m,
+                data_time_m=data_time_m,
             )
-
-            input_ids = batch_laion[1][0].to(
-                device_id, dtype=cast_dtype, non_blocking=True
-            )
-            attention_mask = batch_laion[1][1].to(
-                device_id, dtype=cast_dtype, non_blocking=True
-            )
-
-            labels = input_ids.clone()
-            labels[labels == tokenizer.pad_token_id] = -100
-            labels[:, 0] = -100
-            labels[labels == media_token_id] = -100
-            labels.to(device_id)
-
-            with autocast():
-                loss_laion = model(
-                    vision_x=images,
-                    lang_x=input_ids,
-                    attention_mask=attention_mask,
-                    labels=labels,
-                )[0]
-            divided_loss_laion = loss_laion / args.gradient_accumulation_steps
-
-            #### C4 FORWARD PASS ####
-            images = (
-                batch_mmc4[0]
-                .to(device_id, dtype=cast_dtype, non_blocking=True)
-                .unsqueeze(2)
-            )
-            input_ids = torch.stack([x[0] for x in batch_mmc4[1]]).squeeze(1)
-            attention_mask = torch.stack([x[1] for x in batch_mmc4[1]]).squeeze(1)
-
-            # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
-            labels = input_ids.clone()
-            labels[labels == tokenizer.pad_token_id] = -100
-            labels[:, 0] = -100
-
-            for i in range(labels.shape[0]):
-                # remove loss for any token before the first <image> token
-                label_idx = 0
-                while (
-                    label_idx < labels.shape[1]
-                    and labels[i][label_idx] != media_token_id
-                ):
-                    labels[i][label_idx] = -100
-                    label_idx += 1
-
-                # get index of all endofchunk tokens in the sequence
-                endofchunk_idxs = torch.where(labels[i] == endofchunk_token_id)[0]
-                for endofchunk_idx in endofchunk_idxs:
-                    token_idx = endofchunk_idx + 1
-                    while (
-                        token_idx < labels.shape[1]
-                        and labels[i][token_idx] != media_token_id
-                    ):
-                        labels[i][token_idx] = -100
-                        token_idx += 1
-
-            labels[labels == media_token_id] = -100
-            labels.to(device_id)
-
-            with autocast():
-                loss_mmc4 = model(
-                    vision_x=images,
-                    lang_x=input_ids,
-                    attention_mask=attention_mask,
-                    labels=labels,
-                )[0]
-
-                # if loss is nan, skip this batch
-                if torch.isnan(loss_mmc4):
-                    print("loss is nan, skipping this batch")
-                    print("input_ids: ", tokenizer.batch_decode(input_ids))
-                    print("labels: ", labels)
-                    print("images: ", images)
-                    optimizer.zero_grad()
-                    continue
-
-            divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
-
-            #### BACKWARD PASS ####
-            loss = (
-                divided_loss_laion * args.loss_multiplier_laion
-                + divided_loss_mmc4 * args.loss_multiplier_mmc4
-            )
-            loss.backward()
-
-            #### MASK GRADIENTS FOR EMBEDDINGS ####
-            # Note (anas): Do not apply weight decay to embeddings as it will break this function.
-            def mask_embedding(m):
-                if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
-                    zero_mask = torch.zeros_like(m.weight.grad)
-                    zero_mask[media_token_id] = torch.ones_like(
-                        zero_mask[media_token_id]
-                    )
-                    zero_mask[endofchunk_token_id] = torch.ones_like(
-                        zero_mask[endofchunk_token_id]
-                    )
-                    m.weight.grad = m.weight.grad * zero_mask
-
-            model.apply(mask_embedding)
-
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-            # step optimizer and log
-            if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
-                num_steps == num_batches_per_epoch - 1
-            ):
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-
-                # step time and reset end outside of rank 0
-                step_time_m.update(time.time() - end)
-                end = time.time()
-
-                if args.rank == 0 and args.report_to_wandb:
-                    # compute within rank 0
-                    laion_samples_per_second = (
-                        args.gradient_accumulation_steps
-                        * args.batch_size_laion
-                        * args.world_size
-                        / step_time_m.val
-                    )
-                    laion_samples_per_second_per_gpu = (
-                        args.gradient_accumulation_steps
-                        * args.batch_size_laion
-                        / step_time_m.val
-                    )
-
-                    c4_samples_per_second = (
-                        args.gradient_accumulation_steps
-                        * args.batch_size_mmc4
-                        * args.world_size
-                        / step_time_m.val
-                    )
-                    c4_samples_per_second_per_gpu = (
-                        args.gradient_accumulation_steps
-                        * args.batch_size_mmc4
-                        / step_time_m.val
-                    )
-
-                    wandb.log(
-                        {
-                            "data_time": data_time_m.avg,
-                            "step_time": step_time_m.avg,
-                            "laion_samples_per_second": laion_samples_per_second,
-                            "laion_samples_per_second_per_gpu": laion_samples_per_second_per_gpu,
-                            "c4_samples_per_second": c4_samples_per_second,
-                            "c4_samples_per_second_per_gpu": c4_samples_per_second_per_gpu,
-                            "lr": optimizer.param_groups[0]["lr"],
-                        },
-                        commit=False,
-                    )
-                    step_time_m.reset()
-                    data_time_m.reset()
-
-                    wandb.log(
-                        {
-                            "loss_laion": divided_loss_laion.item(),
-                            "global_step": global_step,
-                        },
-                        commit=False,
-                    )
-                    wandb.log(
-                        {
-                            "loss_mmc4": divided_loss_mmc4.item(),
-                            "global_step": global_step,
-                        },
-                        commit=True,
-                    )
-
-            # Log loss to console
-            if ((num_steps + 1) % args.logging_steps == 0) and args.rank == 0:
-                print(
-                    f"Step {num_steps + 1}/{num_batches_per_epoch} of epoch {epoch + 1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f}"
-                )
     else:
-        # loop through dataloader
         for num_steps, batch_laion in tqdm(
             enumerate(laion_loader),
             disable=args.rank != 0,
             total=total_training_steps,
             initial=(epoch * num_batches_per_epoch),
         ):
-            data_time_m.update(time.time() - end)
-
-            global_step = num_steps + epoch * num_batches_per_epoch
-
-            #### LAION FORWARD PASS ####
-            images = (
-                batch_laion[0]
-                .to(device_id, dtype=cast_dtype, non_blocking=True)
-                .unsqueeze(1)
-                .unsqueeze(1)
+            end, step_time_m, data_time_m, optimizer, lr_scheduler = train_step(
+                batch_laion=batch_laion,
+                model=model,
+                tokenizer=tokenizer,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+                args=args,
+                device_id=device_id,
+                num_steps=num_steps,
+                epoch=epoch,
+                num_batches_per_epoch=num_batches_per_epoch,
+                autocast=autocast,
+                cast_dtype=cast_dtype,
+                media_token_id=media_token_id,
+                endofchunk_token_id=endofchunk_token_id,
+                end=end,
+                step_time_m=step_time_m,
+                data_time_m=data_time_m,
+                wandb=wandb,
             )
 
-            input_ids = batch_laion[1][0].to(
-                device_id, dtype=cast_dtype, non_blocking=True
-            )
-            attention_mask = batch_laion[1][1].to(
-                device_id, dtype=cast_dtype, non_blocking=True
-            )
 
-            labels = input_ids.clone()
-            labels[labels == tokenizer.pad_token_id] = -100
-            labels[:, 0] = -100
-            labels[labels == media_token_id] = -100
-            labels.to(device_id)
+def train_step(
+    batch_laion,
+    model,
+    tokenizer,
+    optimizer,
+    lr_scheduler,
+    args,
+    device_id,
+    num_steps,
+    epoch,
+    num_batches_per_epoch,
+    autocast,
+    cast_dtype,
+    media_token_id,
+    endofchunk_token_id,
+    end,
+    step_time_m,
+    data_time_m,
+    wandb,
+    batch_mmc4=None,
+):
+    data_time_m.update(time.time() - end)
 
-            with autocast():
-                loss_laion = model(
-                    vision_x=images,
-                    lang_x=input_ids,
-                    attention_mask=attention_mask,
-                    labels=labels,
-                )[0]
-            loss = loss_laion / args.gradient_accumulation_steps
-            loss.backward()
+    global_step = num_steps + epoch * num_batches_per_epoch
 
-            #### MASK GRADIENTS FOR EMBEDDINGS ####
-            # Note (anas): Do not apply weight decay to embeddings as it will break this function.
-            def mask_embedding(m):
-                if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
-                    zero_mask = torch.zeros_like(m.weight.grad)
-                    zero_mask[media_token_id] = torch.ones_like(
-                        zero_mask[media_token_id]
-                    )
-                    zero_mask[endofchunk_token_id] = torch.ones_like(
-                        zero_mask[endofchunk_token_id]
-                    )
-                    m.weight.grad = m.weight.grad * zero_mask
+    #### LAION FORWARD PASS ####
+    images = (
+        batch_laion[0]
+        .to(device_id, dtype=cast_dtype, non_blocking=True)
+        .unsqueeze(1)
+        .unsqueeze(1)
+    )
 
-            model.apply(mask_embedding)
+    input_ids = batch_laion[1][0].to(device_id, dtype=cast_dtype, non_blocking=True)
+    attention_mask = batch_laion[1][1].to(
+        device_id, dtype=cast_dtype, non_blocking=True
+    )
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    labels = input_ids.clone()
+    labels[labels == tokenizer.pad_token_id] = -100
+    labels[:, 0] = -100
+    labels[labels == media_token_id] = -100
+    labels.to(device_id)
 
-            # step optimizer and log
-            if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
-                num_steps == num_batches_per_epoch - 1
+    with autocast():
+        loss_laion = model(
+            vision_x=images,
+            lang_x=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+        )[0]
+    divided_loss_laion = loss_laion / args.gradient_accumulation_steps
+
+    if batch_mmc4 is not None:
+        #### C4 FORWARD PASS ####
+        images = (
+            batch_mmc4[0]
+            .to(device_id, dtype=cast_dtype, non_blocking=True)
+            .unsqueeze(2)
+        )
+        input_ids = torch.stack([x[0] for x in batch_mmc4[1]]).squeeze(1)
+        attention_mask = torch.stack([x[1] for x in batch_mmc4[1]]).squeeze(1)
+
+        # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
+        labels = input_ids.clone()
+        labels[labels == tokenizer.pad_token_id] = -100
+        labels[:, 0] = -100
+
+        for i in range(labels.shape[0]):
+            # remove loss for any token before the first <image> token
+            label_idx = 0
+            while (
+                label_idx < labels.shape[1] and labels[i][label_idx] != media_token_id
             ):
-                optimizer.step()
-                lr_scheduler.step()
+                labels[i][label_idx] = -100
+                label_idx += 1
+
+            # get index of all endofchunk tokens in the sequence
+            endofchunk_idxs = torch.where(labels[i] == endofchunk_token_id)[0]
+            for endofchunk_idx in endofchunk_idxs:
+                token_idx = endofchunk_idx + 1
+                while (
+                    token_idx < labels.shape[1]
+                    and labels[i][token_idx] != media_token_id
+                ):
+                    labels[i][token_idx] = -100
+                    token_idx += 1
+
+        labels[labels == media_token_id] = -100
+        labels.to(device_id)
+
+        with autocast():
+            loss_mmc4 = model(
+                vision_x=images,
+                lang_x=input_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+            )[0]
+
+            # if loss is nan, skip this batch
+            if torch.isnan(loss_mmc4):
+                print("loss is nan, skipping this batch")
+                print("input_ids: ", tokenizer.batch_decode(input_ids))
+                print("labels: ", labels)
+                print("images: ", images)
                 optimizer.zero_grad()
+                return end, step_time_m, data_time_m
 
-                # step time and reset end outside of rank 0
-                step_time_m.update(time.time() - end)
-                end = time.time()
+        divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
 
-                if args.rank == 0 and args.report_to_wandb:
-                    # compute within rank 0
-                    laion_samples_per_second = (
-                        args.gradient_accumulation_steps
-                        * args.batch_size_laion
-                        * args.world_size
-                        / step_time_m.val
-                    )
-                    laion_samples_per_second_per_gpu = (
-                        args.gradient_accumulation_steps
-                        * args.batch_size_laion
-                        / step_time_m.val
-                    )
+        #### BACKWARD PASS ####
+        loss = (
+            divided_loss_laion * args.loss_multiplier_laion
+            + divided_loss_mmc4 * args.loss_multiplier_mmc4
+        )
+    else:
+        loss = divided_loss_laion
+    loss.backward()
 
-                    wandb.log(
-                        {
-                            "data_time": data_time_m.avg,
-                            "step_time": step_time_m.avg,
-                            "laion_samples_per_second": laion_samples_per_second,
-                            "laion_samples_per_second_per_gpu": laion_samples_per_second_per_gpu,
-                            "lr": optimizer.param_groups[0]["lr"],
-                        },
-                        commit=False,
-                    )
-                    step_time_m.reset()
-                    data_time_m.reset()
+    #### MASK GRADIENTS FOR EMBEDDINGS ####
+    # Note (anas): Do not apply weight decay to embeddings as it will break this function.
+    def mask_embedding(m):
+        if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
+            zero_mask = torch.zeros_like(m.weight.grad)
+            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+            zero_mask[endofchunk_token_id] = torch.ones_like(
+                zero_mask[endofchunk_token_id]
+            )
+            m.weight.grad = m.weight.grad * zero_mask
 
-                    wandb.log(
-                        {
-                            "loss_laion": loss.item(),
-                            "global_step": global_step,
-                        },
-                        commit=False,
-                    )
+    model.apply(mask_embedding)
 
-            # Log loss to console
-            if ((num_steps + 1) % args.logging_steps == 0) and args.rank == 0:
-                print(
-                    f"Step {num_steps + 1}/{num_batches_per_epoch} of epoch {epoch + 1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f}"
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+    # step optimizer and log
+    if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
+        num_steps == num_batches_per_epoch - 1
+    ):
+        optimizer.step()
+        lr_scheduler.step()
+        optimizer.zero_grad()
+
+        # step time and reset end outside of rank 0
+        step_time_m.update(time.time() - end)
+        end = time.time()
+
+        if args.rank == 0 and args.report_to_wandb:
+            # compute within rank 0
+            laion_samples_per_second = (
+                args.gradient_accumulation_steps
+                * args.batch_size_laion
+                * args.world_size
+                / step_time_m.val
+            )
+            laion_samples_per_second_per_gpu = (
+                args.gradient_accumulation_steps
+                * args.batch_size_laion
+                / step_time_m.val
+            )
+
+            c4_samples_per_second = (
+                args.gradient_accumulation_steps
+                * args.batch_size_mmc4
+                * args.world_size
+                / step_time_m.val
+            )
+            c4_samples_per_second_per_gpu = (
+                args.gradient_accumulation_steps
+                * args.batch_size_mmc4
+                / step_time_m.val
+            )
+
+            wandb.log(
+                {
+                    "data_time": data_time_m.avg,
+                    "step_time": step_time_m.avg,
+                    "laion_samples_per_second": laion_samples_per_second,
+                    "laion_samples_per_second_per_gpu": laion_samples_per_second_per_gpu,
+                    "c4_samples_per_second": c4_samples_per_second,
+                    "c4_samples_per_second_per_gpu": c4_samples_per_second_per_gpu,
+                    "lr": optimizer.param_groups[0]["lr"],
+                },
+                commit=False,
+            )
+            step_time_m.reset()
+            data_time_m.reset()
+
+            if batch_mmc4 is not None:
+                wandb.log(
+                    {"loss_mmc4": divided_loss_mmc4.item(), "global_step": global_step},
+                    commit=False,
                 )
+
+            wandb.log(
+                {
+                    "loss_laion": divided_loss_laion.item(),
+                    "global_step": global_step,
+                },
+                commit=True,
+            )
+
+    # Log loss to console
+    if ((num_steps + 1) % args.logging_steps == 0) and args.rank == 0:
+        if batch_mmc4 is not None:
+            print(
+                f"Step {num_steps + 1}/{num_batches_per_epoch} of epoch {epoch + 1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f}"
+            )
+        else:
+            print(
+                f"Step {num_steps + 1}/{num_batches_per_epoch} of epoch {epoch + 1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f}"
+            )
+
+    return end, step_time_m, data_time_m, optimizer, lr_scheduler
 
 
 def get_checkpoint(model):
