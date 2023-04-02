@@ -230,7 +230,7 @@ def train_step(
                 print("labels: ", labels)
                 print("images: ", images)
                 optimizer.zero_grad()
-                return end, step_time_m, data_time_m
+                return end, step_time_m, data_time_m, optimizer, lr_scheduler
 
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
 
