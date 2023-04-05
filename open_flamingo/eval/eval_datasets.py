@@ -5,7 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
-from eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
+from open_flamingo.eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
 
 
 class COCOFlickrDataset(Dataset):

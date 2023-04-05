@@ -10,22 +10,22 @@ from typing import Callable
 import more_itertools
 import numpy as np
 import torch
-from eval.coco_metric import compute_cider, postprocess_captioning_generation
-from eval.eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
+from open_flamingo.eval.coco_metric import compute_cider, postprocess_captioning_generation
+from open_flamingo.eval.eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
-from eval.ok_vqa_utils import postprocess_ok_vqa_generation
-from eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from eval.classification import (
+from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
+from open_flamingo.eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
+from open_flamingo.eval.classification import (
     compute_per_sample_probs,
     compute_per_sample_loss,
 )
-from eval.imagenet_utils import (
+from open_flamingo.eval.imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
 )
 
-from src.factory import create_model_and_transforms
+from open_flamingo.src.factory import create_model_and_transforms
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--lm_path", type=str, default="facebook/opt-1.3b")
@@ -516,7 +516,9 @@ def evaluate_coco_flickr(
             return_tensors="pt",
             max_length=2000,
         )
-        return batch_images, [encodings["input_ids"], encodings["attention_mask"]]
+        
+        ### TESTING: return coco batch with shots
+        # return batch_images, [encodings["input_ids"], encodings["attention_mask"]]
 
         input_ids = encodings["input_ids"]
         attention_mask = encodings["attention_mask"]
