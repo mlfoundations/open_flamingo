@@ -286,17 +286,16 @@ def preprocess_text(sample, tokenizer):
 MIN_KB = 10
 MAX_NUM_IMAGES = 5
 
-
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
+def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
     image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
 
-    images, image_idxs = [], []
+    images, sentence_ixs = [], []
     for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
         # pick one image per sentence
-        if info["image_info"][image_path]["matched_text_index"] in image_idxs:
+        if info["image_info"][image_path]["matched_text_index"] in sentence_ixs:
             continue
         rawbytes = image_tar.extractfile(
             os.path.join(image_tar.getnames()[0], image_path)
@@ -310,16 +309,48 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
-        image_idxs.append(info["image_info"][image_path]["matched_text_index"])
+        sentence_ixs.append(info["image_info"][image_path]["matched_text_index"])
 
     if len(images) == 0:
         raise ValueError("No images in sample")
 
-    # filter out images that are exact duplicates
-    images_tensors = preprocess_image(images, clip_processor)
+    """
+    Augmentation
+    W.p. 1/2, shift which images the texts attend to.
+    Example:
+    - unaugmented: sentence0 | sentence0.5 | <image1> sentence1 | <image2> sentence2 | <image3> sentence3
+    - augmented: <image1> sentence0 | sentence0.5 | <image2> sentence1 | <image3> sentence2 | sentence3
+    Note that all following sentences attend to the same preceding image. So here, sentence3
+    also attends to image3.
+    Example:
+    - unaugmented: <image1> sentence1 | sentence1.5 | <image2> sentence2
+    - augmented: <image2> sentence1 | sentence1.5 | sentence2 (<image1> is discarded)
+    
+    This tries to match Flamingo & our previous augmentation.
+        One difference is that previously in the above example, sentence2 would just not attend to anything
+    Note that our data setup is a little different than what Flamingo does. 
+    We already place images right before the texts that are most semantically relevant.
+    However, we find that using some form of augmentation is very helpful.
+    """
+    do_shift = random.random() < 0.5 if use_media_placement_augmentation else False
+    if do_shift:
+        # minimum ix -> 0; everyone else -> previous
+        current = list(sorted(sentence_ixs))
+        if current[0] == 0: 
+            # drop first sample
+            current = current[1:]
+            sentence_ixs = sentence_ixs[1:]
+            images = images[1:]
+            if len(images) == 0: raise ValueError("No images in sample after augmenting")
+        shifted = [0] + current
+        shiftmap = dict(zip(current, shifted))
+        sentence_ixs = [shiftmap[ix] for ix in sentence_ixs]
+
+    # images -> tensors
+    images_tensors = preprocess_image(images, clip_processor)   
     keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
-    image_idxs = [image_idxs[ix] for ix in keep_ixs]
+    sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
 
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
@@ -330,7 +361,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
 
     # add in <image> and <eoc> tokens
     # eoc after sentence = "sentence loss"
-    for ix in image_idxs:
+    for ix in sentence_ixs:
         sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
 
     text = " ".join(sentences)
@@ -397,6 +428,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         clip_processor=image_processor,
         tokenizer=tokenizer,
         sim_threshold=args.mmc4_textsim_threshold,
+        use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
 
     # at this point we have an iterator over all the shards
