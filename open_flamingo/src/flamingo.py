@@ -149,6 +149,7 @@ class Flamingo(nn.Module):
         if num_beams > 1:
             vision_x = vision_x.repeat_interleave(num_beams, dim=0)
 
+        self.lang_encoder._generating = True
         self._encode_vision_x(vision_x=vision_x)
 
         output = self.lang_encoder.generate(
@@ -169,6 +170,7 @@ class Flamingo(nn.Module):
         )
 
         self.lang_encoder.clear_conditioned_layers()
+        self.lang_encoder._generating = False
         return output
 
     def _encode_vision_x(self, vision_x: torch.Tensor):

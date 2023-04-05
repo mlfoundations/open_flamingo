@@ -171,6 +171,14 @@ class MaskedCrossAttention(nn.Module):
             attend_previous: bool
                 If false, ignores immediately preceding image and starts attending when following image
         """
+
+        treat_as_suffix = media_locations.shape[1] != x.shape[1] # TODO: make this less hacky
+
+        print(f"Treating as suffix: {treat_as_suffix}")
+
+        attend_previous=True
+
+        T_txt = x.shape[1]
         _, T_img, n = media.shape[:3]
         h = self.heads
 
@@ -187,9 +195,17 @@ class MaskedCrossAttention(nn.Module):
         sim = einsum("... i d, ... j d -> ... i j", q, k)
 
         if exists(media_locations):
-            # at each boolean of True, increment the time counter (relative to media time)
-            text_time = media_locations.cumsum(dim=-1)
+
             media_time = torch.arange(T_img, device=x.device) + 1
+
+            if not treat_as_suffix:
+                # at each boolean of True, increment the time counter (relative to media time)
+                text_time = media_locations.cumsum(dim=-1)
+            else:
+                text_time = repeat(
+                    torch.count_nonzero(media_locations, dim=1),
+                    "b -> b i", i=T_txt,
+                )
 
             if not attend_previous:
                 text_time[~media_locations] += 1
@@ -199,7 +215,7 @@ class MaskedCrossAttention(nn.Module):
                     > repeat(
                         torch.count_nonzero(media_locations, dim=1),
                         "b -> b i",
-                        i=text_time.shape[1],
+                        i=T_txt,
                     )
                 ] = 0
 
@@ -223,6 +239,21 @@ class MaskedCrossAttention(nn.Module):
                 text_without_media_mask, "b i -> b 1 i 1"
             )
             attn = attn.masked_fill(text_without_media_mask, 0.0)
+        
+        ### TEST ATTENTION MASKS ###
+        print(f"Attend_previous is {attend_previous}")
+        print(f"Text batch shape is {x.shape}")
+        assert attn.shape == (x.shape[0], self.heads, x.shape[1], T_img * n), "attn shape should be b h T_txt (T_img n)"
+        mask = rearrange(
+            (attn != 0), "b h T_txt (T_img n) -> b h T_txt n T_img", n=n
+        )
+        batch_ix = 0
+        print(f"> Example {batch_ix}")
+        for image_ix in range(T_img):
+            print(f">> Image {image_ix}")
+            print(f"Attending tokens: {(mask[batch_ix, 0, :, 0, image_ix] != 0).nonzero(as_tuple=True)[0]}")
+        print(">>>>>>>>>")
+        ############
 
         out = einsum("... i j, ... j d -> ... i d", attn, v)
         out = rearrange(out, "b h n d -> b n (h d)")

@@ -16,7 +16,7 @@ class FlamingoLayer(nn.Module):
 
     def is_conditioned(self) -> bool:
         """Check whether the layer is conditioned."""
-        return self.vis_x is not None
+        return self.vis_x is not None and self.media_locations is not None
 
     # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
     def condition_vis_x(self, vis_x):
@@ -105,6 +105,7 @@ class FlamingoLMMixin(nn.Module):
         self.media_token_id = media_token_id
         self.use_media_placement_augmentation = use_media_placement_augmentation
         self.initialized_flamingo = True
+        self._generating = False
 
     def forward(self, *input, **kwargs):
         """Condition the Flamingo layers on the media locations before forward()"""
@@ -114,13 +115,24 @@ class FlamingoLMMixin(nn.Module):
             )
 
         input_ids = kwargs["input_ids"] if "input_ids" in kwargs else input[0]
-        media_locations = input_ids == self.media_token_id
+
+        """
+        Two modes
+        1. The text has media tokens inside, and sentences attend to 1+ previous media.
+            (This is the normal use case)
+        2. The text has no media tokens inside, but we actually want to treat the text
+            as a suffix and have it attend to the appropriate media (TODO: what to do about padding imgs?)
+            (This is useful for the generate fn, which repeatedly calls forward on one token at a time)
+        """
+        use_cached_media_locations = self._generating and self.is_conditioned()
+
         attend_previous = (
             (random.random() < 0.5) if self.use_media_placement_augmentation else False
         )
 
         for layer in self.get_decoder().layers:
-            layer.condition_media_locations(media_locations)
+            if not use_cached_media_locations: 
+                layer.condition_media_locations(input_ids == self.media_token_id)
             layer.condition_attend_previous(attend_previous)
 
         return super().forward(
