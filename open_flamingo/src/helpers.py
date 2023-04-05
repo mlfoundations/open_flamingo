@@ -228,20 +228,20 @@ class MaskedCrossAttention(nn.Module):
             )
             attn = attn.masked_fill(text_without_media_mask, 0.0)
         
-        ### TEST ATTENTION MASKS ###
-        print(f"Caching state is {use_cached_media}")
-        print(f"Text batch shape is {x.shape}")
-        assert attn.shape == (x.shape[0], self.heads, x.shape[1], T_img * n), "attn shape should be b h T_txt (T_img n)"
-        mask = rearrange(
-            (attn != 0), "b h T_txt (T_img n) -> b h T_txt n T_img", n=n
-        )
-        batch_ix = 0
-        print(f"> Example {batch_ix}")
-        for image_ix in range(T_img):
-            print(f">> Image {image_ix}")
-            print(f"Attending tokens: {(mask[batch_ix, 0, :, 0, image_ix] != 0).nonzero(as_tuple=True)[0]}")
-        print(">>>>>>>>>")
-        ############
+        # ### TEST ATTENTION MASKS ###
+        # print(f"Caching state is {use_cached_media}")
+        # print(f"Text batch shape is {x.shape}")
+        # assert attn.shape == (x.shape[0], self.heads, x.shape[1], T_img * n), "attn shape should be b h T_txt (T_img n)"
+        # mask = rearrange(
+        #     (attn != 0), "b h T_txt (T_img n) -> b h T_txt n T_img", n=n
+        # )
+        # batch_ix = 0
+        # print(f"> Example {batch_ix}")
+        # for image_ix in range(T_img):
+        #     print(f">> Image {image_ix}")
+        #     print(f"Attending tokens: {(mask[batch_ix, 0, :, 0, image_ix] != 0).nonzero(as_tuple=True)[0]}")
+        # print(">>>>>>>>>")
+        # ############
 
         out = einsum("... i j, ... j d -> ... i d", attn, v)
         out = rearrange(out, "b h n d -> b n (h d)")

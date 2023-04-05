@@ -180,6 +180,8 @@ def main():
     )
 
     checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
+    checkpoint = checkpoint['model_state_dict']
+    checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
     flamingo.load_state_dict(checkpoint, strict=False)
     flamingo.to(args.device if args.device >= 0 else "cpu")
 
@@ -457,7 +459,8 @@ def evaluate_coco_flickr(
         annotations_path=annotations_json_path,
         is_flickr=is_flickr,
     )
-    effective_num_shots = num_shots if num_shots > 0 else 2
+    effective_num_shots = num_shots 
+    # if num_shots > 0 else 2
     random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
@@ -567,7 +570,7 @@ def evaluate_coco_flickr(
     )
 
     # delete the temporary file
-    os.remove(results_path)
+    # os.remove(results_path)
 
     return metrics["CIDEr"] * 100.0
 
