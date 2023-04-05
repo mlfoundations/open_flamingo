@@ -182,7 +182,6 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
-        use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
 
     random_seed(args.seed, args.rank)

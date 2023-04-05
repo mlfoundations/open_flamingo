@@ -25,8 +25,8 @@ class FlamingoLayer(nn.Module):
     def condition_media_locations(self, media_locations):
         self.media_locations = media_locations
 
-    def condition_attend_previous(self, attend_previous):
-        self.attend_previous = attend_previous
+    def condition_use_cached_media(self, use_cached_media):
+        self.use_cached_media = use_cached_media
 
     def forward(
         self,
@@ -49,7 +49,7 @@ class FlamingoLayer(nn.Module):
             lang_x,
             self.vis_x,
             media_locations=self.media_locations,
-            attend_previous=self.attend_previous,
+            use_cached_media=self.use_cached_media,
         )
         lang_x = self.decoder_layer(
             lang_x, attention_mask=attention_mask, **decoder_layer_kwargs
@@ -76,7 +76,6 @@ class FlamingoLMMixin(nn.Module):
         media_token_id,
         vis_hidden_size,
         cross_attn_every_n_layers,
-        use_media_placement_augmentation,
     ):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
@@ -103,7 +102,6 @@ class FlamingoLMMixin(nn.Module):
             )
         )
         self.media_token_id = media_token_id
-        self.use_media_placement_augmentation = use_media_placement_augmentation
         self.initialized_flamingo = True
         self._generating = False
 
@@ -115,25 +113,17 @@ class FlamingoLMMixin(nn.Module):
             )
 
         input_ids = kwargs["input_ids"] if "input_ids" in kwargs else input[0]
-
-        """
-        Two modes
-        1. The text has media tokens inside, and sentences attend to 1+ previous media.
-            (This is the normal use case)
-        2. The text has no media tokens inside, but we actually want to treat the text
-            as a suffix and have it attend to the appropriate media (TODO: what to do about padding imgs?)
-            (This is useful for the generate fn, which repeatedly calls forward on one token at a time)
-        """
-        use_cached_media_locations = self._generating and self.is_conditioned()
-
-        attend_previous = (
-            (random.random() < 0.5) if self.use_media_placement_augmentation else False
-        )
+        media_locations = input_ids == self.media_token_id
+        
+        # if there are media already cached and we're generating and there are no media tokens in the input, 
+        # we'll assume that ALL input tokens should attend to the last previous media that is cached. 
+        # this is especially important for HF generate() compatibility,
+        # which calls forward() repeatedly one token at a time (with no media tokens)
+        use_cached_media_locations = self._generating and self.is_conditioned() and not media_locations.any()
 
         for layer in self.get_decoder().layers:
-            if not use_cached_media_locations: 
-                layer.condition_media_locations(input_ids == self.media_token_id)
-            layer.condition_attend_previous(attend_previous)
+            if not use_cached_media_locations: layer.condition_media_locations(media_locations)
+            layer.condition_use_cached_media(use_cached_media_locations)
 
         return super().forward(
             *input, **kwargs
@@ -147,4 +137,4 @@ class FlamingoLMMixin(nn.Module):
         for layer in self._get_decoder_layers():
             layer.condition_vis_x(None)
             layer.condition_media_locations(None)
-            layer.condition_attend_previous(None)
+            layer.condition_use_cached_media(None)
