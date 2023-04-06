@@ -459,7 +459,7 @@ def evaluate_coco_flickr(
         annotations_path=annotations_json_path,
         is_flickr=is_flickr,
     )
-    effective_num_shots = num_shots 
+    effective_num_shots = num_shots if num_shots > 0 else 2
     # if num_shots > 0 else 2
     random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
 
