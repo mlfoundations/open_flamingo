@@ -262,9 +262,10 @@ class ResampledShards2(IterableDataset):
 def preprocess_image(sample, image_processor):
     image = [image_processor(s).unsqueeze(0) for s in sample]
     image = torch.cat(image, dim=0)
-    # apply random horizontal flip and color jitter
+    # apply random horizontal flip
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
-    image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
+    # NOTE: potentially move jitter into the image_preprocessor before normalization
+    # image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
 
 
@@ -325,10 +326,10 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     Example:
     - unaugmented: <image1> sentence1 | sentence1.5 | <image2> sentence2
     - augmented: <image2> sentence1 | sentence1.5 | sentence2 (<image1> is discarded)
-    
+
     This tries to match Flamingo & our previous augmentation.
         One difference is that previously in the above example, sentence2 would just not attend to anything
-    Note that our data setup is a little different than what Flamingo does. 
+    Note that our data setup is a little different than what Flamingo does.
     We already place images right before the texts that are most semantically relevant.
     However, we find that using some form of augmentation is very helpful.
     """
@@ -336,7 +337,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     if do_shift:
         # minimum ix -> 0; everyone else -> previous
         current = list(sorted(sentence_ixs))
-        if current[0] == 0: 
+        if current[0] == 0:
             # drop first sample
             current = current[1:]
             sentence_ixs = sentence_ixs[1:]
@@ -347,7 +348,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         sentence_ixs = [shiftmap[ix] for ix in sentence_ixs]
 
     # images -> tensors
-    images_tensors = preprocess_image(images, clip_processor)   
+    images_tensors = preprocess_image(images, clip_processor)
     keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
