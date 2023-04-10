@@ -3,7 +3,7 @@ install: ## [Local development] Upgrade pip, install requirements, install packa
 	python -m pip install -e .
 
 install-dev: ## [Local development] Install test requirements
-	python -m pip install -r requirements-test.txt
+	python -m pip install -r requirements-dev.txt
 
 lint: ## [Local development] Run mypy, pylint and black
 	python -m mypy open_flamingo
