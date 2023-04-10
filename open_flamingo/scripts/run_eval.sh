@@ -38,7 +38,7 @@ python open_flamingo/eval/evaluate.py \
     --eval_vqav2 \
     --num_samples 5000 \
     --shots 8 \
-    --num_trials 1 \
+    --num_trials 1
 
 
 echo "evaluation complete! results written to ${RESULTS_FILE}"
