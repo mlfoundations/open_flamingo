@@ -264,7 +264,7 @@ def preprocess_image(sample, image_processor):
     image = torch.cat(image, dim=0)
     # apply random horizontal flip and color jitter
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
-    image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
+    # image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
 
 
@@ -284,8 +284,6 @@ def preprocess_text(sample, tokenizer):
 
 
 MIN_KB = 10
-MAX_NUM_IMAGES = 5
-
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
     tar_file_obj = io.BytesIO(sample[1])
@@ -293,23 +291,21 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     sentences = info["text_list"]
 
     images, sentence_ixs = [], []
-    for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
-        # pick one image per sentence
-        if info["image_info"][image_path]["matched_text_index"] in sentence_ixs:
-            continue
+    for sample_image in info["image_info"]:
+        tar_member = image_tar.getmember(sample_image["image_name"])
         rawbytes = image_tar.extractfile(
-            os.path.join(image_tar.getnames()[0], image_path)
+            tar_member
         ).read()
 
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
-        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold:
+        if sample_image["matched_sim"] < sim_threshold:
             continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
-        sentence_ixs.append(info["image_info"][image_path]["matched_text_index"])
+        sentence_ixs.append(sample_image["matched_text_index"])
 
     if len(images) == 0:
         raise ValueError("No images in sample")
@@ -398,7 +394,6 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
     )
 
-
 def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.mmc4_shards
     assert input_shards is not None
@@ -422,7 +417,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         ]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
-
+ 
     preprocess_fn = functools.partial(
         preprocess_interleaved,
         clip_processor=image_processor,
