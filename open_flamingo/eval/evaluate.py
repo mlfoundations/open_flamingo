@@ -460,7 +460,6 @@ def evaluate_coco_flickr(
         is_flickr=is_flickr,
     )
     effective_num_shots = num_shots if num_shots > 0 else 2
-    # if num_shots > 0 else 2
     random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(

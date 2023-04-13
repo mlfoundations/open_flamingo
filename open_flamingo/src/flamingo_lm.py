@@ -119,6 +119,7 @@ class FlamingoLMMixin(nn.Module):
         # we'll assume that ALL input tokens should attend to the last previous media that is cached. 
         # this is especially important for HF generate() compatibility,
         # which calls forward() repeatedly one token at a time (with no media tokens)
+        # TODO: refactor this out of flamingo_lm and into flamingo? so that it mirrors vis_x
         use_cached_media_locations = self._generating and self.is_conditioned() and not media_locations.any()
 
         for layer in self.get_decoder().layers:
