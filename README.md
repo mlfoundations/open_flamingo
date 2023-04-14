@@ -4,7 +4,7 @@
 
 [Blog post](https://laion.ai/blog/open-flamingo/) | Paper (coming soon)
 
-Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 9B model](https://huggingface.co/openflamingo/OpenFlamingo-9B) trained on a new Multimodal C4 dataset (coming soon). Please refer to our blog post for more details.
+Welcome to our open source version of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model) model! In this repository, we provide a PyTorch implementation for training and evaluating OpenFlamingo models. We also provide an initial [OpenFlamingo 9B model](https://huggingface.co/openflamingo/OpenFlamingo-9B) trained on a new [Multimodal C4](https://github.com/allenai/mmc4) dataset. Please refer to our blog post for more details.
 
 This repo is still under development, and we hope to release better performing and larger OpenFlamingo models soon. If you have any questions, please feel free to open an issue. We also welcome contributions!
 
@@ -135,7 +135,7 @@ print("Generated text: ", tokenizer.decode(generated_text[0]))
 ```
 
 # Approach
-OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. Multimodal C4) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context training.
+OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. [Multimodal C4](https://github.com/allenai/mmc4)) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context training.
 
 ## Model architecture
 OpenFlamingo seeks to fuse a pretrained vision encoder and a language model using cross attention layers. The model architecture is shown below.
@@ -168,7 +168,7 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
 
 ## Dataset
 We expect all our training datasets to be [WebDataset](https://github.com/webdataset/webdataset) shards.
-We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and Multimodal C4 (coming soon) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and Multimodal C4 comes packaged in the WebDataset format.
+We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and [Multimodal C4](https://github.com/allenai/mmc4) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and Multimodal C4 comes packaged in the WebDataset format.
 
 
 # Evaluation
