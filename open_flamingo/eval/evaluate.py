@@ -221,7 +221,6 @@ parser.add_argument("--imagenet_root", type=str, default="/tmp")
 
 def main():
     args = parser.parse_args()
-    print(f"batch_size: {args.batch_size}")
 
     # load model
     flamingo, image_processor, tokenizer = create_model_and_transforms(
