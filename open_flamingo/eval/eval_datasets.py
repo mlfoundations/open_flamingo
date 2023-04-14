@@ -63,6 +63,10 @@ class VQADataset(Dataset):
             return os.path.join(
                 self.image_dir_path, f"COCO_val2014_{question['image_id']:012d}.jpg"
             )
+        elif self.vqa_dataset == 'vizwiz':
+            return os.path.join(self.image_dir_path, question['image_id'])
+        elif self.vqa_dataset == 'textvqa':
+            return os.path.join(self.image_dir_path, f"{question['image_id']}.jpg")
         else:
             raise Exception(f"Unknown VQA dataset {self.vqa_dataset}")
 
@@ -71,6 +75,7 @@ class VQADataset(Dataset):
         answers = self.answers[idx]
         img_path = self.get_img_path(question)
         image = Image.open(img_path)
+        image.load()
         return {
             "image": image,
             "question": question["question"],
