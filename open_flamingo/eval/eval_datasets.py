@@ -30,6 +30,7 @@ class COCOFlickrDataset(Dataset):
 
     def __getitem__(self, idx):
         image = Image.open(self.get_img_path(idx))
+        image.load()
         caption = self.annotations[idx]["caption"]
         return {
             "image": image,
@@ -71,6 +72,7 @@ class VQADataset(Dataset):
         answers = self.answers[idx]
         img_path = self.get_img_path(question)
         image = Image.open(img_path)
+        image.load()
         return {
             "image": image,
             "question": question["question"],
