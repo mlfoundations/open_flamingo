@@ -25,6 +25,7 @@ from webdataset.tariterators import (
     url_opener,
     valid_sample,
 )
+import base64
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
@@ -286,17 +287,13 @@ def preprocess_text(sample, tokenizer):
 MIN_KB = 10
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
-    tar_file_obj = io.BytesIO(sample[1])
-    image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
 
     images, sentence_ixs = [], []
     for sample_image in info["image_info"]:
-        tar_member = image_tar.getmember(sample_image["image_name"])
-        rawbytes = image_tar.extractfile(
-            tar_member
-        ).read()
-
+        image_base64 = sample_image["image_base64"]
+        rawbytes = base64.b64decode(image_base64)
+        
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
@@ -454,7 +451,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
     pipeline.extend(
         [
-            wds.to_tuple("json", "tar", handler=log_and_continue),
+            wds.to_tuple("json", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size_mmc4, partial=False),
         ]
