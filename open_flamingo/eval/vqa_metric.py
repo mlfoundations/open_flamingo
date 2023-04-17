@@ -197,7 +197,8 @@ class VQA:
             qaAnn = self.qa[quesId]
             ann["image_id"] = qaAnn["image_id"]
             ann["question_type"] = qaAnn["question_type"]
-            ann["answer_type"] = qaAnn["answer_type"]
+            if 'answer_type' in ann:
+                ann["answer_type"] = qaAnn["answer_type"]
         print(
             "DONE (t=%0.2fs)" % ((datetime.datetime.utcnow() - time_t).total_seconds())
         )
@@ -425,7 +426,7 @@ class VQAEval:
                 acc = min(1, float(len(matchingAns)) / 3)
                 gtAcc.append(acc)
             quesType = gts[quesId]["question_type"]
-            ansType = gts[quesId]["answer_type"]
+            ansType = gts[quesId]["answer_type"] if 'answer_type' in gts[quesId] else "other"
             avgGTAcc = float(sum(gtAcc)) / len(gtAcc)
             accQA.append(avgGTAcc)
             if quesType not in accQuesType:
