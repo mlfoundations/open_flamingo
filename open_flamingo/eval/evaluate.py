@@ -84,6 +84,18 @@ parser.add_argument(
     help="Whether to evaluate on OK-VQA.",
 )
 parser.add_argument(
+    "--eval_vizwiz",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on VizWiz.",
+)
+parser.add_argument(
+    "--eval_textvqa",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on TextVQA.",
+)
+parser.add_argument(
     "--eval_imagenet",
     action="store_true",
     default=False,
@@ -160,6 +172,46 @@ parser.add_argument(
     "--ok_vqa_annotations_json_path",
     type=str,
     help="Path to the v2_mscoco_train2014_annotations.json file.",
+    default=None,
+)
+
+## VizWiz Dataset
+parser.add_argument(
+    "--vizwiz_image_dir_path",
+    type=str,
+    help="Path to the vizwiz validation images directory.",
+    default=None,
+)
+parser.add_argument(
+    "--vizwiz_questions_json_path",
+    type=str,
+    help="Path to the vizwiz questions json file.",
+    default=None,
+)
+parser.add_argument(
+    "--vizwiz_annotations_json_path",
+    type=str,
+    help="Path to the vizwiz annotations json file.",
+    default=None,
+)
+
+# TextVQA Dataset
+parser.add_argument(
+    "--textvqa_image_dir_path",
+    type=str,
+    help="Path to the textvqa images directory.",
+    default=None,
+)
+parser.add_argument(
+    "--textvqa_questions_json_path",
+    type=str,
+    help="Path to the textvqa questions json file.",
+    default=None,
+)
+parser.add_argument(
+    "--textvqa_annotations_json_path",
+    type=str,
+    help="Path to the textvqa annotations json file.",
     default=None,
 )
 
@@ -287,6 +339,58 @@ def main():
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
 
+    if args.eval_vizwiz:
+        print("Evaluating on VizWiz...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                vizwiz_score = evaluate_vqa(
+                    model=flamingo,
+                    tokenizer=tokenizer,
+                    image_processor=image_processor,
+                    batch_size=args.batch_size,
+                    num_samples=args.num_samples,
+                    num_shots=shot,
+                    device=args.device,
+                    seed=seed,
+                    image_dir_path=args.vizwiz_image_dir_path,
+                    questions_json_path=args.vizwiz_questions_json_path,
+                    annotations_json_path=args.vizwiz_annotations_json_path,
+                    vqa_dataset="vizwiz",
+                )
+                print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
+                scores.append(vizwiz_score)
+            print(f"Shots {shot} Mean VizWiz score: {np.mean(scores)}")
+            results["vizwiz"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+
+    if args.eval_textvqa:
+        print("Evaluating on TextVQA...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                textvqa_score = evaluate_vqa(
+                    model=flamingo,
+                    tokenizer=tokenizer,
+                    image_processor=image_processor,
+                    batch_size=args.batch_size,
+                    num_samples=args.num_samples,
+                    num_shots=shot,
+                    device=args.device,
+                    seed=seed,
+                    image_dir_path=args.textvqa_image_dir_path,
+                    questions_json_path=args.textvqa_questions_json_path,
+                    annotations_json_path=args.textvqa_annotations_json_path,
+                    vqa_dataset="textvqa",
+                )
+                print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
+                scores.append(textvqa_score)
+            print(f"Shots {shot} Mean TextVQA score: {np.mean(scores)}")
+            results["textvqa"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+
     if args.eval_imagenet:
         print("Evaluating on ImageNet...")
         for shot in args.shots:
@@ -320,7 +424,7 @@ def main():
 def get_random_indices(num_samples, query_set_size, full_dataset, seed):
     if num_samples + query_set_size > len(full_dataset):
         raise ValueError(
-            f"num_samples + num_shots must be less than {len(full_dataset)}"
+            f"num_samples + query_set_size must be less than {len(full_dataset)}"
         )
 
     # get a random subset of the dataset
@@ -587,7 +691,7 @@ def evaluate_vqa(
     vqa_dataset="vqa",
 ):
     """
-    Evaluate a model on VQA datasets. Currently supports VQA v2.0.
+    Evaluate a model on VQA datasets. Currently supports VQA v2.0, OK-VQA, VizWiz and TextVQA.
 
     Args:
         model (nn.Module): model to evaluate
@@ -619,7 +723,6 @@ def evaluate_vqa(
     )
 
     effective_num_shots = num_shots if num_shots > 0 else 2
-
     if num_samples + effective_num_shots > len(full_dataset):
         raise ValueError(
             f"num_samples + num_shots must be less than or equal to {len(full_dataset)}"
