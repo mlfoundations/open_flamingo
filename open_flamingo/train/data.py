@@ -25,6 +25,7 @@ from webdataset.tariterators import (
     url_opener,
     valid_sample,
 )
+import base64
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
@@ -285,32 +286,24 @@ def preprocess_text(sample, tokenizer):
 
 
 MIN_KB = 10
-MAX_NUM_IMAGES = 5
-
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
-    tar_file_obj = io.BytesIO(sample[1])
-    image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
 
     images, sentence_ixs = [], []
-    for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
-        # pick one image per sentence
-        if info["image_info"][image_path]["matched_text_index"] in sentence_ixs:
-            continue
-        rawbytes = image_tar.extractfile(
-            os.path.join(image_tar.getnames()[0], image_path)
-        ).read()
-
+    for sample_image in info["image_info"]:
+        image_base64 = sample_image["image_base64"]
+        rawbytes = base64.b64decode(image_base64)
+        
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
-        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold:
+        if sample_image["matched_sim"] < sim_threshold:
             continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
-        sentence_ixs.append(info["image_info"][image_path]["matched_text_index"])
+        sentence_ixs.append(sample_image["matched_text_index"])
 
     if len(images) == 0:
         raise ValueError("No images in sample")
@@ -399,7 +392,6 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
     )
 
-
 def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.mmc4_shards
     assert input_shards is not None
@@ -423,7 +415,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         ]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
-
+ 
     preprocess_fn = functools.partial(
         preprocess_interleaved,
         clip_processor=image_processor,
@@ -460,7 +452,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
     pipeline.extend(
         [
-            wds.to_tuple("json", "tar", handler=log_and_continue),
+            wds.to_tuple("json", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size_mmc4, partial=False),
         ]
