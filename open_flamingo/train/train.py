@@ -18,6 +18,7 @@ from transformers import (
     get_cosine_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
+from ema_pytorch import EMA
 
 from open_flamingo import create_model_and_transforms
 
@@ -149,6 +150,11 @@ def main():
         type=float,
         help="threshold for filtering images in mmc4 based on image-text similarity",
     )
+    parser.add_argument(
+        "--ema_beta",
+        default=0.9999999,
+        help="exponential moving average beta for model parameters",
+    )
 
     args = parser.parse_args()
 
@@ -200,6 +206,19 @@ def main():
     model = model.to(device_id)
 
     ddp_model = DDP(model, device_ids=[device_id])
+
+    if args.rank == 0:
+        ema = EMA(
+            model, beta=args.ema_beta, update_every=1, update_after_step=0, include_online_model=False, power=1, inv_gamma=1,
+        )
+        # Freeze all parameters
+        ema.ema_model.requires_grad_(False)
+
+        # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
+        # This is required to correctly save the checkpoint
+        ema.ema_model.perceiver.requires_grad_(True)
+        ema.ema_model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
+        ema.ema_model.lang_encoder.get_input_embeddings().requires_grad_(True)
 
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
     mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
@@ -299,6 +318,8 @@ def main():
         )
 
         if args.rank == 0:
+            ema.update()
+
             if not os.path.exists(args.run_name):
                 os.makedirs(args.run_name)
 
@@ -307,6 +328,7 @@ def main():
                 "model_state_dict": get_checkpoint(ddp_model),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "lr_scheduler_state_dict": lr_scheduler.state_dict(),
+                "ema_state_dict": get_checkpoint(ema.ema_model),
             }
 
             print(f"Saving checkpoint to {args.run_name}/checkpoint_{epoch}.pt")

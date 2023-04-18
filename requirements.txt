@@ -14,3 +14,4 @@ scipy
 inflection
 sentencepiece
 open_clip_torch
+ema-pytorch
