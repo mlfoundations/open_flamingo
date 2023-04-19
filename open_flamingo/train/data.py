@@ -286,6 +286,8 @@ def preprocess_text(sample, tokenizer):
 
 
 MIN_KB = 10
+
+
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     info = json.loads(sample[0])
     sentences = info["text_list"]
@@ -294,7 +296,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     for sample_image in info["image_info"]:
         image_base64 = sample_image["image_base64"]
         rawbytes = base64.b64decode(image_base64)
-        
+
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
@@ -360,6 +362,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
     )
 
+
 def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     input_shards = args.mmc4_shards
     assert input_shards is not None
@@ -383,7 +386,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         ]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
- 
+
     preprocess_fn = functools.partial(
         preprocess_interleaved,
         clip_processor=image_processor,

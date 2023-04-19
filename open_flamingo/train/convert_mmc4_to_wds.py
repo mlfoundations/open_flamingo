@@ -42,26 +42,25 @@ def main():
             image_tar = tarfile.open(image_shards[idx])
 
             # Open the ZIP archive and extract the JSON file
-            with zipfile.ZipFile(doc_shards[idx], 'r') as zip_file:
+            with zipfile.ZipFile(doc_shards[idx], "r") as zip_file:
                 # Assumes the JSON file is the first file in the archive
                 json_filename = zip_file.namelist()[0]
-                with zip_file.open(json_filename, 'r') as json_file:
+                with zip_file.open(json_filename, "r") as json_file:
                     for sample_data in json_file:
                         # get image names from json
                         sample_data = json.loads(sample_data)
                         image_info = sample_data["image_info"]
-                        image_names = [image["image_name"]
-                                       for image in image_info]
+                        image_names = [image["image_name"] for image in image_info]
 
                         # Add each image to the tar file
                         for img_idx, image_name in enumerate(image_names):
                             image = image_tar.extractfile(
-                                f"{image_tar.getnames()[0]}/{image_name}")
+                                f"{image_tar.getnames()[0]}/{image_name}"
+                            )
 
                             # convert to base64
                             image_bytes = image.read()
-                            image_base64 = base64.b64encode(
-                                image_bytes).decode("utf-8")
+                            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
                             sample_data["image_info"][img_idx][
                                 "image_base64"
                             ] = image_base64
