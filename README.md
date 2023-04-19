@@ -168,7 +168,7 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
 
 ## Dataset
 We expect all our training datasets to be [WebDataset](https://github.com/webdataset/webdataset) shards.
-We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and [Multimodal C4](https://github.com/allenai/mmc4) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and Multimodal C4 comes packaged in the WebDataset format.
+We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and [Multimodal C4](https://github.com/allenai/mmc4) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and Multimodal C4 can be converted to the WebDataset format using this [script](https://github.com/mlfoundations/open_flamingo/blob/main/open_flamingo/train/convert_mmc4_to_wds.py).
 
 
 # Evaluation
