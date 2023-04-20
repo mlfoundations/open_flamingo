@@ -30,9 +30,6 @@ def main():
     doc_shards = list(braceexpand.braceexpand(args.doc_shards))
     image_shards = list(braceexpand.braceexpand(args.image_shards))
 
-    print(doc_shards)
-    print(image_shards)
-
     assert len(doc_shards) == len(
         image_shards
     ), "Each doc shards must have a corresponding image shard"
