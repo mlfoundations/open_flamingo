@@ -25,6 +25,7 @@ from webdataset.tariterators import (
     url_opener,
     valid_sample,
 )
+import base64
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
@@ -262,8 +263,9 @@ class ResampledShards2(IterableDataset):
 def preprocess_image(sample, image_processor):
     image = [image_processor(s).unsqueeze(0) for s in sample]
     image = torch.cat(image, dim=0)
-    # apply random horizontal flip and color jitter
+    # apply random horizontal flip
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
+    # NOTE: potentially move jitter into the image_preprocessor before normalization
     # image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
 
@@ -286,17 +288,13 @@ def preprocess_text(sample, tokenizer):
 MIN_KB = 10
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
-    tar_file_obj = io.BytesIO(sample[1])
-    image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
 
     images, sentence_ixs = [], []
     for sample_image in info["image_info"]:
-        tar_member = image_tar.getmember(sample_image["image_name"])
-        rawbytes = image_tar.extractfile(
-            tar_member
-        ).read()
-
+        image_base64 = sample_image["image_base64"]
+        rawbytes = base64.b64decode(image_base64)
+        
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
@@ -321,10 +319,10 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     Example:
     - unaugmented: <image1> sentence1 | sentence1.5 | <image2> sentence2
     - augmented: <image2> sentence1 | sentence1.5 | sentence2 (<image1> is discarded)
-    
+
     This tries to match Flamingo & our previous augmentation.
         One difference is that previously in the above example, sentence2 would just not attend to anything
-    Note that our data setup is a little different than what Flamingo does. 
+    Note that our data setup is a little different than what Flamingo does.
     We already place images right before the texts that are most semantically relevant.
     However, we find that using some form of augmentation is very helpful.
     """
@@ -332,7 +330,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     if do_shift:
         # minimum ix -> 0; everyone else -> previous
         current = list(sorted(sentence_ixs))
-        if current[0] == 0: 
+        if current[0] == 0:
             # drop first sample
             current = current[1:]
             sentence_ixs = sentence_ixs[1:]
@@ -343,7 +341,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         sentence_ixs = [shiftmap[ix] for ix in sentence_ixs]
 
     # images -> tensors
-    images_tensors = preprocess_image(images, clip_processor)   
+    images_tensors = preprocess_image(images, clip_processor)
     keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
@@ -454,7 +452,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
     pipeline.extend(
         [
-            wds.to_tuple("json", "tar", handler=log_and_continue),
+            wds.to_tuple("json", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size_mmc4, partial=False),
         ]
