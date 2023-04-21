@@ -163,7 +163,7 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
 --lr_scheduler constant \
 --warmup_steps 5000 \
 --use_media_placement_augmentation \
---mmc4_textsim_threshold 30
+--mmc4_textsim_threshold 0.32
 ```
 
 ## Dataset
