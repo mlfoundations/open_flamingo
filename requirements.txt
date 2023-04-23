@@ -1,6 +1,6 @@
 einops
 einops-exts
-transformers
+transformers>=4.28.1
 torch
 torchvision
 pillow
@@ -13,4 +13,4 @@ nltk
 scipy
 inflection
 sentencepiece
-open_clip_torch
+open_clip_torch>=2.16.0
