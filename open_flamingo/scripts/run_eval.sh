@@ -8,7 +8,7 @@ LM_PATH="luodian/llama-7b-hf"
 LM_TOKENIZER_PATH="luodian/llama-7b-hf"
 VISION_ENCODER_NAME="ViT-L-14"
 VISION_ENCODER_PRETRAINED="openai"
-CKPT_PATH="checkpoint.pt"
+CKPT_PATH="openflamingo/OpenFlamingo-9B/checkpoint.pt"
 DEVICE="0"
 
 COCO_IMG_PATH="<path to coco>/train2017/"
