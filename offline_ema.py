@@ -24,6 +24,7 @@ parser.add_argument(
     help="path to tokenizer",
 )
 parser.add_argument("--ema_beta", default=0.5, type=float)
+parser.add_argument("--ema_power", default=1, type=float, help="Affects the growth rate of the EMA weights.")
 parser.add_argument("--last_ckpt", default=None, type=int)
 args = parser.parse_args()
 
@@ -39,7 +40,7 @@ model, _, _ = create_model_and_transforms(
     args.tokenizer_path if args.tokenizer_path else args.lm_path,
 )
 ema_model = EMA(
-    model, beta=args.ema_beta, update_every=1, update_after_step=0, include_online_model=False, power=1, inv_gamma=1,
+    model, beta=args.ema_beta, update_every=1, update_after_step=0, include_online_model=False, power=args.ema_power, inv_gamma=1,
 )
 
 def load_checkpoint(path, model):

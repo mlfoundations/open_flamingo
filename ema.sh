@@ -13,8 +13,14 @@
 
 cd /admin/home-irena/open_flamingo/
 
-BETA=0.999
+BETA=0.99999
 # BETA=0.9999999
 echo $BETA
 
-srun --cpu_bind=v --accel-bind=gn python offline_ema.py /fsx/home-anasawadalla/open_flamingo/open_flamingo/train/run1-opt1.3b-vit-L-14-laion2b-8node-mmc4-full-32-thresh --ema_beta ${BETA} --last_ckpt 79 --lm_path facebook/opt-1.3b
+POWER=0.1
+echo $POWER
+
+EPOCH=79
+echo $EPOCH
+
+srun --cpu_bind=v --accel-bind=gn python offline_ema.py /fsx/home-anasawadalla/open_flamingo/open_flamingo/train/run1-opt1.3b-vit-L-14-laion2b-8node-mmc4-full-32-thresh --ema_beta ${BETA} --ema_power ${POWER} --last_ckpt ${EPOCH} --lm_path facebook/opt-1.3b
