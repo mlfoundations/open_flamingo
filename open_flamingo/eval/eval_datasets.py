@@ -1,5 +1,6 @@
 import json
 import os
+from collections import defaultdict
 
 from PIL import Image
 from torch.utils.data import Dataset
@@ -17,25 +18,30 @@ class COCOFlickrDataset(Dataset):
     ):
         self.image_dir_path = image_dir_path
         self.annotations = json.load(open(annotations_path))["annotations"]
+        
+        # NOTE: Since coco has multiple annotation per image, we need to group them together to avoid duplicate images
+        self.image_ids = defaultdict(list)
+        for i, annotation in enumerate(self.annotations):
+            self.image_ids[annotation["image_id"]].append(i)
+        self.image_ids = list(self.image_ids.values())
         self.is_flickr = is_flickr
 
     def __len__(self):
-        return len(self.annotations)
+        return len(self.image_ids)
 
     def get_img_path(self, idx):
         if self.is_flickr:
-            return os.path.join(self.image_dir_path, self.annotations[idx]['image_id'] + ".jpg")
+            return f"{self.image_dir_path}/{self.annotations[self.image_ids[idx][0]]['image_id']}.jpg"
         else:
-            return os.path.join(self.image_dir_path, f"COCO_train2017_{self.annotations[idx]['image_id']:012d}.jpg")
+            return f"{self.image_dir_path}/{self.annotations[self.image_ids[idx][0]]['image_id']:012d}.jpg"
 
     def __getitem__(self, idx):
         image = Image.open(self.get_img_path(idx))
-        image.load()
-        caption = self.annotations[idx]["caption"]
+        caption = self.annotations[self.image_ids[idx][0]]["caption"]
         return {
             "image": image,
             "caption": caption,
-            "image_id": self.annotations[idx]["image_id"],
+            "image_id": self.annotations[self.image_ids[idx][0]]["image_id"],
         }
 
 
@@ -72,7 +78,6 @@ class VQADataset(Dataset):
         answers = self.answers[idx]
         img_path = self.get_img_path(question)
         image = Image.open(img_path)
-        image.load()
         return {
             "image": image,
             "question": question["question"],
