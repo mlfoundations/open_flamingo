@@ -24,7 +24,7 @@ class COCOFlickrDataset(Dataset):
 
     def get_img_path(self, idx):
         if self.is_flickr:
-            return os.path.join(self.image_dir_path, self.annotations[idx]['image_id']} + ".jpg")
+            return os.path.join(self.image_dir_path, self.annotations[idx]['image_id'] + ".jpg")
         else:
             return os.path.join(self.image_dir_path, f"COCO_train2017_{self.annotations[idx]['image_id']:012d}.jpg")
 
