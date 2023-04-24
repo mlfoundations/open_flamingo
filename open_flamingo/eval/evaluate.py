@@ -10,12 +10,12 @@ from typing import Callable
 import more_itertools
 import numpy as np
 import torch
-from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
+from open_flamingo.eval.coco_metric import compute_cider, postprocess_captioning_generation
+from open_flamingo.eval.eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
+from open_flamingo.eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 from open_flamingo.eval.classification import (
     compute_per_sample_probs,
     compute_per_sample_loss,
@@ -63,6 +63,7 @@ parser.add_argument(
 
 parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--device", type=int, default=0)
+parser.add_argument("--eval_mode", type=str, default="validation", choices=["validation", "test"])
 
 # Per-dataset evaluation flags
 parser.add_argument(
@@ -101,13 +102,25 @@ parser.add_argument(
 
 ## Flickr30 Dataset
 parser.add_argument(
-    "--flickr_image_dir_path",
+    "--flickr_train_image_dir_path",
     type=str,
     help="Path to the flickr30/flickr30k_images directory.",
     default=None,
 )
 parser.add_argument(
-    "--flickr_annotations_json_path",
+    "--flickr_train_annotations_json_path",
+    type=str,
+    help="Path to the dataset_flickr30k_coco_style.json file.",
+    default=None,
+)
+parser.add_argument(
+    "--flickr_test_image_dir_path",
+    type=str,
+    help="Path to the flickr30/flickr30k_images directory.",
+    default=None,
+)
+parser.add_argument(
+    "--flickr_test_annotations_json_path",
     type=str,
     help="Path to the dataset_flickr30k_coco_style.json file.",
     default=None,
@@ -115,51 +128,93 @@ parser.add_argument(
 
 ## COCO Dataset
 parser.add_argument(
-    "--coco_image_dir_path",
+    "--coco_train_image_dir_path",
     type=str,
-    help="Path to the flickr30/flickr30k_images directory.",
     default=None,
 )
 parser.add_argument(
-    "--coco_annotations_json_path",
+    "--coco_train_annotations_json_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--coco_test_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--coco_test_annotations_json_path",
     type=str,
     default=None,
 )
 
 ## VQAV2 Dataset
 parser.add_argument(
-    "--vqav2_image_dir_path",
+    "--vqav2_train_image_dir_path",
     type=str,
     default=None,
 )
 parser.add_argument(
-    "--vqav2_questions_json_path",
+    "--vqav2_train_questions_json_path",
     type=str,
     default=None,
 )
 parser.add_argument(
-    "--vqav2_annotations_json_path",
+    "--vqav2_train_annotations_json_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--vqav2_test_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--vqav2_test_questions_json_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--vqav2_test_annotations_json_path",
     type=str,
     default=None,
 )
 
 ## OK-VQA Dataset
 parser.add_argument(
-    "--ok_vqa_image_dir_path",
+    "--ok_vqa_train_image_dir_path",
     type=str,
     help="Path to the vqav2/train2014 directory.",
     default=None,
 )
 parser.add_argument(
-    "--ok_vqa_questions_json_path",
+    "--ok_vqa_train_questions_json_path",
     type=str,
     help="Path to the v2_OpenEnded_mscoco_train2014_questions.json file.",
     default=None,
 )
 parser.add_argument(
-    "--ok_vqa_annotations_json_path",
+    "--ok_vqa_train_annotations_json_path",
     type=str,
     help="Path to the v2_mscoco_train2014_annotations.json file.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_test_image_dir_path",
+    type=str,
+    help="Path to the vqav2/val2014 directory.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_test_questions_json_path",
+    type=str,
+    help="Path to the v2_OpenEnded_mscoco_val2014_questions.json file.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_test_annotations_json_path",
+    type=str,
+    help="Path to the v2_mscoco_val2014_annotations.json file.",
     default=None,
 )
 
@@ -180,6 +235,8 @@ def main():
     )
 
     checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
+    checkpoint = checkpoint['model_state_dict']
+    checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
     flamingo.load_state_dict(checkpoint, strict=False)
     flamingo.to(args.device if args.device >= 0 else "cpu")
 
@@ -195,8 +252,11 @@ def main():
                     tokenizer=tokenizer,
                     image_processor=image_processor,
                     batch_size=args.batch_size,
-                    image_dir_path=args.flickr_image_dir_path,
-                    annotations_json_path=args.flickr_annotations_json_path,
+                    train_image_dir_path=args.flickr_train_image_dir_path,
+                    train_annotations_json_path=args.flickr_train_annotations_json_path,
+                    test_image_dir_path=args.flickr_test_image_dir_path,
+                    test_annotations_json_path=args.flickr_test_annotations_json_path,
+                    eval_mode=args.eval_mode,
                     num_samples=args.num_samples,
                     num_shots=shot,
                     device=args.device,
@@ -221,8 +281,11 @@ def main():
                     tokenizer=tokenizer,
                     image_processor=image_processor,
                     batch_size=args.batch_size,
-                    image_dir_path=args.coco_image_dir_path,
-                    annotations_json_path=args.coco_annotations_json_path,
+                    train_image_dir_path=args.coco_train_image_dir_path,
+                    train_annotations_json_path=args.coco_train_annotations_json_path,
+                    test_image_dir_path=args.coco_test_image_dir_path,
+                    test_annotations_json_path=args.coco_test_annotations_json_path,
+                    eval_mode=args.eval_mode,
                     num_samples=args.num_samples,
                     num_shots=shot,
                     device=args.device,
@@ -249,9 +312,13 @@ def main():
                     num_shots=shot,
                     device=args.device,
                     seed=seed,
-                    image_dir_path=args.ok_vqa_image_dir_path,
-                    questions_json_path=args.ok_vqa_questions_json_path,
-                    annotations_json_path=args.ok_vqa_annotations_json_path,
+                    train_image_dir_path=args.ok_vqa_train_image_dir_path,
+                    train_questions_json_path=args.ok_vqa_train_questions_json_path,
+                    train_annotations_json_path=args.ok_vqa_train_annotations_json_path,
+                    test_image_dir_path=args.ok_vqa_test_image_dir_path,
+                    test_questions_json_path=args.ok_vqa_test_questions_json_path,
+                    test_annotations_json_path=args.ok_vqa_test_annotations_json_path,
+                    eval_mode=args.eval_mode,
                     vqa_dataset="ok_vqa",
                 )
                 print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
@@ -275,9 +342,13 @@ def main():
                     num_shots=shot,
                     device=args.device,
                     seed=seed,
-                    image_dir_path=args.vqav2_image_dir_path,
-                    questions_json_path=args.vqav2_questions_json_path,
-                    annotations_json_path=args.vqav2_annotations_json_path,
+                    train_image_dir_path=args.vqa_train_image_dir_path,
+                    train_questions_json_path=args.vqa_train_questions_json_path,
+                    train_annotations_json_path=args.vqa_train_annotations_json_path,
+                    test_image_dir_path=args.vqa_test_image_dir_path,
+                    test_questions_json_path=args.vqa_test_questions_json_path,
+                    test_annotations_json_path=args.vqa_test_annotations_json_path,
+                    eval_mode=args.eval_mode,
                     vqa_dataset="vqa",
                 )
                 print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
@@ -317,16 +388,16 @@ def main():
             json.dump(results, f)
 
 
-def get_random_indices(num_samples, query_set_size, full_dataset, seed):
-    if num_samples + query_set_size > len(full_dataset):
+def get_random_indices(num_samples, dataset, seed):
+    if num_samples > len(dataset):
         raise ValueError(
-            f"num_samples + num_shots must be less than {len(full_dataset)}"
+            f"num_samples must be less than {len(dataset)}"
         )
 
     # get a random subset of the dataset
     np.random.seed(seed)
     random_indices = np.random.choice(
-        len(full_dataset), num_samples + query_set_size, replace=False
+        len(dataset), num_samples, replace=False
     )
     return random_indices
 
@@ -415,9 +486,12 @@ def evaluate_coco_flickr(
     tokenizer,
     image_processor,
     batch_size,
-    image_dir_path,
-    annotations_json_path,
+    train_image_dir_path,
+    train_annotations_json_path,
+    eval_image_dir_path=None,
+    eval_annotations_json_path=None,
     seed=42,
+    eval_mode="validation",
     max_generation_length=20,
     num_beams=3,
     length_penalty=-2.0,
@@ -434,9 +508,12 @@ def evaluate_coco_flickr(
         tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
         image_processor : image processor for the model
         batch_size (int): batch size
-        image_dir_path (str, optional): path to the directory containing the images.
-        annotations_json_path (str, optional): path to the json file containing the annotations.
+        train_image_dir_path (str, optional): path to the directory containing the images for training.
+        train_annotations_json_path (str, optional): path to the json file containing the annotations for training.
+        eval_image_dir_path (str, optional): path to the directory containing the images for evaluation. Defaults to None.
+        eval_annotations_json_path (str, optional): path to the json file containing the annotations for evaluation. Defaults to None.
         seed (int, optional): seed for random number generator. Defaults to 42.
+        eval_mode (str, optional): type of evaluation. Defaults to "validation" (can be "validation" or "test").
         max_generation_length (int, optional): maximum length of the generated caption. Defaults to 10.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
@@ -451,19 +528,33 @@ def evaluate_coco_flickr(
         float: CIDEr score
 
     """
-
-    full_dataset = COCOFlickrDataset(
-        image_dir_path=image_dir_path,
-        annotations_path=annotations_json_path,
+    
+    train_dataset = COCOFlickrDataset(
+        image_dir_path=train_image_dir_path,
+        annotations_path=train_annotations_json_path,
         is_flickr=is_flickr,
     )
+    
+    if eval_mode == "test":
+        eval_dataset = COCOFlickrDataset(
+            image_dir_path=eval_image_dir_path,
+            annotations_path=eval_annotations_json_path,
+            is_flickr=is_flickr,
+        )
+    
     effective_num_shots = num_shots if num_shots > 0 else 2
-    random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
+    
+    random_indices_train_dataset = get_random_indices(num_samples+query_set_size if eval_mode == "validation" else num_samples, train_dataset, seed)
+    if eval_mode == "validation":
+        random_indices_eval_dataset = random_indices_train_dataset[:query_set_size]
+        random_indices_train_dataset = random_indices_train_dataset[query_set_size:]
+    else:
+        random_indices_eval_dataset = get_random_indices(query_set_size, eval_dataset, seed)
 
-    in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
-        full_dataset=full_dataset,
-        random_indices=random_indices,
-        query_set_size=query_set_size,
+    in_context_samples = [train_dataset[i] for i in random_indices_train_dataset]
+
+    eval_dataset = torch.utils.data.Subset(
+        train_dataset if eval_mode == "validation" else eval_dataset, random_indices_eval_dataset
     )
 
     model.eval()
@@ -516,6 +607,7 @@ def evaluate_coco_flickr(
             return_tensors="pt",
             max_length=2000,
         )
+
         input_ids = encodings["input_ids"]
         attention_mask = encodings["attention_mask"]
 
@@ -559,7 +651,7 @@ def evaluate_coco_flickr(
 
     metrics = compute_cider(
         result_path=results_path,
-        annotations_path=annotations_json_path,
+        annotations_path=eval_annotations_json_path if eval_mode == "test" else train_annotations_json_path,
     )
 
     # delete the temporary file
@@ -573,9 +665,13 @@ def evaluate_vqa(
     tokenizer,
     image_processor,
     batch_size,
-    image_dir_path,
-    questions_json_path,
-    annotations_json_path,
+    train_image_dir_path,
+    train_questions_json_path,
+    train_annotations_json_path,
+    eval_image_dir_path=None,
+    eval_questions_json_path=None,
+    eval_annotations_json_path=None,
+    eval_mode="validation",
     seed=42,
     max_generation_length=5,
     num_beams=3,
@@ -587,16 +683,20 @@ def evaluate_vqa(
     vqa_dataset="vqa",
 ):
     """
-    Evaluate a model on VQA datasets. Currently supports VQA v2.0.
+    Evaluate a model on VQA datasets. Currently supports VQA v2.0 and OKVQA.
 
     Args:
         model (nn.Module): model to evaluate
         tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
         image_processor : image processor for the model
         batch_size (int): batch size
-        image_dir_path (str): path to image directory
-        questions_json_path (str): path to questions json file
-        annotations_json_path (str): path to annotations json file
+        train_image_dir_path (str): path to image directory
+        train_questions_json_path (str): path to questions json file
+        train_annotations_json_path (str): path to annotations json file
+        eval_image_dir_path (str): path to image directory. Defaults to None.
+        eval_questions_json_path (str): path to questions json file. Defaults to None.
+        eval_annotations_json_path (str): path to annotations json file. Defaults to None.
+        eval_mode (str, optional): type of evaluation. Defaults to "validation".
         seed (int, optional): random seed. Defaults to 42.
         max_generation_length (int, optional): max generation length. Defaults to 5.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
@@ -611,30 +711,38 @@ def evaluate_vqa(
         float: accuracy score
     """
 
-    full_dataset = VQADataset(
-        image_dir_path=image_dir_path,
-        question_path=questions_json_path,
-        annotations_path=annotations_json_path,
+    train_dataset = VQADataset(
+        image_dir_path=train_image_dir_path,
+        question_path=train_questions_json_path,
+        annotations_path=train_annotations_json_path,
         vqa_dataset=vqa_dataset,
     )
+    
+    if eval_mode == "test":
+        eval_dataset = VQADataset(
+            image_dir_path=eval_image_dir_path,
+            question_path=eval_questions_json_path,
+            annotations_path=eval_annotations_json_path,
+            vqa_dataset=vqa_dataset,
+        )
 
     effective_num_shots = num_shots if num_shots > 0 else 2
 
-    if num_samples + effective_num_shots > len(full_dataset):
-        raise ValueError(
-            f"num_samples + num_shots must be less than or equal to {len(full_dataset)}"
-        )
+    random_indices_train_dataset = get_random_indices(num_samples+query_set_size if eval_mode == "validation" else num_samples, train_dataset, seed)
+    if eval_mode == "validation":
+        random_indices_eval_dataset = random_indices_train_dataset[:query_set_size]
+        random_indices_train_dataset = random_indices_train_dataset[query_set_size:]
+    else:
+        random_indices_eval_dataset = get_random_indices(query_set_size, eval_dataset, seed)
 
-    random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
+    in_context_samples = [train_dataset[i] for i in random_indices_train_dataset]
 
-    def get_prompt(sample, train=True):
-        return f"<image>Question:{sample['question'].strip()} Short Answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
-
-    in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
-        full_dataset=full_dataset,
-        random_indices=random_indices,
-        query_set_size=query_set_size,
+    eval_dataset = torch.utils.data.Subset(
+        train_dataset if eval_mode == "validation" else eval_dataset, random_indices_eval_dataset
     )
+    
+    def get_prompt(sample, train=True):
+        return f"<image>Question:{sample['question'].strip()} Answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
 
     model.eval()
     predictions = []
@@ -710,7 +818,7 @@ def evaluate_vqa(
             process_function(out)
             for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ]
-
+        
         predictions.extend(
             [
                 {"answer": p, "question_id": sample["question_id"]}
@@ -724,8 +832,8 @@ def evaluate_vqa(
 
     acc = compute_vqa_accuracy(
         f"{vqa_dataset}results_{random_uuid}.json",
-        questions_json_path,
-        annotations_json_path,
+        eval_questions_json_path if eval_mode == "test" else train_questions_json_path,
+        eval_annotations_json_path if eval_mode == "test" else train_annotations_json_path,
     )
 
     # delete the temporary file
