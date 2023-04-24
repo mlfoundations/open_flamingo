@@ -170,10 +170,6 @@ We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laio
 # Evaluation
 We currently support running evaluations on [COCO](https://cocodataset.org/#home), [VQAv2](https://visualqa.org/index.html), [OKVQA](https://okvqa.allenai.org), [Flickr30k](https://www.kaggle.com/datasets/hsankesara/flickr-image-dataset), and [ImageNet](https://image-net.org/index.php). Note that currently these evaluations are ran in validation mode (as specified in the Flamingo paper). We will be adding support for running evaluations in test mode in the future.
 
-Before evaluating the model, you will need to install the coco evaluation package by running the following command:
-```
-pip install pycocoevalcap
-```
 
 To run evaluations on OKVQA you will need to run the following command:
 ```
