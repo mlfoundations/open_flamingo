@@ -4,7 +4,7 @@ This is the evaluation module of OpenFlamingo. It contains a set of utilities fo
 
 *This module is a work in progress! We will be updating this README as it develops. In the meantime, if you notice an issue, please file a Bug Report or Feature Request [here](https://github.com/mlfoundations/open_flamingo/issues/new/choose).*
 
-# Running the evaluation suite on OpenFlamingo
+# Running the evaluation suite on OpenFlamingo-9B
 
 The easiest way to run the evaluation suite is by using the script at `open_flamingo/open_flamingo/scripts/run_eval.sh`.
 
