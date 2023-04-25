@@ -11,7 +11,7 @@
 #SBATCH --open-mode=append
 #SBATCH --exclusive
 
-cd /admin/home-irena/open_flamingo/
+cd /admin/home-irena/open_flamingo_experimental/
 
 BETA=0.99999
 # BETA=0.9999999

@@ -72,6 +72,6 @@ ema_model.ema_model.lang_encoder.get_input_embeddings().requires_grad_(True)
 torch.save({
     "model_state_dict": get_checkpoint(ema_model.ema_model),
     "step": ema_model.step,
-}, f"/fsx/home-irena/opt1.3b-ema/ema_{args.ema_beta}_{'final' if args.last_ckpt is None else args.last_ckpt}.pt")
+}, f"/fsx/home-irena/opt1.3b-ema/ema_{args.ema_beta}_{args.ema_power}_{'final' if args.last_ckpt is None else args.last_ckpt}.pt")
 
 print("DONE")
