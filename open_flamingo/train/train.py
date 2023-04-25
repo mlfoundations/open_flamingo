@@ -61,6 +61,7 @@ def main():
     parser.add_argument("--batch_size_mmc4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--gradient_checkpointing", action="store_true")
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
@@ -182,6 +183,7 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
+        grad_checkpointing=args.gradient_checkpointing,
     )
 
     random_seed(args.seed, args.rank)

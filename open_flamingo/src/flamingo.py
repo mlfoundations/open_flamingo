@@ -2,6 +2,9 @@ import torch
 from einops import rearrange
 from torch import nn
 
+from torch.utils.checkpoint import checkpoint
+
+
 from .helpers import PerceiverResampler
 
 
@@ -14,6 +17,7 @@ class Flamingo(nn.Module):
         media_token_id: int,
         vis_dim: int,
         cross_attn_every_n_layers: int = 1,
+        grad_checkpointing: bool = False,
     ):
         """
         Args:
@@ -36,7 +40,9 @@ class Flamingo(nn.Module):
             media_token_id=media_token_id,
             vis_hidden_size=self.vis_dim,
             cross_attn_every_n_layers=cross_attn_every_n_layers,
+            grad_checkpointing=grad_checkpointing,
         )
+        self._grad_checkpointing = grad_checkpointing
 
     def forward(
         self,
@@ -190,7 +196,20 @@ class Flamingo(nn.Module):
             vision_x = self.vision_encoder.visual(vision_x)[1]
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
 
-        vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
+        if self._grad_checkpointing:
+            vision_x = checkpoint(self.perceiver, vision_x, use_reentrant=False)  # reshapes to (b, T, n, d)
+        else:
+            vision_x = self.perceiver(vision_x)
 
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_x)
+
+    def set_grad_checkpointing(self, grad_checkpointing: bool):
+        """
+        Set whether to use gradient checkpointing.
+        Args:
+            grad_checkpointing (bool): Whether to use gradient checkpointing.
+        """
+        self._grad_checkpointing = grad_checkpointing
+        for layer in self.lang_encoder._get_decoder_layers():
+            layer._grad_checkpointing = grad_checkpointing
