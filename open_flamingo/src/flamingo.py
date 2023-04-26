@@ -58,7 +58,8 @@ class Flamingo(nn.Module):
 
         Args:
             vision_x (torch.Tensor): Vision input
-                shape (B, T_img, F, C, H, W) with F=1
+                shape (B, T_img, F, C, H, W) with F=1 (images)
+                or (B, T_img, F, D) with F=1 (clip features)
             lang_x (torch.Tensor): Language input ids
                 shape (B, T_txt)
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
@@ -126,7 +127,8 @@ class Flamingo(nn.Module):
 
         Args:
             vision_x (torch.Tensor): Vision input
-                shape (B, T_img, F, C, H, W)
+                shape (B, T_img, F, C, H, W) for images
+                or (B, T_img, F, D) for clip features
                 images in the same chunk are collated along T_img, and frames are collated along F
                 currently only F=1 is supported (single-frame videos)
             lang_x (torch.Tensor): Language input
@@ -176,21 +178,27 @@ class Flamingo(nn.Module):
         Compute media tokens from vision input by passing it through vision encoder and conditioning language model.
         Args:
             vision_x (torch.Tensor): Vision input
-                shape (B, T_img, F, C, H, W)
+                shape (B, T_img, F, C, H, W) or (B, T_img, F, D)
                 Images in the same chunk are collated along T_img, and frames are collated along F
                 Currently only F=1 is supported (single-frame videos)
 
         rearrange code based on https://github.com/dhansmair/flamingo-mini
         """
 
-        assert vision_x.ndim == 6, "vision_x should be of shape (b, T_img, F, C, H, W)"
+        assert vision_x.ndim == 6 or vision_x.ndim == 4, "vision_x should be of shape (b, T_img, F, C, H, W) or (b, T_img, F, D)"
         b, T, F = vision_x.shape[:3]
         assert F == 1, "Only single frame supported"
 
-        vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
-        with torch.no_grad():
-            vision_x = self.vision_encoder.encode_image(vision_x).unsqueeze(1) # b d -> b v d
-        vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
+        if vision_x.ndim == 6:
+            # images
+            vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
+            with torch.no_grad():
+                vision_x = self.vision_encoder.encode_image(vision_x).unsqueeze(1) # b d -> b v d
+            vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
+
+        else:
+            # already encoded clip features
+            vision_x = rearrange(vision_x, "b T F d -> b T F 1 d")
 
         vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
 
