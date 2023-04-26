@@ -112,6 +112,7 @@ def filter_no_caption_or_no_image(sample):
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
+    return True
     if "No images in sample" in str(exn) or "Only one image in sample" in str(
         exn
     ):  # Avoid spamming logs with these

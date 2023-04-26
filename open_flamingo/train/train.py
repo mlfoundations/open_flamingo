@@ -5,6 +5,7 @@ import copy
 import glob
 import os
 import random
+import re
 
 import numpy as np
 import torch
@@ -18,6 +19,13 @@ from transformers import (
     get_cosine_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
+
+from functools import partial
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+
+from torch.distributed.fsdp import flat_param
 
 from open_flamingo import create_model_and_transforms
 
@@ -128,6 +136,31 @@ def main():
         action="store_true",
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
     )
+    parser.add_argument(
+        "--fsdp",
+        default=False,
+        action="store_true"
+    )
+    parser.add_argument(
+        "--fsdp-layers-to-wrap",
+        default=(
+            'VisionTransformer',
+            'CLIP',
+            'PerceiverResampler',
+            'OPTDecoderLayer',
+            'AutoTokenizer',
+            'GatedCrossAttentionBlock', # learned
+            'Embedding', # learned
+            'OPTLearnedPositionalEmbedding',
+        ),
+        type=str,
+        nargs='+'
+    )
+    parser.add_argument(
+        "--fsdp-cpu-offload",
+        default=False,
+        action="store_true",
+    )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
     parser.add_argument(
@@ -199,9 +232,75 @@ def main():
         )
 
     device_id = args.rank % torch.cuda.device_count()
+
+    print("Before model.to: GPU memory allocated:", torch.cuda.memory_allocated() / 1024 ** 3, "GB")
+
+    device_id = args.rank % torch.cuda.device_count()
+
+    model.lang_encoder = model.lang_encoder.to(device_id)
+    print("After lang_encoder.to: GPU memory allocated:", torch.cuda.memory_allocated() / 1024 ** 3, "GB")
+
+    model.vision_encoder = model.vision_encoder.to(device_id)
+    print("After vision_encoder.to: GPU memory allocated:", torch.cuda.memory_allocated() / 1024 ** 3, "GB")
+
     model = model.to(device_id)
 
-    ddp_model = DDP(model, device_ids=[device_id])
+    print(device_id)
+    print("After model.to: GPU memory allocated:", torch.cuda.memory_allocated() / 1024 ** 3, "GB")
+
+    if args.fsdp:
+        #model = model.cpu()
+        if args.rank == 0: print(f"Before FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+        if args.rank == 0: print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+        mp = MixedPrecision(
+            reduce_dtype=torch.bfloat16,
+        )
+        layers = set()
+        for module in model.modules():
+            an_error = False
+            name = module.__class__.__name__
+            for layer in args.fsdp_layers_to_wrap:
+                if re.match(layer, name):
+                    
+                    layers.add(module.__class__)
+            
+                    list_of_bools = []
+                    list_of_names = []
+                    for n, p in module.named_parameters():
+                        list_of_bools.append(p.requires_grad)
+                        list_of_names.append(n)
+                        if list_of_bools[-1] != list_of_bools[0]:
+                            an_error = True
+                    
+                    if an_error:
+                        print("ERROR: not all parameters in layer have same requires_grad")
+                        print(n, name)
+                        print(list_of_bools)
+                        print(list_of_names)
+                        exit()
+        print("Wrapped layers", layers)
+        wrapper_kwargs = dict(
+            mixed_precision=mp,
+            cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
+            auto_wrap_policy=partial(
+                transformer_auto_wrap_policy,
+                transformer_layer_cls=layers,
+            ),
+            device_id=device_id,
+            ignored_modules=[
+                # model.lang_encoder.gated_cross_attn_layers, # is this necessary?
+                model.lang_encoder.model.decoder.final_layer_norm,
+            ]
+            # ignored_modules=[model.lang_encoder.model.decoder.final_layer_norm]
+            # flatten_parameters=False,
+        )
+        ddp_model = FSDP(model, **wrapper_kwargs)
+        if args.rank == 0: print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+        if args.rank == 0: print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+    else:
+        ddp_model = DDP(model, device_ids=[device_id])
+
+    if args.rank == 0: print(model)
 
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
     mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")

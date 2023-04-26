@@ -101,8 +101,8 @@ class Flamingo(nn.Module):
             use_cache=use_cache,
         )
 
-        if clear_conditioned_layers:
-            self.lang_encoder.clear_conditioned_layers()
+        # if clear_conditioned_layers:
+        #     self.lang_encoder.clear_conditioned_layers()
 
         return output
 
@@ -213,3 +213,17 @@ class Flamingo(nn.Module):
         self._grad_checkpointing = grad_checkpointing
         for layer in self.lang_encoder._get_decoder_layers():
             layer._grad_checkpointing = grad_checkpointing
+
+    # @property
+    # def fsdp_modules(self):
+    #     """
+    #     Returns list of modules that should be individually wrapped by FSDP.
+    #     Note: all parameters within these modules should have the same
+    #     requires_grad.
+    #     Note: all forks in the computational graph should be included in this        
+    #     """
+    #     return [
+    #         self.perceiver,
+    #         self.vision_encoder.visual,
+
+    #     ]

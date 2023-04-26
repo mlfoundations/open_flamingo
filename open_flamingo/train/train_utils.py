@@ -166,18 +166,22 @@ def train_one_epoch(
         )
         loss.backward()
 
+        model.lang_encoder.clear_conditioned_layers()
+
         #### MASK GRADIENTS FOR EMBEDDINGS ####
         # Note (anas): Do not apply weight decay to embeddings as it will break this function.
-        def mask_embedding(m):
-            if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
-                zero_mask = torch.zeros_like(m.weight.grad)
-                zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-                zero_mask[endofchunk_token_id] = torch.ones_like(
-                    zero_mask[endofchunk_token_id]
-                )
-                m.weight.grad = m.weight.grad * zero_mask
 
-        model.apply(mask_embedding)
+        # TODO: this does not work with FSDP.
+        # def mask_embedding(m):
+        #     if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
+        #         zero_mask = torch.zeros_like(m.weight.grad)
+        #         zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+        #         zero_mask[endofchunk_token_id] = torch.ones_like(
+        #             zero_mask[endofchunk_token_id]
+        #         )
+        #         m.weight.grad = m.weight.grad * zero_mask
+
+        # model.apply(mask_embedding)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
@@ -257,6 +261,7 @@ def get_checkpoint(model):
     state_dict = model.state_dict()
 
     for name, p in model.named_parameters():
+        if 'fsdp' in name: continue
         if not p.requires_grad:
             del state_dict[name]
 
