@@ -66,8 +66,8 @@ def create_model_and_transforms(
         lang_encoder,
         text_tokenizer.encode("<|endofchunk|>")[-1],
         text_tokenizer.encode("<image>")[-1],
-        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
-            "width"
+        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)[
+            "embed_dim"
         ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
         **flamingo_kwargs,

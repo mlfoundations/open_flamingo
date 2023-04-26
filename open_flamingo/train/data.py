@@ -294,24 +294,17 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
 
     images, sentence_ixs = [], []
     for sample_image in info["image_info"]:
-        image_base64 = sample_image["image_base64"]
-        rawbytes = base64.b64decode(image_base64)
-
-        # filter to images >= 10KB
-        if len(rawbytes) // 1000 <= MIN_KB:
-            continue
+        clip_features = torch.Tensor(sample_image["clip_features"])
         if sample_image["matched_sim"] < sim_threshold:
             continue
-        image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
-
-        images.append(image)
+        images.append(clip_features)
         sentence_ixs.append(sample_image["matched_text_index"])
 
     if len(images) == 0:
         raise ValueError("No images in sample")
 
     # images -> tensors
-    images_tensors = preprocess_image(images, clip_processor)
+    images_tensors = torch.stack(images)
     keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
@@ -319,7 +312,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
         zero_padding = torch.zeros(
-            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+            (MAX_NUM_IMAGES - len(images_tensors), 768), dtype=torch.float
         )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
@@ -349,7 +342,6 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
             tokenizer.additional_special_tokens.index("<image>")
         ]
     )
-
     if num_images == 0:
         raise ValueError("No images in sample")
     elif (

@@ -1,10 +1,9 @@
 import argparse
-import base64
 import json
 import os
-import tarfile
 import uuid
 import zipfile
+import pickle
 
 import braceexpand
 import webdataset as wds
@@ -14,12 +13,12 @@ arg_parser.add_argument("--output_dir", type=str)
 arg_parser.add_argument(
     "--image_shards",
     type=str,
-    help="Pass in a list of shards in the format path_to_shard/shard_{0..23098}_images_v2.tar",
+    help="Pass in a list of shards in the format path_to_shard/shard_{0..23098}_features.pkl",
 )
 arg_parser.add_argument(
     "--doc_shards",
     type=str,
-    help="Pass in a list of shards in the format path_to_shard/docs_shard_{0..23098}_v2.jsonl.zip",
+    help="Pass in a list of shards in the format path_to_shard/shard_{0..23098}.zip",
 )
 args = arg_parser.parse_args()
 
@@ -36,7 +35,8 @@ def main():
 
     with wds.ShardWriter(args.output_dir + "/%09d.tar", maxcount=1000) as sink:
         for idx in range(len(doc_shards)):
-            image_tar = tarfile.open(image_shards[idx])
+
+            image_dict = pickle.load(open(image_shards[idx], 'rb'))
 
             # Open the ZIP archive and extract the JSON file
             with zipfile.ZipFile(doc_shards[idx], "r") as zip_file:
@@ -51,21 +51,15 @@ def main():
 
                         # Add each image to the tar file
                         for img_idx, image_name in enumerate(image_names):
-                            image = image_tar.extractfile(
-                                f"{image_tar.getnames()[0]}/{image_name}"
-                            )
+                            clip_features = image_dict[image_name]
 
-                            # convert to base64
-                            image_bytes = image.read()
-                            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                            # # convert to base64
                             sample_data["image_info"][img_idx][
-                                "image_base64"
-                            ] = image_base64
+                                "clip_features"
+                            ] = clip_features.tolist()
 
                         key_str = uuid.uuid4().hex
                         sink.write({"__key__": key_str, "json": sample_data})
-
-            image_tar.close()
 
 
 if __name__ == "__main__":
