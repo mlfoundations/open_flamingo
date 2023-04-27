@@ -193,7 +193,7 @@ class Flamingo(nn.Module):
             # images
             vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
             with torch.no_grad():
-                vision_x = self.vision_encoder.encode_image(vision_x).unsqueeze(1) # b d -> b v d
+                vision_x = self.vision_encoder.encode_image(vision_x)[0].unsqueeze(1) # b d -> b v d
             vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
 
         else:
