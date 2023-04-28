@@ -7,6 +7,17 @@ from torch.utils.checkpoint import checkpoint
 
 from .helpers import PerceiverResampler
 
+from torch.distributed.fsdp.wrap import (
+   enable_wrap,
+   wrap,
+)
+
+from functools import partial
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+
+from torch.distributed.fsdp import flat_param
 
 class Flamingo(nn.Module):
     def __init__(
@@ -214,16 +225,40 @@ class Flamingo(nn.Module):
         for layer in self.lang_encoder._get_decoder_layers():
             layer._grad_checkpointing = grad_checkpointing
 
-    # @property
-    # def fsdp_modules(self):
-    #     """
-    #     Returns list of modules that should be individually wrapped by FSDP.
-    #     Note: all parameters within these modules should have the same
-    #     requires_grad.
-    #     Note: all forks in the computational graph should be included in this        
-    #     """
-    #     return [
-    #         self.perceiver,
-    #         self.vision_encoder.visual,
+    def wrap_fsdp(self, wrapper_kwargs):
+        """
+        Manually wraps submodules for FSDP
+        We have to manually wrap very carefully because all parameters within the FSDP
+        wrapper must have the same requires_grad.
+        model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors (not sure why)
+        See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
 
-    #     ]
+        Irena: I'm assuming that the model is being trained under normal Flamingo settings
+        with these lines being called in factory.py:
+            ```
+            # Freeze all parameters
+            model.requires_grad_(False)
+            assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+
+            # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
+            model.perceiver.requires_grad_(True)
+            model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
+            model.lang_encoder.get_input_embeddings().requires_grad_(True)
+            ```
+        """
+        with enable_wrap(wrapper_cls=FSDP, **wrapper_kwargs):
+            self.perceiver = wrap(self.perceiver)
+            self.lang_encoder.old_decoder_blocks = nn.ModuleList(
+                wrap(block) for block in self.lang_encoder.old_decoder_blocks
+            )
+            self.lang_encoder.gated_cross_attn_layers = nn.ModuleList(
+                wrap(layer) if layer is not None else None
+                for layer in self.lang_encoder.gated_cross_attn_layers
+            )
+            self.lang_encoder.init_flamingo_layers(self._grad_checkpointing)
+            self.lang_encoder.set_input_embeddings(
+                wrap(self.lang_encoder.get_input_embeddings())
+            )
+            # may be able to wrap CLIP more cleverly
+            self.vision_encoder.visual = wrap(self.vision_encoder.visual)
+            self.vision_encoder = wrap(self.vision_encoder)

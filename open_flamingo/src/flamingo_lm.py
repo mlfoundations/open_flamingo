@@ -101,7 +101,7 @@ class FlamingoLMMixin(nn.Module):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
         """
-
+        self.old_decoder_blocks = self._get_decoder_layers()
         self.gated_cross_attn_layers = nn.ModuleList(
             [
                 GatedCrossAttentionBlock(
@@ -112,19 +112,26 @@ class FlamingoLMMixin(nn.Module):
                 for layer_idx, _ in enumerate(self._get_decoder_layers())
             ]
         )
+        self.init_flamingo_layers(grad_checkpointing)
+        self.media_token_id = media_token_id
+        self.initialized_flamingo = True
+        self._generating = False
+
+    def init_flamingo_layers(self, grad_checkpointing):
+        """
+        Re initializes the FlamingoLayers. 
+        Propagates any changes made to self.gated_corss_attn_layers or self.old_decoder_blocks
+        """
         self._set_decoder_layers(
             nn.ModuleList(
                 [
                     FlamingoLayer(gated_cross_attn_layer, decoder_layer, grad_checkpointing)
                     for gated_cross_attn_layer, decoder_layer in zip(
-                        self.gated_cross_attn_layers, self._get_decoder_layers()
+                        self.gated_cross_attn_layers, self.old_decoder_blocks
                     )
                 ]
             )
         )
-        self.media_token_id = media_token_id
-        self.initialized_flamingo = True
-        self._generating = False
 
     def forward(self, *input, **kwargs):
         """Condition the Flamingo layers on the media locations before forward()"""

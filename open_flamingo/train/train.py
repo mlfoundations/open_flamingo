@@ -20,12 +20,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from functools import partial
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
-
-from torch.distributed.fsdp import flat_param
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType
 
 from open_flamingo import create_model_and_transforms
 
@@ -142,25 +137,10 @@ def main():
         action="store_true"
     )
     parser.add_argument(
-        "--fsdp-layers-to-wrap",
-        default=(
-            'VisionTransformer',
-            'CLIP',
-            'PerceiverResampler',
-            'OPTDecoderLayer',
-            'AutoTokenizer',
-            'GatedCrossAttentionBlock', # learned
-            'Embedding', # learned
-            'OPTLearnedPositionalEmbedding',
-        ),
-        type=str,
-        nargs='+'
+        "--fsdp_cpu_offload",
+        default=False,
+        action="store_true",
     )
-    # parser.add_argument(
-    #     "--fsdp-cpu-offload",
-    #     default=False,
-    #     action="store_true",
-    # )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
     parser.add_argument(
@@ -267,56 +247,39 @@ def main():
     Model initialization: Unlike DDP, FSDP does not automatically synchronize model weights between GPU workers. 
     This means model initialization must be done carefully so that all GPU workers have the identical initial weights.
     """
-    # TODO: gradient ckpting, mixed precision, cpu offloading
+    model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
+
     if args.fsdp:
-        # custom wrapping policy; TODO: streamline this
-        layers = set()
-        for module in model.modules():
-            an_error = False
-            name = module.__class__.__name__
-            for layer in args.fsdp_layers_to_wrap:
-                if re.match(layer, name):
-                    
-                    layers.add(module.__class__)
-            
-                    list_of_bools = []
-                    list_of_names = []
-                    for n, p in module.named_parameters():
-                        list_of_bools.append(p.requires_grad)
-                        list_of_names.append(n)
-                        if list_of_bools[-1] != list_of_bools[0]:
-                            an_error = True
-                    
-                    if an_error:
-                        print("ERROR: not all parameters in layer have same requires_grad")
-                        print(n, name)
-                        print(list_of_bools)
-                        print(list_of_names)
-                        exit()
-        print("Wrapped layers", layers)
+        # TODO: gradient ckpting, mixed precision
+        if args.rank == 0: 
+            print(f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
 
         # init FSDP
         wrapper_kwargs = dict(
-            cpu_offload=CPUOffload(offload_params=False),
-            auto_wrap_policy=partial(
-                transformer_auto_wrap_policy,
-                transformer_layer_cls=layers,
-            ),
+            cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
             device_id=device_id,
             sync_module_states=True, # sanity check; loaded weights are on rank 0
-            ignored_modules=[
-                model.lang_encoder.model.decoder.final_layer_norm, # OPT hack; TODO: streamline wrapping policy
-            ]
         )
-        ddp_model = FSDP(model, **wrapper_kwargs)
+        model.wrap_fsdp(wrapper_kwargs)
+        ddp_model = model
+
+        # tiny test case
+        vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
+        lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
+        out = ddp_model(
+            vision_x, 
+            lang_x["input_ids"],
+            lang_x["attention_mask"],
+        )
+        print(out)
 
         if args.rank == 0: 
             print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
-            print(model) # to check wrapping
+            #print(model) # to check wrapping
     
     else:
-        model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
 
     """
