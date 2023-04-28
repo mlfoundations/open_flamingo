@@ -20,7 +20,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType
+from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy
 
 from open_flamingo import create_model_and_transforms
 
@@ -260,9 +260,15 @@ def main():
             cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
             device_id=device_id,
             sync_module_states=True, # sanity check; loaded weights are on rank 0
+            sharding_strategy=ShardingStrategy.FULL_SHARD,
         )
         model.wrap_fsdp(wrapper_kwargs)
         ddp_model = model
+
+        if args.rank == 0: 
+            print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+            print(model) # to check wrapping
 
         # tiny test case
         vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
@@ -273,11 +279,6 @@ def main():
             lang_x["attention_mask"],
         )
         print(out)
-
-        if args.rank == 0: 
-            print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
-            print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
-            #print(model) # to check wrapping
     
     else:
         ddp_model = DDP(model, device_ids=[device_id])
