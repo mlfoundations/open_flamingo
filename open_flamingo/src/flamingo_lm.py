@@ -9,13 +9,13 @@ from .utils import getattr_recursive, setattr_recursive
 
 
 class FlamingoLayer(nn.Module):
-    def __init__(self, gated_cross_attn_layer, decoder_layer, grad_checkpointing):
+    def __init__(self, gated_cross_attn_layer, decoder_layer, gradient_checkpointing=False):
         super().__init__()
         self.gated_cross_attn_layer = gated_cross_attn_layer
         self.decoder_layer = decoder_layer
         self.vis_x = None
         self.media_locations = None
-        self._grad_checkpointing = grad_checkpointing
+        self._use_gradient_checkpointing = gradient_checkpointing
 
     def is_conditioned(self) -> bool:
         """Check whether the layer is conditioned."""
@@ -45,35 +45,17 @@ class FlamingoLayer(nn.Module):
             if self.media_locations is None:
                 raise ValueError("media_locations must be conditioned before forward pass")
 
-            if self._grad_checkpointing:
-                lang_x = checkpoint(
-                    self.gated_cross_attn_layer,
-                    lang_x,
-                    self.vis_x,
-                    use_reentrant=False,
-                    media_locations=self.media_locations,
-                    use_cached_media=self.use_cached_media,
-                )
-            else:
-                lang_x = self.gated_cross_attn_layer(
-                    lang_x,
-                    self.vis_x,
-                    media_locations=self.media_locations,
-                    use_cached_media=self.use_cached_media,
-                )
+            lang_x = self.gated_cross_attn_layer(
+                lang_x,
+                self.vis_x,
+                media_locations=self.media_locations,
+                use_cached_media=self.use_cached_media,
+            )
 
         # Normal decoder layer
-        if self._grad_checkpointing:
-            lang_x = checkpoint(
-                self.decoder_layer,
-                lang_x, 
-                use_reentrant=False,
-                attention_mask=attention_mask, **decoder_layer_kwargs
-            )
-        else:
-            lang_x = self.decoder_layer(
-                lang_x, attention_mask=attention_mask, **decoder_layer_kwargs
-            )
+        lang_x = self.decoder_layer(
+            lang_x, attention_mask=attention_mask, **decoder_layer_kwargs
+        )
         return lang_x
 
 
@@ -96,7 +78,7 @@ class FlamingoLMMixin(nn.Module):
         media_token_id,
         vis_hidden_size,
         cross_attn_every_n_layers,
-        grad_checkpointing,
+        gradient_checkpointing,
     ):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
@@ -112,12 +94,12 @@ class FlamingoLMMixin(nn.Module):
                 for layer_idx, _ in enumerate(self._get_decoder_layers())
             ]
         )
-        self.init_flamingo_layers(grad_checkpointing)
+        self.init_flamingo_layers(gradient_checkpointing)
         self.media_token_id = media_token_id
         self.initialized_flamingo = True
         self._generating = False
 
-    def init_flamingo_layers(self, grad_checkpointing):
+    def init_flamingo_layers(self, gradient_checkpointing):
         """
         Re initializes the FlamingoLayers. 
         Propagates any changes made to self.gated_corss_attn_layers or self.old_decoder_blocks
@@ -125,7 +107,7 @@ class FlamingoLMMixin(nn.Module):
         self._set_decoder_layers(
             nn.ModuleList(
                 [
-                    FlamingoLayer(gated_cross_attn_layer, decoder_layer, grad_checkpointing)
+                    FlamingoLayer(gated_cross_attn_layer, decoder_layer, gradient_checkpointing)
                     for gated_cross_attn_layer, decoder_layer in zip(
                         self.gated_cross_attn_layers, self.old_decoder_blocks
                     )

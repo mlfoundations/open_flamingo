@@ -28,7 +28,7 @@ class Flamingo(nn.Module):
         media_token_id: int,
         vis_dim: int,
         cross_attn_every_n_layers: int = 1,
-        grad_checkpointing: bool = False,
+        gradient_checkpointing: bool = False,
     ):
         """
         Args:
@@ -51,9 +51,10 @@ class Flamingo(nn.Module):
             media_token_id=media_token_id,
             vis_hidden_size=self.vis_dim,
             cross_attn_every_n_layers=cross_attn_every_n_layers,
-            grad_checkpointing=grad_checkpointing,
+            gradient_checkpointing=gradient_checkpointing,
         )
-        self._grad_checkpointing = grad_checkpointing
+        self._use_gradient_checkpointing = gradient_checkpointing
+        self.perceiver._use_gradient_checkpointing = gradient_checkpointing
 
     def forward(
         self,
@@ -206,24 +207,10 @@ class Flamingo(nn.Module):
         with torch.no_grad():
             vision_x = self.vision_encoder.visual(vision_x)[1]
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
-
-        if self._grad_checkpointing:
-            vision_x = checkpoint(self.perceiver, vision_x, use_reentrant=False)  # reshapes to (b, T, n, d)
-        else:
-            vision_x = self.perceiver(vision_x)
+        vision_x = self.perceiver(vision_x)
 
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_x)
-
-    def set_grad_checkpointing(self, grad_checkpointing: bool):
-        """
-        Set whether to use gradient checkpointing.
-        Args:
-            grad_checkpointing (bool): Whether to use gradient checkpointing.
-        """
-        self._grad_checkpointing = grad_checkpointing
-        for layer in self.lang_encoder._get_decoder_layers():
-            layer._grad_checkpointing = grad_checkpointing
 
     def wrap_fsdp(self, wrapper_kwargs):
         """
@@ -255,7 +242,7 @@ class Flamingo(nn.Module):
                 wrap(layer) if layer is not None else None
                 for layer in self.lang_encoder.gated_cross_attn_layers
             )
-            self.lang_encoder.init_flamingo_layers(self._grad_checkpointing)
+            self.lang_encoder.init_flamingo_layers(self._use_gradient_checkpointing)
             self.lang_encoder.set_input_embeddings(
                 wrap(self.lang_encoder.get_input_embeddings())
             )
@@ -263,6 +250,7 @@ class Flamingo(nn.Module):
             self.vision_encoder.visual = wrap(self.vision_encoder.visual)
             self.vision_encoder = wrap(self.vision_encoder)
 
+        # set up clip_grad_norm_ function
         def clip_grad_norm_(max_norm):
             self.perceiver.clip_grad_norm_(max_norm)
             for block in self.lang_encoder.old_decoder_blocks:

@@ -21,6 +21,12 @@ from transformers import (
 )
 
 from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    checkpoint_wrapper,
+    CheckpointImpl,
+    apply_activation_checkpointing
+) 
+import functools
 
 from open_flamingo import create_model_and_transforms
 
@@ -196,7 +202,7 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
-        grad_checkpointing=args.gradient_checkpointing,
+        gradient_checkpointing=args.gradient_checkpointing,
     )
 
     random_seed(args.seed, args.rank)
@@ -250,7 +256,7 @@ def main():
     model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
 
     if args.fsdp:
-        # TODO: gradient ckpting, mixed precision
+        # TODO: mixed precision
         if args.rank == 0: 
             print(f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
@@ -270,18 +276,43 @@ def main():
             print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             print(model) # to check wrapping
 
-        # tiny test case
-        vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
-        lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
-        out = ddp_model(
-            vision_x, 
-            lang_x["input_ids"],
-            lang_x["attention_mask"],
-        )
-        print(out)
+        # # tiny test case
+        # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
+        # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
+        # out = ddp_model(
+        #     vision_x, 
+        #     lang_x["input_ids"],
+        #     lang_x["attention_mask"],
+        #     labels=lang_x["input_ids"]
+        # )
+        # print(out)
+        # print(f"Loss: {out[0].item()} on rank {args.rank}")
     
     else:
         ddp_model = DDP(model, device_ids=[device_id])
+
+    if args.gradient_checkpointing:
+        non_reentrant_wrapper = functools.partial(
+            checkpoint_wrapper,
+            offload_to_cpu=False,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT
+        )
+        apply_activation_checkpointing(
+            ddp_model, 
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False)
+        )
+        # # tiny test case
+        # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
+        # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
+        # loss = ddp_model(
+        #     vision_x, 
+        #     lang_x["input_ids"],
+        #     lang_x["attention_mask"],
+        #     labels=lang_x["input_ids"],
+        # )[0]
+        # loss.backward()
+        # print(f"Loss: {loss.item()} on rank {args.rank}")
 
     """
     Step 3: Init and load optimizer
