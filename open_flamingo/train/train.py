@@ -13,6 +13,7 @@ import wandb
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from train_utils import get_checkpoint, train_one_epoch
 from transformers import (
     get_constant_schedule_with_warmup,
@@ -271,10 +272,8 @@ def main():
         model.wrap_fsdp(wrapper_kwargs)
         ddp_model = model
 
-        if args.rank == 0: 
-            print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
-            print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
-            print(model) # to check wrapping
+        print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
+        print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
         # # tiny test case
         # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
@@ -300,19 +299,30 @@ def main():
         apply_activation_checkpointing(
             ddp_model, 
             checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False)
+            check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False) and not isinstance(m, FSDP)
         )
-        # # tiny test case
-        # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
-        # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
-        # loss = ddp_model(
-        #     vision_x, 
-        #     lang_x["input_ids"],
-        #     lang_x["attention_mask"],
-        #     labels=lang_x["input_ids"],
-        # )[0]
-        # loss.backward()
-        # print(f"Loss: {loss.item()} on rank {args.rank}")
+    
+    # # tiny test case
+    # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
+    # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
+    # loss = ddp_model(
+    #     vision_x, 
+    #     lang_x["input_ids"],
+    #     lang_x["attention_mask"],
+    #     labels=lang_x["input_ids"],
+    # )[0]
+    # loss.backward()
+    # print(f"Loss: {loss.item()} on rank {args.rank}")
+
+    # print(f"Preview of parameters on rank {args.rank}")
+    # i = 0
+    # for name, param in model.named_parameters():
+    #     if i == 5: break
+    #     print(name, param.shape)
+    #     i += 1
+    
+    if args.rank == 0: 
+        print(model) # to check wrapping
 
     """
     Step 3: Init and load optimizer
