@@ -262,3 +262,13 @@ class Flamingo(nn.Module):
             # may be able to wrap CLIP more cleverly
             self.vision_encoder.visual = wrap(self.vision_encoder.visual)
             self.vision_encoder = wrap(self.vision_encoder)
+
+        def clip_grad_norm_(max_norm):
+            self.perceiver.clip_grad_norm_(max_norm)
+            for block in self.lang_encoder.old_decoder_blocks:
+                block.clip_grad_norm_(max_norm)
+            for layer in self.lang_encoder.gated_cross_attn_layers:
+                if layer is not None: layer.clip_grad_norm_(max_norm)
+            self.lang_encoder.get_input_embeddings().clip_grad_norm_(max_norm)
+        
+        self.clip_grad_norm_ = clip_grad_norm_

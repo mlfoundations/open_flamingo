@@ -183,7 +183,13 @@ def train_one_epoch(
 
         # model.apply(mask_embedding)
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        if args.fsdp:
+            # this is incorrect because the root module is not FSDP
+            # so we're really clipping over submodules
+            # unclear if this is better than using torch.nn.utils
+            model.clip_grad_norm_(1.0)
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         # step optimizer and log
         if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
