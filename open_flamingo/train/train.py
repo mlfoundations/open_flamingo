@@ -71,7 +71,7 @@ def main():
     parser.add_argument("--batch_size_mmc4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--gradient_checkpointing", action="store_true")
+    parser.add_argument("--gradient_checkpointing", action="store_true", help="AKA activation checkpointing. oes not work with FSDP.")
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
@@ -147,6 +147,12 @@ def main():
         "--fsdp_cpu_offload",
         default=False,
         action="store_true",
+    )
+    parser.add_argument(
+        "--use_orig_params",
+        default=False,
+        action="store_true",
+        help="Passed into the FSDP constructor. This does not work for OPT models. Enables param_groups for weight_decay."
     )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
@@ -268,7 +274,7 @@ def main():
             device_id=device_id,
             sync_module_states=True, # sanity check; loaded weights are on rank 0
             sharding_strategy=ShardingStrategy.FULL_SHARD,
-            use_orig_params=True,
+            use_orig_params=args.use_orig_params,
         )
         model.wrap_fsdp(wrapper_kwargs)
         ddp_model = model
@@ -291,40 +297,6 @@ def main():
             check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False) and not isinstance(m, FSDP)
         )
     
-    if args.rank == 0: 
-        print(model) # to check wrapping
-
-    """
-    Step 3: Init and load optimizer
-    Optimizer settings: Due to sharding and wrapping, only certain types of optimizer and optimizer settings are supported by FSDP. 
-    In particular, if a module is wrapped by FSDP and its parameters are flattened into a single tensor, users cannot use different 
-    hyperparameters for different parameter groups in such a module UNLESS use_orig_params=True is passed to the wrapper.
-    """
-    def get_grouped_params(model):
-        # do not apply weight decay to certain params
-        params_with_wd, params_without_wd = [], []
-        def apply_decay(x):
-            return (
-                "gated_cross_attn_layer" in x
-                and "ff_gate" not in x
-                and "attn_gate" not in x
-                and "norm" not in x
-                and "bias" not in x
-            )
-        for n, p in model.named_parameters():
-            if p.requires_grad:
-                if apply_decay(n):
-                    params_with_wd.append(p)
-                else:
-                    params_without_wd.append(p)
-
-        return [
-            {"params": params_with_wd, "weight_decay": args.weight_decay},
-            {"params": params_without_wd, "weight_decay": 0.0},
-        ]
-    
-    optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
-
     # # tiny test case
     # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
     # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
@@ -337,7 +309,46 @@ def main():
     # import pdb; pdb.set_trace()
     # loss.backward()
     # print(f"Loss: {loss.item()} on rank {args.rank}")
-    # optimizer.step()
+
+    if args.rank == 0: 
+        print(model) # to check wrapping
+
+    """
+    Step 3: Init and load optimizer
+    Optimizer settings: Due to sharding and wrapping, only certain types of optimizer and optimizer settings are supported by FSDP. 
+    In particular, if a module is wrapped by FSDP and its parameters are flattened into a single tensor, users cannot use different 
+    hyperparameters for different parameter groups in such a module.
+    """
+    if not args.fsdp or args.use_orig_params:
+        # apply weight decay only to certain params
+        # specifically, do not apply weight decay to the Perceiver Resampler
+        def get_grouped_params(model):
+            params_with_wd, params_without_wd = [], []
+
+            def apply_decay(x):
+                return (
+                    "gated_cross_attn_layer" in x
+                    and "ff_gate" not in x
+                    and "attn_gate" not in x
+                    and "norm" not in x
+                    and "bias" not in x
+                )
+
+            for n, p in model.named_parameters():
+                if p.requires_grad:
+                    if apply_decay(n):
+                        params_with_wd.append(p)
+                    else:
+                        params_without_wd.append(p)
+
+            return [
+                {"params": params_with_wd, "weight_decay": args.weight_decay},
+                {"params": params_without_wd, "weight_decay": 0.0},
+            ]
+        optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
+    else:
+        # unclear if we should be using no weight decay or small weight decay for all parameters
+        optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
     # load optimizer checkpoint
     if args.resume_from_checkpoint is not None:
