@@ -268,24 +268,13 @@ def main():
             device_id=device_id,
             sync_module_states=True, # sanity check; loaded weights are on rank 0
             sharding_strategy=ShardingStrategy.FULL_SHARD,
+            use_orig_params=False,
         )
         model.wrap_fsdp(wrapper_kwargs)
         ddp_model = model
 
         print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
         print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-
-        # # tiny test case
-        # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
-        # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
-        # out = ddp_model(
-        #     vision_x, 
-        #     lang_x["input_ids"],
-        #     lang_x["attention_mask"],
-        #     labels=lang_x["input_ids"]
-        # )
-        # print(out)
-        # print(f"Loss: {out[0].item()} on rank {args.rank}")
     
     else:
         ddp_model = DDP(model, device_ids=[device_id])
@@ -311,16 +300,10 @@ def main():
     #     lang_x["attention_mask"],
     #     labels=lang_x["input_ids"],
     # )[0]
+    # import pdb; pdb.set_trace()
     # loss.backward()
     # print(f"Loss: {loss.item()} on rank {args.rank}")
 
-    # print(f"Preview of parameters on rank {args.rank}")
-    # i = 0
-    # for name, param in model.named_parameters():
-    #     if i == 5: break
-    #     print(name, param.shape)
-    #     i += 1
-    
     if args.rank == 0: 
         print(model) # to check wrapping
 
@@ -427,9 +410,10 @@ def main():
         the model state can become challenging. FSDP supports several ways to make that 
         task possible, but it is by no means trivial.
         Note: requires enough CPU memory for both model and optimizer state
+        Note: the pytorch fsdp code has a bug where it doesn't handle nested FSDPs well.
         """
         if args.fsdp:
-            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            save_policy = FullStateDictConfig(offload_to_cpu=args.fsdp_cpu_offload, rank0_only=True)
             with FSDP.state_dict_type(
                 ddp_model, StateDictType.FULL_STATE_DICT, save_policy
             ):

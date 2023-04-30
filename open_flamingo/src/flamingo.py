@@ -215,10 +215,13 @@ class Flamingo(nn.Module):
     def wrap_fsdp(self, wrapper_kwargs):
         """
         Manually wraps submodules for FSDP
-        We have to manually wrap very carefully because all parameters within the FSDP
-        wrapper must have the same requires_grad.
-        model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors (not sure why)
-        See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
+        We have to manually wrap very carefully because 
+        - all parameters within the FSDP wrapper must have the same requires_grad.
+        - model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors
+            See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
+        - OPTPositionalEmbedding also wants to be individually wrapped or it errors
+        - we would probably save memory if we sharded all of self.vision_encoder, but
+            torch's FSDP checkpiont saver does not play well with nested FSDP modules
 
         Irena: I'm assuming that the model is being trained under normal Flamingo settings
         with these lines being called in factory.py:
@@ -248,13 +251,14 @@ class Flamingo(nn.Module):
             )
             # may be able to wrap CLIP more cleverly
             self.vision_encoder.visual = wrap(self.vision_encoder.visual)
-            self.vision_encoder = wrap(self.vision_encoder)
+            
+            # OPT has its own custom positional embeddings class that also needs to be wrapped
+            if "opt" in self.lang_encoder.__class__.__name__.lower():
+                self.lang_encoder.model.decoder.embed_positions = wrap(self.lang_encoder.model.decoder.embed_positions)
 
         # set up clip_grad_norm_ function
         def clip_grad_norm_(max_norm):
             self.perceiver.clip_grad_norm_(max_norm)
-            for block in self.lang_encoder.old_decoder_blocks:
-                block.clip_grad_norm_(max_norm)
             for layer in self.lang_encoder.gated_cross_attn_layers:
                 if layer is not None: layer.clip_grad_norm_(max_norm)
             self.lang_encoder.get_input_embeddings().clip_grad_norm_(max_norm)

@@ -1,7 +1,7 @@
 einops
 einops-exts
 transformers
-torch
+torch==2.0
 torchvision
 pillow
 more-itertools
