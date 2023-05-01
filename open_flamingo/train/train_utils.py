@@ -139,6 +139,13 @@ def train_one_epoch(
                     token_idx += 1
 
         labels[labels == media_token_id] = -100
+
+        # try to catch this nan loss case before it happens
+        if torch.all(labels == -100):
+            print("all labels are -100, skipping this batch")
+            # not sure if this is the right way to recover in fsdp setting
+            continue
+
         labels.to(device_id)
 
         with autocast():
