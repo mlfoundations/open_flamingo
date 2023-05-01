@@ -113,8 +113,8 @@ class Flamingo(nn.Module):
             use_cache=use_cache,
         )
 
-        # if clear_conditioned_layers:
-        #     self.lang_encoder.clear_conditioned_layers()
+        if clear_conditioned_layers:
+            self.lang_encoder.clear_conditioned_layers()
 
         return output
 

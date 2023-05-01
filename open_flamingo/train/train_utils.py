@@ -100,6 +100,7 @@ def train_one_epoch(
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
+                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
@@ -146,6 +147,7 @@ def train_one_epoch(
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
+                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
 
             # if loss is nan, skip this batch
@@ -166,7 +168,9 @@ def train_one_epoch(
         )
         loss.backward()
 
-        model.lang_encoder.clear_conditioned_layers()
+        if args.gradient_checkpointing:
+            if args.fsdp: model.lang_encoder.clear_conditioned_layers()
+            else: model.module.lang_encoder.clear_conditioned_layers()
 
         if not args.fsdp:
             ### MASK GRADIENTS FOR EMBEDDINGS ####
