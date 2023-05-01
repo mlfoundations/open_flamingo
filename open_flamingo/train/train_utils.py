@@ -255,13 +255,13 @@ def train_one_epoch(
 
                 wandb.log(
                     {
-                        "loss_laion": divided_loss_laion.item(),
+                        "loss_laion": loss_laion.item(),
                         "global_step": global_step,
                     },
                     commit=False,
                 )
                 wandb.log(
-                    {"loss_mmc4": divided_loss_mmc4.item(), "global_step": global_step},
+                    {"loss_mmc4": loss_mmc4.item(), "global_step": global_step},
                     commit=True,
                 )
 
