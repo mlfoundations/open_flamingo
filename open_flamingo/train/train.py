@@ -282,7 +282,7 @@ def main():
             device_id=device_id,
             sync_module_states=True, # sanity check; loaded weights are on rank 0
             sharding_strategy=ShardingStrategy.FULL_SHARD,
-            use_orig_params=args.use_orig_params,
+            use_orig_params=args.fsdp_use_orig_params,
         )
         model.wrap_fsdp(wrapper_kwargs)
         ddp_model = model
@@ -327,7 +327,7 @@ def main():
     In particular, if a module is wrapped by FSDP and its parameters are flattened into a single tensor, users cannot use different 
     hyperparameters for different parameter groups in such a module.
     """
-    if not args.fsdp or args.use_orig_params:
+    if not args.fsdp or args.fsdp_use_orig_params:
         # apply weight decay only to certain params
         # specifically, do not apply weight decay to the Perceiver Resampler
         def get_grouped_params(model):
