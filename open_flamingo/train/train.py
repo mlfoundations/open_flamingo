@@ -56,6 +56,11 @@ def main():
         help="how often to add a cross-attention layer after each transformer layer",
     )
     parser.add_argument(
+        "--freeze_lm_embeddings",
+        action="store_true",
+        help="whether to freeze the LM embeddings. useful for FSDP, since we can't mask gradients.",
+    )
+    parser.add_argument(
         "--run_name",
         type=str,
         default="openflamingo3B",
@@ -141,15 +146,17 @@ def main():
     parser.add_argument(
         "--fsdp",
         default=False,
-        action="store_true"
+        action="store_true",
+        help="Use FullyShardedDataParallel for distributed training."
     )
     parser.add_argument(
         "--fsdp_cpu_offload",
         default=False,
         action="store_true",
+        help="CPU offloading for FSDP and checkpoint saving. This does not work with gradient accumulation."
     )
     parser.add_argument(
-        "--use_orig_params",
+        "--fsdp_use_orig_params",
         default=False,
         action="store_true",
         help="Passed into the FSDP constructor. This does not work for OPT models. Enables param_groups for weight_decay."
@@ -210,6 +217,7 @@ def main():
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
+        freeze_lm_embeddings=args.freeze_lm_embeddings,
     )
 
     random_seed(args.seed, args.rank)
