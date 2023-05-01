@@ -427,7 +427,7 @@ def main():
         Note: the pytorch fsdp code has a bug where it doesn't handle nested FSDPs well.
         """
         if args.fsdp:
-            save_policy = FullStateDictConfig(offload_to_cpu=args.fsdp_cpu_offload, rank0_only=True)
+            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
             with FSDP.state_dict_type(
                 ddp_model, StateDictType.FULL_STATE_DICT, save_policy
             ):
