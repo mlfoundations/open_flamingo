@@ -286,9 +286,9 @@ def filter_state_dict_to_trainable(model, state_dict):
     # also remove the keys in state_dict generated from
     # lang_encoder.old_decoder_blocks and lang_encoder.gated_cross_attn_layers
     # because these are already saved in lang_encoder.model...
-    for name in state_dict.keys():
-        if name.startswith('lang_encoder.old_decoder_blocks') or name.startswith('lang_encoder.gated_cross_attn_layers'):
-            del state_dict[name]
+    to_delete = [n for n in state_dict.keys() if n.startswith('lang_encoder.old_decoder_blocks') or n.startswith('lang_encoder.gated_cross_attn_layers')]
+    for name in to_delete:
+        del state_dict[name]
     return state_dict
 
 
