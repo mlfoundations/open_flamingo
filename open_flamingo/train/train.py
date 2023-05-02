@@ -77,7 +77,7 @@ def main():
     parser.add_argument("--batch_size_mmc4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--gradient_checkpointing", action="store_true", help="AKA activation checkpointing. oes not work with FSDP.")
+    parser.add_argument("--gradient_checkpointing", action="store_true", help="AKA activation checkpointing.")
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
@@ -248,6 +248,7 @@ def main():
                 f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
             )
 
+    # load the model state dict
     resume_from_epoch = 0
     if args.resume_from_checkpoint is not None:
         if args.rank == 0:
@@ -281,7 +282,7 @@ def main():
         wrapper_kwargs = dict(
             cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
             device_id=device_id,
-            sync_module_states=True, # sanity check; loaded weights are on rank 0
+            sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
             sharding_strategy=ShardingStrategy.FULL_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
         )
@@ -361,8 +362,9 @@ def main():
 
     # load optimizer checkpoint
     if args.resume_from_checkpoint is not None:
-        osd = checkpoint["optimizer_state_dict"] if args.rank == 0 else None
-        FSDP.scatter_full_optim_state_dict(osd, ddp_model)
+        osd = checkpoint["optimizer_state_dict"]
+        if args.fsdp: osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
+        optimizer.load_state_dict(osd)
 
     """Step 4: Init data"""  
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
@@ -428,14 +430,17 @@ def main():
         Note: the pytorch fsdp code has a bug where it doesn't handle nested FSDPs well.
         """
         if args.fsdp:
-            save_policy = FullStateDictConfig(offload_to_cpu=False, rank0_only=True)
+            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
             with FSDP.state_dict_type(
                 ddp_model, StateDictType.FULL_STATE_DICT, save_policy
             ):
                 model_state = ddp_model.state_dict()
-            optim_state = FSDP.full_optim_state_dict(ddp_model, optimizer)
         else:
             model_state = ddp_model.state_dict()
+        
+        if args.fsdp:
+            optim_state = FSDP.full_optim_state_dict(ddp_model, optimizer, rank0_only=True)
+        else:
             optim_state = optimizer.state_dict()
 
         if args.rank == 0:
