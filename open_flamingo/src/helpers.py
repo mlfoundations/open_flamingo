@@ -174,7 +174,8 @@ class MaskedCrossAttention(nn.Module):
                 equal media_locations.shape[1] in this case
         """
 
-        if not use_cached_media: assert media_locations.shape[1] == x.shape[1]
+        if not use_cached_media: 
+            assert media_locations.shape[1] == x.shape[1], f"media_location.shape is {media_locations.shape} but x.shape is {x.shape}"
 
         T_txt = x.shape[1]
         _, T_img, n = media.shape[:3]

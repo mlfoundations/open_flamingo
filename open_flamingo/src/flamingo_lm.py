@@ -15,7 +15,9 @@ class FlamingoLayer(nn.Module):
         self.decoder_layer = decoder_layer
         self.vis_x = None
         self.media_locations = None
-        self._use_gradient_checkpointing = gradient_checkpointing
+        if self.gated_cross_attn_layer is not None:
+            self.gated_cross_attn_layer._use_gradient_checkpointing = gradient_checkpointing
+        self.decoder_layer._use_gradient_checkpointing = gradient_checkpointing
 
     def is_conditioned(self) -> bool:
         """Check whether the layer is conditioned."""

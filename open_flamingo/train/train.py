@@ -24,6 +24,7 @@ from transformers import (
 from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper,
+    CheckpointWrapper,
     CheckpointImpl,
     apply_activation_checkpointing
 ) 
@@ -302,7 +303,7 @@ def main():
         apply_activation_checkpointing(
             ddp_model, 
             checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False) and not isinstance(m, FSDP)
+            check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False) and not isinstance(m, FSDP) and not isinstance(m, CheckpointWrapper)
         )
     
     # # tiny test case
@@ -313,8 +314,8 @@ def main():
     #     lang_x["input_ids"],
     #     lang_x["attention_mask"],
     #     labels=lang_x["input_ids"],
+    #     clear_conditioned_layers=False,
     # )[0]
-    # import pdb; pdb.set_trace()
     # loss.backward()
     # print(f"Loss: {loss.item()} on rank {args.rank}")
 
