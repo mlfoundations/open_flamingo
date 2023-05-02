@@ -14,7 +14,7 @@ from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from train_utils import get_checkpoint, train_one_epoch
+from train_utils import filter_state_dict_to_trainable, train_one_epoch
 from transformers import (
     get_constant_schedule_with_warmup,
     get_cosine_schedule_with_warmup,
@@ -406,18 +406,18 @@ def main():
         mmc4_dataset.set_epoch(epoch)
         mmc4_loader = mmc4_dataset.dataloader
 
-        train_one_epoch(
-            args=args,
-            model=ddp_model,
-            epoch=epoch,
-            tokenizer=tokenizer,
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-            laion_loader=laion_loader,
-            mmc4_loader=mmc4_loader,
-            device_id=device_id,
-            wandb=wandb,
-        )
+        # train_one_epoch(
+        #     args=args,
+        #     model=ddp_model,
+        #     epoch=epoch,
+        #     tokenizer=tokenizer,
+        #     optimizer=optimizer,
+        #     lr_scheduler=lr_scheduler,
+        #     laion_loader=laion_loader,
+        #     mmc4_loader=mmc4_loader,
+        #     device_id=device_id,
+        #     wandb=wandb,
+        # )
 
         """
         Step 7: Saving checkpoints
@@ -428,7 +428,7 @@ def main():
         Note: the pytorch fsdp code has a bug where it doesn't handle nested FSDPs well.
         """
         if args.fsdp:
-            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            save_policy = FullStateDictConfig(offload_to_cpu=False, rank0_only=True)
             with FSDP.state_dict_type(
                 ddp_model, StateDictType.FULL_STATE_DICT, save_policy
             ):
@@ -439,6 +439,9 @@ def main():
             optim_state = optimizer.state_dict()
 
         if args.rank == 0:
+            if not (args.fsdp and not args.fsdp_use_orig_params):
+                model_state = filter_state_dict_to_trainable(ddp_model, model_state)
+
             if not os.path.exists(args.run_name):
                 os.makedirs(args.run_name)
 

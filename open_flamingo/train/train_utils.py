@@ -272,14 +272,23 @@ def train_one_epoch(
             )
 
 
-def get_checkpoint(model):
-    state_dict = model.state_dict()
-
+def filter_state_dict_to_trainable(model, state_dict):
+    """
+    Remove non-trainable parameters from model state dict.
+    Note: when --FSDP is on, model.named_parameters() will return
+    only the sharded rank 0 parameters unless --fsdp.use_orig_params is set to True.
+    """
     for name, p in model.named_parameters():
         if 'fsdp' in name: continue
         if not p.requires_grad:
             del state_dict[name]
 
+    # also remove the keys in state_dict generated from
+    # lang_encoder.old_decoder_blocks and lang_encoder.gated_cross_attn_layers
+    # because these are already saved in lang_encoder.model...
+    for name in state_dict.keys():
+        if name.startswith('lang_encoder.old_decoder_blocks') or name.startswith('lang_encoder.gated_cross_attn_layers'):
+            del state_dict[name]
     return state_dict
 
 
