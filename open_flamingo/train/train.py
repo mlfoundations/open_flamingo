@@ -408,18 +408,18 @@ def main():
         mmc4_dataset.set_epoch(epoch)
         mmc4_loader = mmc4_dataset.dataloader
 
-        # train_one_epoch(
-        #     args=args,
-        #     model=ddp_model,
-        #     epoch=epoch,
-        #     tokenizer=tokenizer,
-        #     optimizer=optimizer,
-        #     lr_scheduler=lr_scheduler,
-        #     laion_loader=laion_loader,
-        #     mmc4_loader=mmc4_loader,
-        #     device_id=device_id,
-        #     wandb=wandb,
-        # )
+        train_one_epoch(
+            args=args,
+            model=ddp_model,
+            epoch=epoch,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            laion_loader=laion_loader,
+            mmc4_loader=mmc4_loader,
+            device_id=device_id,
+            wandb=wandb,
+        )
 
         """
         Step 7: Saving checkpoints
