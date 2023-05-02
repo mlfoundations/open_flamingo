@@ -61,7 +61,7 @@ parser.add_argument(
     "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
 )
 
-parser.add_argument("--batch_size", type=int, default=8)
+parser.add_argument("--batch_size", type=int, default=1)
 parser.add_argument("--device", type=int, default=0)
 
 # Per-dataset evaluation flags
@@ -180,8 +180,9 @@ def main():
     )
 
     checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
-    checkpoint = checkpoint['model_state_dict']
-    checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
+    if 'model_state_dict' in checkpoint:
+        checkpoint = checkpoint['model_state_dict']
+        checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
     flamingo.load_state_dict(checkpoint, strict=False)
     flamingo.to(args.device if args.device >= 0 else "cpu")
 
@@ -518,10 +519,6 @@ def evaluate_coco_flickr(
             return_tensors="pt",
             max_length=2000,
         )
-        
-        ### TESTING: return coco batch with shots
-        # return batch_images, [encodings["input_ids"], encodings["attention_mask"]]
-
         input_ids = encodings["input_ids"]
         attention_mask = encodings["attention_mask"]
 
@@ -569,7 +566,7 @@ def evaluate_coco_flickr(
     )
 
     # delete the temporary file
-    # os.remove(results_path)
+    os.remove(results_path)
 
     return metrics["CIDEr"] * 100.0
 
