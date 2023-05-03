@@ -619,7 +619,6 @@ def evaluate_imagenet(
         )
     model, tokenizer = eval_model.model, eval_model.tokenizer
 
-    # full_dataset = ImageNetDataset(root=imagenet_root)
     train_dataset = ImageNetDataset(os.path.join(imagenet_root, 'train'))
     val_dataset = ImageNetDataset(os.path.join(imagenet_root, 'val'))
 
@@ -646,12 +645,14 @@ def evaluate_imagenet(
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
             tokenizer.padding_side = "left"  # For generation padding tokens should be on the left
-
+            prompt_text = '<image>A photo of a'
             context_class_names = [in_context_samples[i]['class_name']
                                    for i in range(effective_num_shots)]
-            text = ''.join(f"<image>A photo of a {classname}<|endofchunk|>"
+            text = ''.join(f"{prompt_text} {classname}<|endofchunk|>"
                          for classname in context_class_names)
-            text += f'<image>A photo of a {imagenet_class_name}'
+            text += f'{prompt_text} {imagenet_class_name}'
+            prompt_tokens = tokenizer(prompt_text, add_special_tokens=False,
+                                      return_tensors='np')['input_ids'].ravel().tolist()
 
             lang_x = tokenizer([text], return_tensors="pt")
 
@@ -671,7 +672,7 @@ def evaluate_imagenet(
 
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
-                idxes = find_sub_list([32001, 319, 15373, 310, 263],
+                idxes = find_sub_list(prompt_tokens,
                                       input_sentence.detach().cpu().numpy().tolist())
                 # input_sentence = input_sentence[idxes[-1] + 1:]
                 input_probs = input_probs[idxes[-1] + 1:]
