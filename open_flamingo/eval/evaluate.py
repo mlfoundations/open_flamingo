@@ -582,11 +582,13 @@ def evaluate_vqa(
     return acc
 
 
-def rindex(lst, value):
-    lst.reverse()
-    i = lst.index(value)
-    lst.reverse()
-    return len(lst) - i - 1
+def find_sub_list(sl,l):
+    results=[]
+    sll=len(sl)
+    for ind in (i for i,e in enumerate(l) if e==sl[0]):
+        if l[ind:ind+sll]==sl:
+            results.append(ind+sll-1)
+    return results
 
 
 def evaluate_imagenet(
@@ -649,11 +651,7 @@ def evaluate_imagenet(
                                    for i in range(effective_num_shots)]
             text = ''.join(f"<image>A photo of a {classname}<|endofchunk|>"
                          for classname in context_class_names)
-            imagenet_class_prompt_text = f"A photo of a {imagenet_class_name}"
-            imagenet_class_prompt_ids = tokenizer(
-                imagenet_class_prompt_text, add_special_tokens=False
-            )['input_ids']
-            text += '<image>' + imagenet_class_prompt_text
+            text += f'<image>A photo of a {imagenet_class_name}'
 
             lang_x = tokenizer([text], return_tensors="pt")
 
@@ -673,12 +671,10 @@ def evaluate_imagenet(
 
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
-                # Use only the text of the imagenet class prompt (ignore the
-                # rest of the input text), e.g. 'A photo of a <classname>'
-                idx = rindex(input_sentence.detach().cpu().numpy().tolist(),
-                             imagenet_class_prompt_ids)
+                idxes = find_sub_list([32001, 319, 15373, 310, 263],
+                                      input_sentence.detach().cpu().numpy().tolist())
                 # input_sentence = input_sentence[idxes[-1] + 1:]
-                input_probs = input_probs[idx:]
+                input_probs = input_probs[idxes[-1] + 1:]
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
 
