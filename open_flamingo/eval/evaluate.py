@@ -582,13 +582,14 @@ def evaluate_vqa(
     return acc
 
 
-def find_sub_list(sl,l):
-    results=[]
-    sll=len(sl)
-    for ind in (i for i,e in enumerate(l) if e==sl[0]):
-        if l[ind:ind+sll]==sl:
-            results.append(ind+sll-1)
-    return results
+def rindex(lst, value):
+    """
+    Return the starting index of first occurence of value in lst *from right*.
+    """
+    lst.reverse()
+    i = lst.index(value)
+    lst.reverse()
+    return len(lst) - i - 1
 
 
 def evaluate_imagenet(
@@ -672,10 +673,11 @@ def evaluate_imagenet(
 
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
-                idxes = find_sub_list(prompt_tokens,
-                                      input_sentence.detach().cpu().numpy().tolist())
-                # input_sentence = input_sentence[idxes[-1] + 1:]
-                input_probs = input_probs[idxes[-1] + 1:]
+                prompt_start = rindex(
+                    input_sentence.detach().cpu().numpy().tolist(),
+                    prompt_tokens)
+                prompt_end = prompt_start + len(prompt_tokens)
+                input_probs = input_probs[prompt_end+1:]
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
 
@@ -688,7 +690,7 @@ def evaluate_imagenet(
         print('eval {}/{}: acc@1 ({}), acc@5 ({})'.format(i, num_samples,
                                                           acc1 / (i+1),
                                                           acc5 / (i+1)))
-        if i >= num_samples:
+        if i >= num_samples - 1:
             break
 
     return acc1
