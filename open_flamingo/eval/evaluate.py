@@ -651,7 +651,11 @@ def evaluate_imagenet(
                                    for i in range(effective_num_shots)]
             text = ''.join(f"<image>A photo of a {classname}<|endofchunk|>"
                          for classname in context_class_names)
-            text += f'<image>A photo of a {imagenet_class_name}'
+            imagenet_class_prompt_text = f"A photo of a {imagenet_class_name}"
+            imagenet_class_prompt_ids = tokenizer(
+                imagenet_class_prompt_text, add_special_tokens=False
+            )['input_ids']
+            text += '<image>' + imagenet_class_prompt_text
 
             lang_x = tokenizer([text], return_tensors="pt")
 
@@ -671,7 +675,9 @@ def evaluate_imagenet(
 
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
-                idxes = find_sub_list([32001, 319, 15373, 310, 263],
+                # Use only the text of the target class (ignore the rest of
+                # the input text)
+                idxes = find_sub_list(imagenet_class_prompt_ids,
                                       input_sentence.detach().cpu().numpy().tolist())
                 # input_sentence = input_sentence[idxes[-1] + 1:]
                 input_probs = input_probs[idxes[-1] + 1:]
