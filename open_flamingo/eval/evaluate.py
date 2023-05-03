@@ -647,6 +647,10 @@ def evaluate_imagenet(
         context_text = ''.join(f"{prompt_text} {classname}<|endofchunk|>"
                                for classname in context_class_names)
 
+        # TODO(jpgard): cache the context text here, and compute the outputs
+        #  one token at a time by using Flamingo.forward() with
+        #  past_key_values and use_cache parameters.
+
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
