@@ -582,13 +582,11 @@ def evaluate_vqa(
     return acc
 
 
-def find_sub_list(sl,l):
-    results=[]
-    sll=len(sl)
-    for ind in (i for i,e in enumerate(l) if e==sl[0]):
-        if l[ind:ind+sll]==sl:
-            results.append(ind+sll-1)
-    return results
+def rindex(lst, value):
+    lst.reverse()
+    i = lst.index(value)
+    lst.reverse()
+    return len(lst) - i - 1
 
 
 def evaluate_imagenet(
@@ -675,12 +673,12 @@ def evaluate_imagenet(
 
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
-                # Use only the text of the target class (ignore the rest of
-                # the input text)
-                idxes = find_sub_list(imagenet_class_prompt_ids,
-                                      input_sentence.detach().cpu().numpy().tolist())
+                # Use only the text of the imagenet class prompt (ignore the
+                # rest of the input text), e.g. 'A photo of a <classname>'
+                idx = rindex(input_sentence.detach().cpu().numpy().tolist(),
+                             imagenet_class_prompt_ids)
                 # input_sentence = input_sentence[idxes[-1] + 1:]
-                input_probs = input_probs[idxes[-1] + 1:]
+                input_probs = input_probs[idx:]
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
 
