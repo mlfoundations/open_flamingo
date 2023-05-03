@@ -626,7 +626,8 @@ def evaluate_imagenet(
     effective_num_shots = num_shots if num_shots > 0 else 2
 
     # random context samples
-    random_indices = np.random.choice(len(train_dataset), effective_num_shots, replace=False)
+    random_indices = np.random.choice(len(train_dataset), effective_num_shots,
+                                      replace=False)
 
     in_context_samples = [train_dataset[i] for i in random_indices]
 
@@ -635,9 +636,9 @@ def evaluate_imagenet(
 
     for i, batch in enumerate(val_dataset):
 
-        vision_x = [eval_model.image_processor(data['image']).unsqueeze(0) for data in
-                    in_context_samples] + [
-                       eval_model.image_processor(batch['image']).unsqueeze(0)]
+        vision_x = [eval_model.image_processor(data['image']).unsqueeze(0)
+                    for data in in_context_samples] \
+                   + [eval_model.image_processor(batch['image']).unsqueeze(0)]
         vision_x = torch.cat(vision_x, dim=0)
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
 
@@ -661,7 +662,8 @@ def evaluate_imagenet(
                 clear_conditioned_layers=False
             )
             probs = torch.softmax(outputs.logits, dim=-1).detach()
-            # collect the probability of the generated token -- probability at index 0 corresponds to the token at index 1
+            # collect the probability of the generated token -- probability
+            # at index 0 corresponds to the token at index 1
             probs = probs[:, :-1, :]
             input_ids = lang_x["input_ids"][:, 1:].cuda()
             gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(
@@ -671,7 +673,7 @@ def evaluate_imagenet(
             for input_sentence, input_probs in zip(input_ids, gen_probs):
                 idxes = find_sub_list([32001, 319, 15373, 310, 263],
                                       input_sentence.detach().cpu().numpy().tolist())
-                input_sentence = input_sentence[idxes[-1] + 1:]
+                # input_sentence = input_sentence[idxes[-1] + 1:]
                 input_probs = input_probs[idxes[-1] + 1:]
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
@@ -687,6 +689,8 @@ def evaluate_imagenet(
                                                           acc5 / (i+1)))
         if i >= num_samples:
             break
+
+    return acc1
 
 
 if __name__ == "__main__":
