@@ -619,7 +619,6 @@ def evaluate_imagenet(
             "evaluate_imagenet is currently only supported for OpenFlamingo " "models"
         )
     model, tokenizer = eval_model.model, eval_model.tokenizer
-    device = eval_model.device
     assert isinstance(model, Flamingo)
 
     train_dataset = ImageNetDataset(os.path.join(imagenet_root, 'train'))
@@ -631,19 +630,6 @@ def evaluate_imagenet(
     acc1 = 0
     acc5 = 0
 
-    prompt_text = '<image>A photo of a'
-    prompt_tokens = tokenizer(prompt_text,
-                              add_special_tokens=False,
-                              return_tensors='np')['input_ids'].ravel().tolist()
-
-    # kwargs to use when calling tokenizer
-    tokenizer_kwargs = {
-        "return_tensors": "pt",
-        "padding": True,
-        "truncation": True,
-        "max_length": 256,
-    }
-
     for i, batch in enumerate(val_dataset):
         # Choose a different set of random context samples for each batch
         # from the training set
@@ -653,7 +639,6 @@ def evaluate_imagenet(
 
         in_context_samples = [train_dataset[i] for i in context_indices]
 
-        # Process the images only once.
         vision_x = [eval_model.image_processor(data['image']).unsqueeze(0)
                     for data in in_context_samples] \
                    + [eval_model.image_processor(batch['image']).unsqueeze(0)]
@@ -661,56 +646,30 @@ def evaluate_imagenet(
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
         model._encode_vision_x(vision_x.cuda())
 
-        # Process the context text only once for the batch.
+        prompt_text = '<image>A photo of a'
         context_class_names = [in_context_samples[i]['class_name']
                                for i in range(effective_num_shots)]
         context_text = ''.join(f"{prompt_text} {classname}<|endofchunk|>"
                                for classname in context_class_names)
-        context_encodings = tokenizer([context_text], **tokenizer_kwargs)
-        context_ids = context_encodings["input_ids"].to(device)
-        context_len = context_ids.shape[-1]
-        context_precomputed = model(
-            None,
-            context_ids,
-            use_cached_vision_x=True,
-            clear_conditioned_layers=False,
-            use_cache=True,
-        )
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
             target_text = f'{prompt_text} {imagenet_class_name}'
+            prompt_tokens = tokenizer(prompt_text, add_special_tokens=False,
+                                      return_tensors='np')['input_ids'].ravel().tolist()
 
-            lang_x = tokenizer([context_text + target_text], **tokenizer_kwargs)
-
-            # Sanity check that the encoded inputs with context are the same
-            # as the encoded context alone, for every example in the batch
-            assert torch.all(
-                context_ids[0, :] == \
-                lang_x['input_ids'][:, :context_len].to(device)
-            ).item()
-
-            # Clone the nested structure of the past key values
-            past_key_values = tuple(
-                [
-                    tuple([x.clone() for x in inner])
-                    for inner in context_precomputed.past_key_values
-                ]
-            )
+            lang_x = tokenizer([context_text + target_text],
+                               return_tensors="pt")
 
             outputs = model(
                 vision_x=None,
-                lang_x=lang_x["input_ids"][:, context_len:].cuda(),
+                lang_x=lang_x["input_ids"].cuda(),
                 attention_mask=lang_x["attention_mask"].cuda(),
                 clear_conditioned_layers=False,
-                past_key_values=past_key_values,
-                use_cache=True,
                 use_cached_vision_x=True
             )
-            logits = torch.concat((context_precomputed.logits, outputs.logits),
-                                  1)
-            probs = torch.softmax(logits, dim=-1).detach()
+            probs = torch.softmax(outputs.logits, dim=-1).detach()
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1
             probs = probs[:, :-1, :]
