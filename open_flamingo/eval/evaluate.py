@@ -681,7 +681,6 @@ def evaluate_imagenet(
             for input_sentence, input_probs in zip(input_ids, gen_probs):
                 idxes = find_sub_list(prompt_tokens,
                                       input_sentence.detach().cpu().numpy().tolist())
-                # input_sentence = input_sentence[idxes[-1] + 1:]
                 input_probs = input_probs[idxes[-1] + 1:]
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
@@ -698,7 +697,7 @@ def evaluate_imagenet(
         if i >= num_samples:
             break
 
-    return acc1
+    return float(acc1) / num_samples
 
 
 if __name__ == "__main__":
