@@ -626,16 +626,18 @@ def evaluate_imagenet(
 
     effective_num_shots = num_shots if num_shots > 0 else 2
 
-    # random context samples
-    random_indices = np.random.choice(len(train_dataset), effective_num_shots,
-                                      replace=False)
-
-    in_context_samples = [train_dataset[i] for i in random_indices]
 
     acc1 = 0
     acc5 = 0
 
     for i, batch in enumerate(val_dataset):
+        # Choose a different set of random context samples for each batch
+        # from the training set
+        context_indices = np.random.choice(len(train_dataset),
+                                           effective_num_shots,
+                                           replace=False)
+
+        in_context_samples = [train_dataset[i] for i in context_indices]
 
         vision_x = [eval_model.image_processor(data['image']).unsqueeze(0)
                     for data in in_context_samples] \
