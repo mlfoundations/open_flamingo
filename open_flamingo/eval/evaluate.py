@@ -683,8 +683,8 @@ def evaluate_imagenet(
         if batch['class_name'] in top5:
             acc5 += 1
         print('eval {}/{}: acc@1 ({}), acc@5 ({})'.format(i, num_samples,
-                                                          acc1 / i+1,
-                                                          acc5 / i+1))
+                                                          acc1 / (i+1),
+                                                          acc5 / (i+1)))
         if i >= num_samples:
             break
 
