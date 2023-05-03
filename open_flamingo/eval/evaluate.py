@@ -633,7 +633,7 @@ def evaluate_imagenet(
 
     acc1 = 0
     acc5 = 0
-    count = 0
+
     for i, batch in enumerate(val_dataset):
 
         vision_x = [eval_model.image_processor(data['image']).unsqueeze(0) for data in
@@ -646,16 +646,14 @@ def evaluate_imagenet(
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
             tokenizer.padding_side = "left"  # For generation padding tokens should be on the left
-            lang_x = tokenizer(
-                [
-                    "<image>A photo of a {}<|endofchunk|><image>A photo of a {}<|endofchunk|><image>A photo of a {}<|endofchunk|><image>A photo of a {}<|endofchunk|><image>A photo of a {}".format(
-                        in_context_samples[0]['class_name'],
-                        in_context_samples[1]['class_name'],
-                        in_context_samples[2]['class_name'],
-                        in_context_samples[3]['class_name'],
-                        imagenet_class_name)],
-                return_tensors="pt",
-            )
+
+            context_class_names = [in_context_samples[i]['class_name']
+                                   for i in range(effective_num_shots)]
+            text = ''.join(f"<image>A photo of a {classname}<|endofchunk|>"
+                         for classname in context_class_names)
+            text += f'<image>A photo of a {imagenet_class_name}'
+
+            lang_x = tokenizer([text], return_tensors="pt")
 
             outputs = model(
                 vision_x=vision_x.cuda(),
@@ -679,16 +677,17 @@ def evaluate_imagenet(
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
 
-        count += 1
         top5 = [IMAGENET_1K_CLASS_ID_TO_LABEL[pred] for pred in
                 np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]]
         if batch['class_name'] == top5[0]:
             acc1 += 1
         if batch['class_name'] in top5:
             acc5 += 1
-        print('eval {}/{}: acc@1 ({}), acc@5 ({})'.format(i, len(val_dataset),
-                                                          acc1 / count,
-                                                          acc5 / count))
+        print('eval {}/{}: acc@1 ({}), acc@5 ({})'.format(i, num_samples,
+                                                          acc1 / i,
+                                                          acc5 / i))
+        if i >= num_samples:
+            break
 
 
 if __name__ == "__main__":
