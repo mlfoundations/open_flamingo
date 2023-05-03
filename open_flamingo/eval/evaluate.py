@@ -644,7 +644,7 @@ def evaluate_imagenet(
                    + [eval_model.image_processor(batch['image']).unsqueeze(0)]
         vision_x = torch.cat(vision_x, dim=0)
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
-        model._encode_vision_x(vision_x)
+        # model._encode_vision_x(vision_x)
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
