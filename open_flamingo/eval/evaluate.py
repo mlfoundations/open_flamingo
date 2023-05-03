@@ -1,7 +1,6 @@
 import argparse
 import importlib
 import json
-from math import ceil
 import os
 import random
 import uuid
@@ -18,10 +17,6 @@ from tqdm import tqdm
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 from open_flamingo.src.flamingo import Flamingo
-from open_flamingo.eval.classification import (
-    compute_per_sample_probs,
-    compute_per_sample_loss,
-)
 from open_flamingo.eval.imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
