@@ -706,7 +706,7 @@ def evaluate_imagenet(
                 i, num_samples, acc1 / (i + 1), acc5 / (i + 1)
             )
         )
-        if i >= num_samples:
+        if i >= num_samples - 1:
             break
 
     return float(acc1) / num_samples
