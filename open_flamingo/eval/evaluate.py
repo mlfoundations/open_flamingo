@@ -625,7 +625,7 @@ def evaluate_imagenet(
     val_dataset = ImageNetDataset(os.path.join(imagenet_root, 'val'))
 
     effective_num_shots = num_shots if num_shots > 0 else 2
-
+    tokenizer.padding_side = "left"  # For generation padding tokens should be on the left
 
     acc1 = 0
     acc5 = 0
@@ -646,20 +646,21 @@ def evaluate_imagenet(
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
         model._encode_vision_x(vision_x.cuda())
 
+        prompt_text = '<image>A photo of a'
+        context_class_names = [in_context_samples[i]['class_name']
+                               for i in range(effective_num_shots)]
+        context_text = ''.join(f"{prompt_text} {classname}<|endofchunk|>"
+                               for classname in context_class_names)
+
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
-            tokenizer.padding_side = "left"  # For generation padding tokens should be on the left
-            prompt_text = '<image>A photo of a'
-            context_class_names = [in_context_samples[i]['class_name']
-                                   for i in range(effective_num_shots)]
-            text = ''.join(f"{prompt_text} {classname}<|endofchunk|>"
-                         for classname in context_class_names)
-            text += f'{prompt_text} {imagenet_class_name}'
+            target_text = f'{prompt_text} {imagenet_class_name}'
             prompt_tokens = tokenizer(prompt_text, add_special_tokens=False,
                                       return_tensors='np')['input_ids'].ravel().tolist()
 
-            lang_x = tokenizer([text], return_tensors="pt")
+            lang_x = tokenizer([context_text + target_text],
+                               return_tensors="pt")
 
             outputs = model(
                 vision_x=None,
