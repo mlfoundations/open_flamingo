@@ -578,12 +578,12 @@ def evaluate_vqa(
     return acc
 
 
-def find_sub_list(sl,l):
-    results=[]
-    sll=len(sl)
-    for ind in (i for i,e in enumerate(l) if e==sl[0]):
-        if l[ind:ind+sll]==sl:
-            results.append(ind+sll-1)
+def find_sub_list(sl, l):
+    results = []
+    sll = len(sl)
+    for ind in (i for i, e in enumerate(l) if e == sl[0]):
+        if l[ind : ind + sll] == sl:
+            results.append(ind + sll - 1)
     return results
 
 
@@ -616,36 +616,42 @@ def evaluate_imagenet(
     model, tokenizer = eval_model.model, eval_model.tokenizer
     assert isinstance(model, Flamingo)
 
-    train_dataset = ImageNetDataset(os.path.join(imagenet_root, 'train'))
-    val_dataset = ImageNetDataset(os.path.join(imagenet_root, 'val'))
+    train_dataset = ImageNetDataset(os.path.join(imagenet_root, "train"))
+    val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
 
     effective_num_shots = num_shots if num_shots > 0 else 2
-    tokenizer.padding_side = "left"  # For generation padding tokens should be on the left
+    tokenizer.padding_side = (
+        "left"  # For generation padding tokens should be on the left
+    )
 
     acc1 = 0
     acc5 = 0
-    prompt_text = '<image>A photo of a'
+    prompt_text = "<image>A photo of a"
 
     for i, batch in enumerate(val_dataset):
         # Choose a different set of random context samples for each batch
         # from the training set
-        context_indices = np.random.choice(len(train_dataset),
-                                           effective_num_shots,
-                                           replace=False)
+        context_indices = np.random.choice(
+            len(train_dataset), effective_num_shots, replace=False
+        )
 
         in_context_samples = [train_dataset[i] for i in context_indices]
 
-        vision_x = [eval_model.image_processor(data['image']).unsqueeze(0)
-                    for data in in_context_samples] \
-                   + [eval_model.image_processor(batch['image']).unsqueeze(0)]
+        vision_x = [
+            eval_model.image_processor(data["image"]).unsqueeze(0)
+            for data in in_context_samples
+        ] + [eval_model.image_processor(batch["image"]).unsqueeze(0)]
         vision_x = torch.cat(vision_x, dim=0)
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
         model._encode_vision_x(vision_x.cuda())
 
-        context_class_names = [in_context_samples[i]['class_name']
-                               for i in range(effective_num_shots)]
-        context_text = ''.join(f"{prompt_text} {classname}<|endofchunk|>"
-                               for classname in context_class_names)
+        context_class_names = [
+            in_context_samples[i]["class_name"] for i in range(effective_num_shots)
+        ]
+        context_text = "".join(
+            f"{prompt_text} {classname}<|endofchunk|>"
+            for classname in context_class_names
+        )
 
         # TODO(jpgard): cache the context text here, and compute the outputs
         #  one token at a time by using Flamingo.forward() with
@@ -653,46 +659,53 @@ def evaluate_imagenet(
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
+            target_text = f"{prompt_text} {imagenet_class_name}"
+            prompt_tokens = (
+                tokenizer(prompt_text, add_special_tokens=False, return_tensors="np")[
+                    "input_ids"
+                ]
+                .ravel()
+                .tolist()
+            )
 
-            target_text = f'{prompt_text} {imagenet_class_name}'
-            prompt_tokens = tokenizer(prompt_text, add_special_tokens=False,
-                                      return_tensors='np')['input_ids'].ravel().tolist()
-
-            lang_x = tokenizer([context_text + target_text],
-                               return_tensors="pt")
+            lang_x = tokenizer([context_text + target_text], return_tensors="pt")
 
             outputs = model(
                 vision_x=None,
                 lang_x=lang_x["input_ids"].cuda(),
                 attention_mask=lang_x["attention_mask"].cuda(),
                 clear_conditioned_layers=False,
-                use_cached_vision_x=True
+                use_cached_vision_x=True,
             )
             probs = torch.softmax(outputs.logits, dim=-1).detach()
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1
             probs = probs[:, :-1, :]
             input_ids = lang_x["input_ids"][:, 1:].cuda()
-            gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(
-                -1)
+            gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(-1)
 
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
-                idxes = find_sub_list(prompt_tokens,
-                                      input_sentence.detach().cpu().numpy().tolist())
-                input_probs = input_probs[idxes[-1] + 1:]
+                idxes = find_sub_list(
+                    prompt_tokens, input_sentence.detach().cpu().numpy().tolist()
+                )
+                input_probs = input_probs[idxes[-1] + 1 :]
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
 
-        top5 = [IMAGENET_1K_CLASS_ID_TO_LABEL[pred] for pred in
-                np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]]
-        if batch['class_name'] == top5[0]:
+        top5 = [
+            IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+            for pred in np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]
+        ]
+        if batch["class_name"] == top5[0]:
             acc1 += 1
-        if batch['class_name'] in top5:
+        if batch["class_name"] in top5:
             acc5 += 1
-        print('eval {}/{}: acc@1 ({}), acc@5 ({})'.format(i, num_samples,
-                                                          acc1 / (i+1),
-                                                          acc5 / (i+1)))
+        print(
+            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
+                i, num_samples, acc1 / (i + 1), acc5 / (i + 1)
+            )
+        )
         if i >= num_samples:
             break
 
