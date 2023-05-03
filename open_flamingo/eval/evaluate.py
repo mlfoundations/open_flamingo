@@ -636,9 +636,9 @@ def evaluate_imagenet(
     count = 0
     for i, batch in enumerate(val_dataset):
 
-        vision_x = [model.image_processor(data['image']).unsqueeze(0) for data in
+        vision_x = [eval_model.image_processor(data['image']).unsqueeze(0) for data in
                     in_context_samples] + [
-                       model.image_processor(batch['image']).unsqueeze(0)]
+                       eval_model.image_processor(batch['image']).unsqueeze(0)]
         vision_x = torch.cat(vision_x, dim=0)
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
 
