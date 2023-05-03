@@ -629,6 +629,7 @@ def evaluate_imagenet(
 
     acc1 = 0
     acc5 = 0
+    prompt_text = '<image>A photo of a'
 
     for i, batch in enumerate(val_dataset):
         # Choose a different set of random context samples for each batch
@@ -646,7 +647,6 @@ def evaluate_imagenet(
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
         model._encode_vision_x(vision_x.cuda())
 
-        prompt_text = '<image>A photo of a'
         context_class_names = [in_context_samples[i]['class_name']
                                for i in range(effective_num_shots)]
         context_text = ''.join(f"{prompt_text} {classname}<|endofchunk|>"
