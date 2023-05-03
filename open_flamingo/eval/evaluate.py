@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
+from open_flamingo.src.flamingo import Flamingo
 from open_flamingo.eval.classification import (
     compute_per_sample_probs,
     compute_per_sample_loss,
@@ -618,6 +619,7 @@ def evaluate_imagenet(
             "evaluate_imagenet is currently only supported for OpenFlamingo " "models"
         )
     model, tokenizer = eval_model.model, eval_model.tokenizer
+    assert isinstance(model, Flamingo)
 
     train_dataset = ImageNetDataset(os.path.join(imagenet_root, 'train'))
     val_dataset = ImageNetDataset(os.path.join(imagenet_root, 'val'))
@@ -640,6 +642,7 @@ def evaluate_imagenet(
                    + [eval_model.image_processor(batch['image']).unsqueeze(0)]
         vision_x = torch.cat(vision_x, dim=0)
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
+        model._encode_vision_x(vision_x.cuda())
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
@@ -657,10 +660,11 @@ def evaluate_imagenet(
             lang_x = tokenizer([text], return_tensors="pt")
 
             outputs = model(
-                vision_x=vision_x.cuda(),
+                vision_x=None,
                 lang_x=lang_x["input_ids"].cuda(),
                 attention_mask=lang_x["attention_mask"].cuda(),
-                clear_conditioned_layers=False
+                clear_conditioned_layers=False,
+                use_cached_vision_x=True
             )
             probs = torch.softmax(outputs.logits, dim=-1).detach()
             # collect the probability of the generated token -- probability
