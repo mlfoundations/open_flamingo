@@ -623,8 +623,7 @@ def evaluate_imagenet(
     train_dataset = ImageNetDataset(os.path.join(imagenet_root, 'train'))
     val_dataset = ImageNetDataset(os.path.join(imagenet_root, 'val'))
 
-    # effective_num_shots = num_shots if num_shots > 0 else 2
-    effective_num_shots = 4
+    effective_num_shots = num_shots if num_shots > 0 else 2
 
     # random context samples
     random_indices = np.random.choice(len(train_dataset), effective_num_shots, replace=False)
