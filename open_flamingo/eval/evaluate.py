@@ -582,6 +582,15 @@ def evaluate_vqa(
     return acc
 
 
+def find_sub_list(sl,l):
+    results=[]
+    sll=len(sl)
+    for ind in (i for i,e in enumerate(l) if e==sl[0]):
+        if l[ind:ind+sll]==sl:
+            results.append(ind+sll-1)
+    return results
+
+
 def evaluate_imagenet(
     eval_model,
     batch_size: int,
@@ -610,187 +619,76 @@ def evaluate_imagenet(
         )
     model, tokenizer = eval_model.model, eval_model.tokenizer
 
-    full_dataset = ImageNetDataset(root=imagenet_root)
+    # full_dataset = ImageNetDataset(root=imagenet_root)
+    train_dataset = ImageNetDataset(os.path.join(imagenet_root, 'train'))
+    val_dataset = ImageNetDataset(os.path.join(imagenet_root, 'val'))
 
-    effective_num_shots = num_shots if num_shots > 0 else 2
+    # effective_num_shots = num_shots if num_shots > 0 else 2
+    effective_num_shots = 4
 
-    if num_samples + effective_num_shots > len(full_dataset):
-        raise ValueError(
-            f"num_samples + num_shots must be less than or equal to "
-            f"{len(full_dataset)} "
-        )
+    # random context samples
+    random_indices = np.random.choice(len(train_dataset), effective_num_shots, replace=False)
 
-    random_indices = get_random_indices(
-        num_samples, effective_num_shots, full_dataset, seed
-    )
+    in_context_samples = [train_dataset[i] for i in random_indices]
 
-    eoc_token = "<|endofchunk|>"
-    eoc_token_id = tokenizer.additional_special_tokens_ids[
-        tokenizer.additional_special_tokens.index(eoc_token)
-    ]
+    acc1 = 0
+    acc5 = 0
+    count = 0
+    for i, batch in enumerate(val_dataset):
 
-    # Padding from right allows efficient precomputing of context activations.
-    tokenizer.padding_side = "right"
+        vision_x = [model.image_processor(data['image']).unsqueeze(0) for data in
+                    in_context_samples] + [
+                       model.image_processor(batch['image']).unsqueeze(0)]
+        vision_x = torch.cat(vision_x, dim=0)
+        vision_x = vision_x.unsqueeze(1).unsqueeze(0)
 
-    def _imagenet_prompt(class_name, is_context: bool = True):
-        """Construct an imagenet prompt for a given label."""
-        prefix = "<image>A photo of a "
-        if is_context:
-            return prefix + class_name.strip()
-        else:
-            # Not a context example; insert EOS token before the class name
-            # so that we can compute the loss on the class name tokens only.
-            return prefix + tokenizer.eos_token + class_name.strip()
-
-    def get_imagenet_prompt(x: dict, is_context: bool = True) -> str:
-        """Construct an ImageNet prompt for an example, using its label."""
-        return _imagenet_prompt(x["class_name"], is_context=is_context)
-
-    in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
-        full_dataset=full_dataset,
-        random_indices=random_indices,
-        query_set_size=effective_num_shots,  # NOTE: here we replace query_set_size with effective_num_shots but this is not the ideal evaluation setting.
-        # TODO: We should add a query_set_size argument to the function and use it to randomly sample the context for each example.
-        # This will be more consistent with the evaluation setting in the paper but will require some reworking of the caching.
-    )
-
-    device = eval_model.device
-
-    model.eval()
-    # Predictions based on the class target sequence with the maximal
-    # predicted probability
-    predictions_max_prob = []
-    # Predictions based on the class target sequence with the minimal loss on
-    # the model logits
-    predictions_min_loss = []
-    labels = []
-
-    context_images = [x["image"] for x in in_context_samples] if num_shots > 0 else []
-    context_text = get_context_text(
-        get_imagenet_prompt,
-        in_context_samples=in_context_samples,
-        effective_num_shots=effective_num_shots,
-        num_shots=num_shots,
-    )
-
-    # kwargs to use when calling tokenizer
-    tokenizer_kwargs = {
-        "return_tensors": "pt",
-        "padding": True,
-        "truncation": True,
-        "max_length": 256,
-    }
-
-    for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
-        print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
-        batch_per_class_probs = []
-        batch_per_class_losses = []
-        batch_images = eval_model._prepare_images(
-            [context_images + [x["image"]] for x in batch]
-        )
-
-        # Process the images only once.
-        batch_images = batch_images.to(device)
-        model._encode_vision_x(vision_x=batch_images)
-
-        # Process the context text only once.
-        context_encodings = tokenizer([context_text] * batch_size, **tokenizer_kwargs)
-        context_ids = context_encodings["input_ids"].to(device)
-        context_len = context_ids.shape[-1]
-        context_precomputed = model(
-            None,
-            context_ids,
-            use_cached_vision_x=True,
-            clear_conditioned_layers=False,
-            use_cache=True,
-        )
-
-        # For each ImageNet class, construct the output prompt, compute a
-        # forward pass, and store the results.
+        overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            batch_text = [
-                context_text + _imagenet_prompt(imagenet_class_name, False) + eoc_token
-            ] * batch_size
 
-            full_batch_encodings = tokenizer(batch_text, **tokenizer_kwargs)
-
-            # full_batch_input_ids has shape [batch_size, seq_len], but we
-            # only need to run inference on the [batch_size,
-            # context_len:] inputs that have not been precomputed and
-            # vary per class.
-            full_batch_input_ids = full_batch_encodings["input_ids"].to(device)
-            full_batch_attention_mask = full_batch_encodings["attention_mask"].to(
-                device
-            )
-
-            # Sanity check that the encoded inputs with context are the same
-            # as the encoded context alone, for every example in the batch
-            assert torch.all(
-                context_ids[0, :] == full_batch_input_ids[:, :context_len]
-            ).item()
-
-            # Clone the nested structure of the past key values
-            past_key_values = tuple(
+            tokenizer.padding_side = "left"  # For generation padding tokens should be on the left
+            lang_x = tokenizer(
                 [
-                    tuple([x.clone() for x in inner])
-                    for inner in context_precomputed.past_key_values
-                ]
+                    "<image>A photo of a {}<|endofchunk|><image>A photo of a {}<|endofchunk|><image>A photo of a {}<|endofchunk|><image>A photo of a {}<|endofchunk|><image>A photo of a {}".format(
+                        in_context_samples[0]['class_name'],
+                        in_context_samples[1]['class_name'],
+                        in_context_samples[2]['class_name'],
+                        in_context_samples[3]['class_name'],
+                        imagenet_class_name)],
+                return_tensors="pt",
             )
 
-            # Compute the outputs without recomputing context representations.
             outputs = model(
-                vision_x=None,
-                lang_x=full_batch_input_ids[:, context_len:],
-                attention_mask=full_batch_attention_mask,
-                use_cached_vision_x=True,
-                clear_conditioned_layers=False,
-                past_key_values=past_key_values,
-                use_cache=True,
+                vision_x=vision_x.cuda(),
+                lang_x=lang_x["input_ids"].cuda(),
+                attention_mask=lang_x["attention_mask"].cuda(),
+                clear_conditioned_layers=False
             )
+            probs = torch.softmax(outputs.logits, dim=-1).detach()
+            # collect the probability of the generated token -- probability at index 0 corresponds to the token at index 1
+            probs = probs[:, :-1, :]
+            input_ids = lang_x["input_ids"][:, 1:].cuda()
+            gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(
+                -1)
 
-            logits = torch.concat((context_precomputed.logits, outputs.logits), 1)
+            probs = []
+            for input_sentence, input_probs in zip(input_ids, gen_probs):
+                idxes = find_sub_list([32001, 319, 15373, 310, 263],
+                                      input_sentence.detach().cpu().numpy().tolist())
+                input_sentence = input_sentence[idxes[-1] + 1:]
+                input_probs = input_probs[idxes[-1] + 1:]
+                probs.append(torch.prod(input_probs).item())
+            overall_probs.append(probs)
 
-            per_sample_probs = compute_per_sample_probs(
-                encodings=full_batch_encodings,
-                tokenizer=tokenizer,
-                logits=logits,
-                eoc_token_id=eoc_token_id,
-            )
-            per_sample_loss = compute_per_sample_loss(
-                encodings=full_batch_encodings,
-                tokenizer=tokenizer,
-                logits=logits,
-                eoc_token_id=eoc_token_id,
-            )
-            batch_per_class_probs.append(per_sample_probs.detach())
-            batch_per_class_losses.append(per_sample_loss.detach())
-
-        # Tensor of shape [batch_size, 1000] where the [i,j]th element is
-        # the (probability or loss) for batch element i on imagenet class j.
-        batch_probs = torch.stack(batch_per_class_probs, 1)
-        batch_losses = torch.stack(batch_per_class_losses, 1)
-
-        predictions_max_prob.extend(torch.argmax(batch_probs, 1).detach().tolist())
-        predictions_min_loss.extend(torch.argmin(batch_losses, 1).detach().tolist())
-        labels.extend(x["class_id"] for x in batch)
-
-    acc_max_prob = (np.array(predictions_max_prob) == np.array(labels)).mean()
-    acc_min_loss = (np.array(predictions_min_loss) == np.array(labels)).mean()
-    print(f"[DEBUG] ImageNet accuracy with max prob method is {acc_max_prob}")
-    print(f"[DEBUG] ImageNet accuracy with min loss method is {acc_min_loss}")
-    print(f"[DEBUG] printing ImageNet predictions and labels:")
-    for yhat_prob, yhat_loss, y in zip(
-        predictions_max_prob, predictions_min_loss, labels
-    ):
-        print(
-            " " * 30 + f"label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}"
-            f"\nprediction (max prob method): "
-            f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]}"
-            f"\nprediction (min loss method): "
-            f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]}\n"
-            "#" * 25
-        )
-    return acc_max_prob
+        count += 1
+        top5 = [IMAGENET_1K_CLASS_ID_TO_LABEL[pred] for pred in
+                np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]]
+        if batch['class_name'] == top5[0]:
+            acc1 += 1
+        if batch['class_name'] in top5:
+            acc5 += 1
+        print('eval {}/{}: acc@1 ({}), acc@5 ({})'.format(i, len(val_dataset),
+                                                          acc1 / count,
+                                                          acc5 / count))
 
 
 if __name__ == "__main__":
