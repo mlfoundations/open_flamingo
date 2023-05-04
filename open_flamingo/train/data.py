@@ -7,7 +7,7 @@ import math
 import os
 import random
 import sys
-import tarfile
+import re
 from dataclasses import dataclass
 from multiprocessing import Value
 
@@ -29,10 +29,11 @@ import base64
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
-MAX_NUM_IMAGES = 5
+MAX_NUM_IMAGES = 10
 TINY_IMAGE_SIZE_THRESHOLD = 1
 N_CHANNELS = 3
 INTERLEAVED_IMAGE_SIZE = 224
+MIN_KB = 10
 
 try:
     import horovod.torch as hvd
@@ -263,9 +264,8 @@ class ResampledShards2(IterableDataset):
 def preprocess_image(sample, image_processor):
     image = [image_processor(s).unsqueeze(0) for s in sample]
     image = torch.cat(image, dim=0)
-    # apply random horizontal flip
+    # apply random horizontal flip and color jitter
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
-    # NOTE: potentially move jitter into the image_preprocessor before normalization
     # image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
 
@@ -284,12 +284,62 @@ def preprocess_text(sample, tokenizer):
     )
     return text["input_ids"], text["attention_mask"]
 
+def preprocess_gpt_interleaved(info, tokenizer, clip_processor):
+    text = info["example"]
+    text = re.sub(r"_!_IMAGE\d+_!_", "<|endofchunk|><image>", text)
 
-MIN_KB = 10
+    images = []
+    for image_key in range(1, len(info["image_map"])+1):
+        image_base64 = info["image_map"][f"_!_IMAGE{image_key}_!_"]["base64_image"]
+        rawbytes = base64.b64decode(image_base64)
+        images.append(Image.open(io.BytesIO(rawbytes)).convert("RGB"))
+    
+    images_tensors = preprocess_image(images, clip_processor)
+    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
+    images_tensors = images_tensors[keep_ixs]
+
+    if len(images_tensors) < MAX_NUM_IMAGES:
+        zero_padding = torch.zeros(
+            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+        )
+        images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
+        
+    text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
+    # whitespace cleanup
+    text = (
+        text.replace(" <|endofchunk|>", "<|endofchunk|>")
+        .replace("<image> ", "<image>")
+        .replace(" <image>", "<image>")
+    )
+    
+    # print(text)
+    
+    # find the indices of the 10th occurrence of "<image>"
+    indices = [m.start() for m in re.finditer('<image>', text)]
+    if len(indices) > 10:
+        start_index = indices[9]
+        # print(f"Truncating text to {start_index} characters")
+        text = text[:start_index]
+    
+    text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
+    tokenizer.padding_side = "right"
+    text_tensor = tokenizer(
+        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+    )
+    
+    return (
+        images_tensors,
+        (text_tensor["input_ids"], text_tensor["attention_mask"])
+    )
 
 
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
+def preprocess_interleaved(
+    sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation
+):
     info = json.loads(sample[0])
+    if "is_gpt" in info:
+        return preprocess_gpt_interleaved(info, tokenizer, clip_processor)
+  
     sentences = info["text_list"]
 
     images, sentence_ixs = [], []
@@ -324,7 +374,6 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
     # add in <image> and <eoc> tokens
-    # eoc after sentence = "sentence loss"
     for ix in sentence_ixs:
         sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
 
@@ -392,6 +441,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         clip_processor=image_processor,
         tokenizer=tokenizer,
         sim_threshold=args.mmc4_textsim_threshold,
+        use_media_placement_augmentation=args.use_media_placement_augmentation,
     )
 
     # at this point we have an iterator over all the shards
