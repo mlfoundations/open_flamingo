@@ -192,6 +192,7 @@ def main():
 
     if args.mmc4_shards.startswith("s3"):
         args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
+    args.mmc4_shards = "{"+args.mmc4_shards + ",pipe:aws s3 cp s3://s-laion/flamingo/chatgpt-shards/{00000..00418}.tar -}" # add in the chatgpt shards
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
