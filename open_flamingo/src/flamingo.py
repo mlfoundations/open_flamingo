@@ -44,7 +44,7 @@ class Flamingo(nn.Module):
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
         self.vis_dim = vis_dim
-        self.vision_encoder = vision_encoder
+        self.vision_encoder = vision_encoder.visual
         self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
@@ -205,7 +205,7 @@ class Flamingo(nn.Module):
 
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         with torch.no_grad():
-            vision_x = self.vision_encoder.visual(vision_x)[1]
+            vision_x = self.vision_encoder(vision_x)[1]
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
         vision_x = self.perceiver(vision_x)
 
@@ -249,8 +249,7 @@ class Flamingo(nn.Module):
             self.lang_encoder.set_input_embeddings(
                 wrap(self.lang_encoder.get_input_embeddings())
             )
-            # may be able to wrap CLIP more cleverly
-            self.vision_encoder.visual = wrap(self.vision_encoder.visual)
+            self.vision_encoder = wrap(self.vision_encoder)
             
             # OPT has its own custom positional embeddings class that also needs to be wrapped
             if "opt" in self.lang_encoder.__class__.__name__.lower():
