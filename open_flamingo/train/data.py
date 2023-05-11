@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from multiprocessing import Value
 
 import braceexpand
+import numpy as np
 import torch
 import torchvision
 import webdataset as wds
@@ -289,21 +290,25 @@ MIN_KB = 10
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
     sentences = info["text_list"]
+    sim_matrix = info["similarity_matrix"]
 
     images, sentence_ixs = [], []
-    for sample_image in info["image_info"]:
+    for sample_image, sim_vec in zip(info["image_info"], sim_matrix):
         image_base64 = sample_image["image_base64"]
         rawbytes = base64.b64decode(image_base64)
+
+        sim_ix = np.argmax(sim_vec)
+        sim_score = sim_vec[sim_ix]
         
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
-        if sample_image["matched_sim"] < sim_threshold:
+        if sim_score < sim_threshold:
             continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
-        sentence_ixs.append(sample_image["matched_text_index"])
+        sentence_ixs.append(sim_ix)
 
     if len(images) == 0:
         raise ValueError("No images in sample")
