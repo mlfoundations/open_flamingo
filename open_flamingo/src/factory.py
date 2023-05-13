@@ -103,9 +103,9 @@ def _infer_decoder_layers_attr_name(model):
 
 __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "opt": "model.decoder.layers",
-    "gptneo": "transformer.h",
     "gptj": "transformer.h",
     "gpt-j": "transformer.h",
     "pythia": "gpt_neox.layers",
     "llama": "model.layers",
+    "gptneoxforcausallm": "gpt_neox.layers",
 }
