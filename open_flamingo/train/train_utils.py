@@ -92,7 +92,7 @@ def train_one_epoch(
         labels[labels == tokenizer.pad_token_id] = -100
         labels[:, 0] = -100
         labels[labels == media_token_id] = -100
-        labels.to(device_id)
+        labels = labels.to(device_id)
 
         with autocast():
             loss_laion = model(
@@ -146,7 +146,7 @@ def train_one_epoch(
             # not sure if this is the right way to recover in fsdp setting
             continue
 
-        labels.to(device_id)
+        labels = labels.to(device_id)
 
         with autocast():
             loss_mmc4 = model(
@@ -275,18 +275,20 @@ def train_one_epoch(
 def filter_state_dict_to_trainable(model, state_dict):
     """
     Remove non-trainable parameters from model state dict.
-    Note: when --FSDP is on, model.named_parameters() will return
-    only the sharded rank 0 parameters unless --fsdp.use_orig_params is set to True.
+    Exception: Embeddings will not be removed, even if frozen. 
+    This is because we need the new <image> <|endofchunk|> tokens to 
+    be consistent across initializations.
     """
-    for name, p in model.named_parameters():
+    for name, p in model.named_parameters(): # won't work for fsdp + use_orig_params=False
         if 'fsdp' in name: continue
+        if 'embed' in name or isinstance(p, torch.nn.Embedding): continue
         if not p.requires_grad:
             del state_dict[name]
 
     # also remove the keys in state_dict generated from
     # lang_encoder.old_decoder_blocks and lang_encoder.gated_cross_attn_layers
     # because these are already saved in lang_encoder.model...
-    to_delete = [n for n in state_dict.keys() if n.startswith('lang_encoder.old_decoder_blocks') or n.startswith('lang_encoder.gated_cross_attn_layers')]
+    to_delete = [n for n in state_dict.keys() if ('lang_encoder.old_decoder_blocks' in n) or ('lang_encoder.gated_cross_attn_layers' in n) or ('vision_encoder' in n)]
     for name in to_delete:
         del state_dict[name]
     return state_dict

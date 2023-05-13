@@ -255,10 +255,12 @@ def main():
         if args.rank == 0:
             print(f"Loading checkpoint from {args.resume_from_checkpoint}")
         checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
+        msd = checkpoint["model_state_dict"]
+        msd = {k.replace("module.", ""): v for k, v in msd.items()}
         resume_from_epoch = checkpoint["epoch"] + 1
 
         # for fsdp, only one rank needs to load the state dict
-        if not args.fsdp or args.rank == 0: model.load_state_dict(checkpoint["model_state_dict"], False)
+        if not args.fsdp or args.rank == 0: model.load_state_dict(msd, False)
 
     """
     Step 2: Init FSDP/DDP, and ensure model is on GPU
@@ -323,6 +325,9 @@ def main():
 
     if args.rank == 0: 
         print(model) # to check wrapping
+        # print params that are being trained
+        for name, param in ddp_model.named_parameters():
+            if param.requires_grad: print(name)
 
     """
     Step 3: Init and load optimizer
@@ -337,13 +342,7 @@ def main():
             params_with_wd, params_without_wd = [], []
 
             def apply_decay(x):
-                return (
-                    "gated_cross_attn_layer" in x
-                    and "ff_gate" not in x
-                    and "attn_gate" not in x
-                    and "norm" not in x
-                    and "bias" not in x
-                )
+                return "gated_cross_attn" in x
 
             for n, p in model.named_parameters():
                 if p.requires_grad:
