@@ -134,7 +134,7 @@ class FlamingoLMMixin(nn.Module):
         # TODO: refactor this out of flamingo_lm and into flamingo? so that it mirrors vis_x
         use_cached_media_locations = self._generating and self.is_conditioned() and not media_locations.any()
 
-        for layer in self.get_decoder().layers:
+        for layer in self._get_decoder_layers():
             if not use_cached_media_locations: layer.condition_media_locations(media_locations)
             layer.condition_use_cached_media(use_cached_media_locations)
 
