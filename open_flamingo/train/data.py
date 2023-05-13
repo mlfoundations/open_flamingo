@@ -394,7 +394,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
         raise ValueError("Only one image in sample")
 
     # avoid the situation where there's one <image> and it's at the end
-    if num_images == 1 and text_tensor[:, -1] == tokenizer.additional_special_tokens_ids[
+    if num_images == 1 and text_tensor["input_ids"][:, -1] == tokenizer.additional_special_tokens_ids[
         tokenizer.additional_special_tokens.index("<image>")
     ]:
         raise ValueError("Only one image at the end of sample, so labels will all be -100")
