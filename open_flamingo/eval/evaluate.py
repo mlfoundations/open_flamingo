@@ -54,6 +54,7 @@ parser.add_argument(
 parser.add_argument(
     "--trial_seeds",
     nargs="+",
+    type=int,
     default=[0],
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
@@ -61,7 +62,7 @@ parser.add_argument(
     "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
 )
 
-parser.add_argument("--batch_size", type=int, default=1)
+parser.add_argument("--batch_size", type=int, default=2)
 parser.add_argument("--device", type=int, default=0)
 
 # Per-dataset evaluation flags
@@ -566,7 +567,7 @@ def evaluate_coco_flickr(
     )
 
     # delete the temporary file
-    os.remove(results_path)
+    # os.remove(results_path)
 
     return metrics["CIDEr"] * 100.0
 
@@ -631,7 +632,7 @@ def evaluate_vqa(
     random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
 
     def get_prompt(sample, train=True):
-        return f"<image>Question:{sample['question'].strip()} Short Answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
+        return f"<image>Question:{sample['question'].strip()} Short answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
 
     in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
         full_dataset=full_dataset,
@@ -732,7 +733,7 @@ def evaluate_vqa(
     )
 
     # delete the temporary file
-    os.remove(f"{vqa_dataset}results_{random_uuid}.json")
+    # os.remove(f"{vqa_dataset}results_{random_uuid}.json")
 
     return acc
 
