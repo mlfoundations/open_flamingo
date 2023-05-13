@@ -14,7 +14,7 @@ from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from train_utils import filter_state_dict_to_trainable, train_one_epoch
+from train_utils import filter_state_dict_to_trainable, train_one_epoch, get_cast_dtype
 from transformers import (
     get_constant_schedule_with_warmup,
     get_cosine_schedule_with_warmup,
@@ -274,12 +274,22 @@ def main():
     This means model initialization must be done carefully so that all GPU workers have the identical initial weights.
     """
     model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
+    cast_dtype = get_cast_dtype(args.precision)
+    model.to(dtype=cast_dtype)
 
     if args.fsdp:
-        # TODO: mixed precision
-        if args.rank == 0: 
+        if args.rank == 0:
             print(f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
             print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+
+        if args.precision != "fp32":
+            mp_policy = MixedPrecision(
+                param_dtype=cast_dtype,
+                reduce_dtype=cast_dtype, # gradient communication
+                buffer_dtype=cast_dtype,
+            )
+        else:
+            mp_policy = None
 
         # init FSDP
         wrapper_kwargs = dict(
@@ -288,6 +298,7 @@ def main():
             sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
             sharding_strategy=ShardingStrategy.FULL_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
+            mixed_precision=mp_policy,
         )
         model.wrap_fsdp(wrapper_kwargs)
         ddp_model = model
@@ -314,10 +325,10 @@ def main():
     # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
     # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
     # loss = ddp_model(
-    #     vision_x, 
-    #     lang_x["input_ids"],
-    #     lang_x["attention_mask"],
-    #     labels=lang_x["input_ids"],
+    #     vision_x.to(device_id, dtype=cast_dtype, non_blocking=True), 
+    #     lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
+    #     lang_x["attention_mask"].to(device_id, dtype=cast_dtype, non_blocking=True),
+    #     labels=lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
     #     clear_conditioned_layers=False,
     # )[0]
     # loss.backward()
