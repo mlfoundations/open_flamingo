@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from multiprocessing import Value
 
 import braceexpand
+import numpy as np
 import torch
 import torchvision
 import webdataset as wds
@@ -30,7 +31,7 @@ import base64
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
-MAX_NUM_IMAGES = 8
+MAX_NUM_IMAGES = 5
 TINY_IMAGE_SIZE_THRESHOLD = 1
 N_CHANNELS = 3
 INTERLEAVED_IMAGE_SIZE = 224
@@ -113,7 +114,6 @@ def filter_no_caption_or_no_image(sample):
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
-    return True
     if "No images in sample" in str(exn) or "Only one image in sample" in str(
         exn
     ):  # Avoid spamming logs with these
@@ -286,77 +286,30 @@ def preprocess_text(sample, tokenizer):
     )
     return text["input_ids"], text["attention_mask"]
 
-def preprocess_gpt_interleaved(info, tokenizer, clip_processor):
-    text = info["example"]
-    text = re.sub(r"_!_IMAGE\d+_!_", "<|endofchunk|><image>", text)
-
-    images = []
-    for image_key in range(1, len(info["image_map"])+1):
-        image_base64 = info["image_map"][f"_!_IMAGE{image_key}_!_"]["base64_image"]
-        rawbytes = base64.b64decode(image_base64)
-        images.append(Image.open(io.BytesIO(rawbytes)).convert("RGB"))
-    
-    images_tensors = preprocess_image(images, clip_processor)
-    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
-    images_tensors = images_tensors[keep_ixs]
-
-    if len(images_tensors) < MAX_NUM_IMAGES:
-        zero_padding = torch.zeros(
-            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
-        )
-        images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
-        
-    text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
-    # whitespace cleanup
-    text = (
-        text.replace(" <|endofchunk|>", "<|endofchunk|>")
-        .replace("<image> ", "<image>")
-        .replace(" <image>", "<image>")
-    )
-    
-    # print(text)
-    
-    # find the indices of the 10th occurrence of "<image>"
-    indices = [m.start() for m in re.finditer('<image>', text)]
-    if len(indices) > 10:
-        start_index = indices[9]
-        # print(f"Truncating text to {start_index} characters")
-        text = text[:start_index]
-    
-    text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
-    tokenizer.padding_side = "right"
-    text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
-    )
-    
-    return (
-        images_tensors,
-        (text_tensor["input_ids"], text_tensor["attention_mask"])
-    )
 
 MIN_KB = 10
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
     info = json.loads(sample[0])
-  
-    if "is_gpt" in info:
-        return preprocess_gpt_interleaved(info, tokenizer, clip_processor)
-  
     sentences = info["text_list"]
+    sim_matrix = info["similarity_matrix"]
 
     images, sentence_ixs = [], []
-    for sample_image in info["image_info"]:
+    for sample_image, sim_vec in zip(info["image_info"], sim_matrix):
         image_base64 = sample_image["image_base64"]
         rawbytes = base64.b64decode(image_base64)
+
+        sim_ix = np.argmax(sim_vec)
+        sim_score = sim_vec[sim_ix]
         
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
-        if sample_image["matched_sim"] < sim_threshold:
+        if sim_score < sim_threshold:
             continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
-        sentence_ixs.append(sample_image["matched_text_index"])
+        sentence_ixs.append(sim_ix)
 
     if len(images) == 0:
         raise ValueError("No images in sample")
