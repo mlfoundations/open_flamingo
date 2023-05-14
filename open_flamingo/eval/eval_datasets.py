@@ -8,69 +8,85 @@ from torchvision.datasets import ImageFolder
 from open_flamingo.eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
 
 
-class COCOFlickrDataset(Dataset):
+class CaptionDataset(Dataset):
     def __init__(
         self,
-        image_dir_path="/mmfs1/gscratch/efml/anasa2/data/coco/train2017/",
-        annotations_path="/mmfs1/gscratch/efml/anasa2/data/coco/annotations/captions_train2017.json",
-        is_flickr=False,
+        image_train_dir_path,
+        annotations_path,
+        is_train,
+        dataset_name,
+        image_val_dir_path=None,
     ):
-        self.image_dir_path = image_dir_path
-        self.annotations = json.load(open(annotations_path))["annotations"]
-        self.is_flickr = is_flickr
+        self.image_train_dir_path = image_train_dir_path
+        self.image_val_dir_path = image_val_dir_path
+        self.annotations = []
+        self.is_train = is_train
+        self.dataset_name = dataset_name
+
+        full_annotations = json.load(open(annotations_path))["images"]
+
+        for i in range(len(full_annotations)):
+            if self.is_train and full_annotations[i]["split"] != "train":
+                continue
+            elif not self.is_train and full_annotations[i]["split"] != "test":
+                continue
+
+            self.annotations.append(full_annotations[i])
 
     def __len__(self):
         return len(self.annotations)
 
-    def get_img_path(self, idx):
-        if self.is_flickr:
-            return os.path.join(
-                self.image_dir_path, self.annotations[idx]["image_id"] + ".jpg"
-            )
-        else:
-            return os.path.join(
-                self.image_dir_path,
-                f"COCO_train2017_{self.annotations[idx]['image_id']:012d}.jpg",
-            )
-
     def __getitem__(self, idx):
-        image = Image.open(self.get_img_path(idx))
+        if self.dataset_name == "coco":
+            image = Image.open(
+                os.path.join(
+                    self.image_train_dir_path, self.annotations[idx]["filename"]
+                )
+                if self.annotations[idx]["filepath"] == "train2014"
+                else os.path.join(
+                    self.image_val_dir_path, self.annotations[idx]["filename"]
+                )
+            )
+        elif self.dataset_name == "flickr":
+            image = Image.open(
+                os.path.join(
+                    self.image_train_dir_path, self.annotations[idx]["filename"]
+                )
+            )
         image.load()
-        caption = self.annotations[idx]["caption"]
+        caption = self.annotations[idx]["sentences"][0]["raw"]
         return {
             "image": image,
             "caption": caption,
-            "image_id": self.annotations[idx]["image_id"],
+            "image_id": self.annotations[idx]["cocoid"]
+            if self.dataset_name == "coco"
+            else self.annotations[idx]["filename"].split(".")[0],
         }
 
 
 class VQADataset(Dataset):
     def __init__(
         self,
-        image_dir_path="/mmfs1/gscratch/efml/anasa2/data/vqav2/train2014/",
-        question_path="/mmfs1/gscratch/efml/anasa2/data/vqav2/v2_OpenEnded_mscoco_train2014_questions.json",
-        annotations_path="/mmfs1/gscratch/efml/anasa2/data/vqav2/v2_mscoco_train2014_annotations.json",
-        vqa_dataset="vqa",
+        image_dir_path,
+        question_path,
+        annotations_path,
+        is_train,
     ):
         self.questions = json.load(open(question_path, "r"))["questions"]
         self.answers = json.load(open(annotations_path, "r"))["annotations"]
         self.image_dir_path = image_dir_path
-        self.vqa_dataset = vqa_dataset
+        self.is_train = is_train
 
     def __len__(self):
         return len(self.questions)
 
     def get_img_path(self, question):
-        if self.vqa_dataset == "vqa":
-            return os.path.join(
-                self.image_dir_path, f"COCO_train2014_{question['image_id']:012d}.jpg"
-            )
-        elif self.vqa_dataset == "ok_vqa":
-            return os.path.join(
-                self.image_dir_path, f"COCO_val2014_{question['image_id']:012d}.jpg"
-            )
-        else:
-            raise Exception(f"Unknown VQA dataset {self.vqa_dataset}")
+        return os.path.join(
+            self.image_dir_path,
+            f"COCO_train2014_{question['image_id']:012d}.jpg"
+            if self.is_train
+            else f"COCO_val2014_{question['image_id']:012d}.jpg",
+        )
 
     def __getitem__(self, idx):
         question = self.questions[idx]
