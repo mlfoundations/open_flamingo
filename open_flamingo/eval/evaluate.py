@@ -676,7 +676,13 @@ def evaluate_imagenet(
                 use_cache=True,
             )
 
-        precomputed_pkvs = precomputed.past_key_values.detach()
+        def _detach_pkvs(pkvs):
+            """Detach a set of past key values."""
+            return tuple(
+                [tuple([x.detach() for x in inner]) for inner in pkvs])
+
+        precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
+
         precomputed_logits = precomputed.logits.detach()
 
         overall_probs = []
@@ -702,6 +708,7 @@ def evaluate_imagenet(
             # classname. We will append the logits for each token to this
             # list (each element has shape [B, 1, vocab_size]).
             elementwise_logits = [precomputed_logits[:, -2:-1, :]]
+
             for token_idx in range(classname_tokens.shape[1]):
 
                 _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
@@ -714,10 +721,10 @@ def evaluate_imagenet(
                         past_key_values=(past_key_values if token_idx > 0
                                          else precomputed_pkvs),
                         use_cache=True)
-                past_key_values = outputs.past_key_values.detach()
+                past_key_values = _detach_pkvs(outputs.past_key_values)
                 elementwise_logits.append(outputs.logits.detach())
 
-            # logits has shape [B, classname_tokens + 1, vocab_size]
+            # logits/probs has shape [B, classname_tokens + 1, vocab_size]
             logits = torch.concat(elementwise_logits, 1)
             probs = torch.softmax(logits, dim=-1).detach()
 
