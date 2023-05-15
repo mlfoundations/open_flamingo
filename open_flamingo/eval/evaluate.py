@@ -688,7 +688,7 @@ def evaluate_imagenet(
                                          add_special_tokens=False,
                                          return_tensors="pt")["input_ids"]
 
-            if torch.ndim(classname_tokens)==1: # Case: classname is only 1 token
+            if torch.ndim(classname_tokens) == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
 
             # Compute the outputs one token at a time, using cached activations.
