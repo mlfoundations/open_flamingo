@@ -656,27 +656,34 @@ def evaluate_imagenet(
         # TODO(jpgard): cache the context text here, and compute the outputs
         #  one token at a time by using Flamingo.forward() with
         #  past_key_values and use_cache parameters.
+        
+        # tokenize context and prompt, e.g. '<context> a picture of a '
+        ctx_and_prompt_tokenized = tokenizer(context_text + prompt_text + " ",
+                                             return_tensors="pt")
+        ctx_and_prompt_activations = model(
+            vision_x=None,
+            lang_x=ctx_and_prompt_tokenized["input_ids"].cuda(),
+            attention_mask=ctx_and_prompt_tokenized["attention_mask"].cuda(),
+            clear_conditioned_layers=False,
+            use_cached_vision_x=True,
+        )
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            target_text = f"{prompt_text} {imagenet_class_name}"
-            prompt_tokens = (
-                tokenizer(prompt_text, add_special_tokens=False, return_tensors="np")[
-                    "input_ids"
-                ]
-                .ravel()
-                .tolist()
-            )
+            # target_text = f"{prompt_text} {imagenet_class_name}"
+            classname_tokens = tokenizer(imagenet_class_name,
+                          add_special_tokens=False,
+                          return_tensors="pt")
+            import ipdb;ipdb.set_trace()
+            for i in range(classname_tokens["input_ids"].shape[1]):
 
-            lang_x = tokenizer([context_text + target_text], return_tensors="pt")
-
-            outputs = model(
-                vision_x=None,
-                lang_x=lang_x["input_ids"].cuda(),
-                attention_mask=lang_x["attention_mask"].cuda(),
-                clear_conditioned_layers=False,
-                use_cached_vision_x=True,
-            )
+                outputs = model(
+                    vision_x=None,
+                    lang_x=lang_x["input_ids"].cuda(),
+                    attention_mask=lang_x["attention_mask"].cuda(),
+                    clear_conditioned_layers=False,
+                    use_cached_vision_x=True,
+                )
             probs = torch.softmax(outputs.logits, dim=-1).detach()
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1
