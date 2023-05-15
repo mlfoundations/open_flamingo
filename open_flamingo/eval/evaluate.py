@@ -680,44 +680,50 @@ def evaluate_imagenet(
             past_key_values = tuple(
                 [tuple([x.clone() for x in inner]) for inner in
                  precomputed.past_key_values])
-            logits = precomputed.logits.clone()
+            # logits = precomputed.logits.clone()
 
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
             classname_tokens = tokenizer(imagenet_class_name,
                                          add_special_tokens=False,
-                                         return_tensors="pt")["input_ids"]
+                                         return_tensors="pt"
+                                         )["input_ids"].cuda()
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
 
-            # Compute the outputs one token at a time, using cached activations.
-            for _ in range(classname_tokens.shape[1]):
+            # Compute the outputs one token at a time, using cached
+            # activations.
 
-                _lang_x = classname_tokens[:, i].reshape((-1, 1))
+            # Keep the last set of logits from precomputed; this will
+            # correspond to the predicted probability of the first
+            # position/token in the imagenet classname.
+            elementwise_logits = [precomputed.logits.clone()[:,-1,:]]
+            for token_idx in range(classname_tokens.shape[1]):
+
+                _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
                 outputs = model(
                     vision_x=None,
-                    lang_x=_lang_x.cuda(),
+                    lang_x=_lang_x,
                     clear_conditioned_layers=False,
                     use_cached_vision_x=True,
                     past_key_values=past_key_values,
                     use_cache=True)
                 past_key_values = outputs.past_key_values
-                logits = torch.concat((logits, outputs.logits), 1)
+                elementwise_logits.append(outputs.logits)
 
-            # Construct the full input sequences: context + prompt + classname
-            input_ids = torch.concat((ctx_and_prompt_tokenized["input_ids"],
-                                      classname_tokens), 1)
+            logits = torch.concat(elementwise_logits, 1)
             probs = torch.softmax(logits, dim=-1).detach()
 
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1
             probs = probs[:, :-1, :]
-            input_ids = input_ids[:, 1:].cuda()
-            gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(
-                -1)
+
+            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]
+                                     ).squeeze(-1)
 
             probs = []
+            import ipdb;ipdb.set_trace()
             for input_sentence, input_probs in zip(input_ids, gen_probs):
                 idxes = find_sub_list(
                     classname_tokens.ravel().tolist(),
