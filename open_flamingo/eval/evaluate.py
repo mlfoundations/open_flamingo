@@ -7,6 +7,7 @@ import uuid
 from collections import defaultdict
 from typing import Callable
 
+from einops import repeat
 import more_itertools
 import numpy as np
 import torch
@@ -675,8 +676,10 @@ def evaluate_imagenet(
         # e.g. '<context> a picture of a '
         ctx_and_prompt_tokenized = tokenizer(
             [context_text + prompt_text + " " for context_text in batch_text],
-                                             return_tensors="pt")
-
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048)
 
         with torch.no_grad():
             precomputed = model(
@@ -710,6 +713,10 @@ def evaluate_imagenet(
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
+
+            classname_tokens = repeat(classname_tokens,
+                                      'b s -> (repeat b) s',
+                                      repeat=batch_size)
 
             # Compute the outputs one token at a time, using cached
             # activations.
