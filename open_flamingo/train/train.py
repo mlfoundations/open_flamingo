@@ -275,7 +275,6 @@ def main():
     """
     model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
     cast_dtype = get_cast_dtype(args.precision)
-    model.to(dtype=cast_dtype)
 
     if args.fsdp:
         if args.rank == 0:
@@ -284,7 +283,7 @@ def main():
 
         if args.precision != "fp32":
             mp_policy = MixedPrecision(
-                param_dtype=cast_dtype,
+                param_dtype=torch.float32,
                 reduce_dtype=cast_dtype, # gradient communication
                 buffer_dtype=cast_dtype,
             )
