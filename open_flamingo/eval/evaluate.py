@@ -706,7 +706,8 @@ def evaluate_imagenet(
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
                 idxes = find_sub_list(
-                    prompt_tokens, input_sentence.detach().cpu().numpy().tolist()
+                    classname_tokens["input_ids"].ravel().tolist(),
+                    input_sentence.detach().cpu().numpy().tolist()
                 )
                 input_probs = input_probs[idxes[-1] + 1 :]
                 probs.append(torch.prod(input_probs).item())
