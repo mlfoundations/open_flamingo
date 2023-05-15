@@ -707,7 +707,7 @@ def evaluate_imagenet(
 
             # Construct the full input sequences: context + prompt + classname
             input_ids = torch.concat((ctx_and_prompt_tokenized["input_ids"],
-                                      classname_tokens), 1)
+                                      classname_tokens["input_ids"]), 1)
             probs = torch.softmax(logits, dim=-1).detach()
 
             # collect the probability of the generated token -- probability
