@@ -676,7 +676,8 @@ def evaluate_imagenet(
                 use_cache=True,
             )
 
-        precomputed_pkvs = precomputed.past_key_values
+        precomputed_pkvs = precomputed.past_key_values.detach()
+        precomputed_logits = precomputed.logits.detach()
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
@@ -700,7 +701,7 @@ def evaluate_imagenet(
             # probability of the first position/token in the imagenet
             # classname. We will append the logits for each token to this
             # list (each element has shape [B, 1, vocab_size]).
-            elementwise_logits = [precomputed.logits[:, -2:-1, :]]
+            elementwise_logits = [precomputed_logits[:, -2:-1, :]]
             for token_idx in range(classname_tokens.shape[1]):
 
                 _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
@@ -713,8 +714,8 @@ def evaluate_imagenet(
                         past_key_values=(past_key_values if token_idx > 0
                                          else precomputed_pkvs),
                         use_cache=True)
-                past_key_values = outputs.past_key_values
-                elementwise_logits.append(outputs.logits)
+                past_key_values = outputs.past_key_values.detach()
+                elementwise_logits.append(outputs.logits.detach())
 
             # logits has shape [B, classname_tokens + 1, vocab_size]
             logits = torch.concat(elementwise_logits, 1)
