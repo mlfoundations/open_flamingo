@@ -633,6 +633,8 @@ def evaluate_imagenet(
     acc5 = 0
     prompt_text = "<image>A photo of a"
 
+    # TODO(jpgard): this loop uses a fixed batch size of 1. Support arbitrary
+    #  batch sizes and use the batch_size param.
     for i, sample in enumerate(val_dataset):
         # Choose a different set of random context samples for each sample
         # from the training set
@@ -698,7 +700,7 @@ def evaluate_imagenet(
             # Keep the last set of logits from precomputed; this will
             # correspond to the predicted probability of the first
             # position/token in the imagenet classname.
-            elementwise_logits = [precomputed.logits.clone()[:,-1,:]]
+            elementwise_logits = [precomputed.logits.clone()[:,-2:-1,:]]
             for token_idx in range(classname_tokens.shape[1]):
 
                 _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
@@ -709,29 +711,24 @@ def evaluate_imagenet(
                     use_cached_vision_x=True,
                     past_key_values=past_key_values,
                     use_cache=True)
+                # TODO(jpgard): verify that past_key_values accumulates;
+                #  otherwise we'll need to manually accumulate them here.
                 past_key_values = outputs.past_key_values
                 elementwise_logits.append(outputs.logits)
 
+            # logits has shape [B, classname_tokens + 1, vocab_size]
             logits = torch.concat(elementwise_logits, 1)
             probs = torch.softmax(logits, dim=-1).detach()
 
             # collect the probability of the generated token -- probability
-            # at index 0 corresponds to the token at index 1
-            probs = probs[:, :-1, :]
+            # at index 0 corresponds to the token at index 1.
+            probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
 
             gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]
                                      ).squeeze(-1)
 
-            probs = []
-            import ipdb;ipdb.set_trace()
-            for input_sentence, input_probs in zip(input_ids, gen_probs):
-                idxes = find_sub_list(
-                    classname_tokens.ravel().tolist(),
-                    input_sentence.detach().cpu().numpy().tolist()
-                )
-                input_probs = input_probs[idxes[-1] + 1:]
-                probs.append(torch.prod(input_probs).item())
-            overall_probs.append(probs)
+            class_prob = torch.prod(gen_probs)
+            overall_probs.append(class_prob)
 
         top5 = [
             IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
