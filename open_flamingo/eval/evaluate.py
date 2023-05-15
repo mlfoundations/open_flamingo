@@ -765,8 +765,8 @@ def evaluate_imagenet(
             for i in range(batch_size)
             for pred in np.argsort(np.array(overall_probs[i]))[::-1][:5]
         ]
-        acc1 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in range(batch_size))
-        acc5 += np.sum(batch[i]['class_name'] == top5[i][0] for i in range(batch_size))
+        acc5 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in range(batch_size))
+        acc1 += np.sum(batch[i]['class_name'] == top5[i][0] for i in range(batch_size))
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
