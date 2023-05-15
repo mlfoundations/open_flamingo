@@ -8,16 +8,24 @@ from torch.utils.checkpoint import checkpoint
 from .helpers import PerceiverResampler
 
 from torch.distributed.fsdp.wrap import (
-   enable_wrap,
-   wrap,
+    enable_wrap,
+    wrap,
 )
 
 from functools import partial
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+    CPUOffload,
+    CPUOffload,
+    MixedPrecision,
+    FullStateDictConfig,
+    StateDictType,
+)
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 
 from torch.distributed.fsdp import flat_param
+
 
 class Flamingo(nn.Module):
     def __init__(
@@ -44,11 +52,17 @@ class Flamingo(nn.Module):
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
         self.vis_dim = vis_dim
+        if hasattr(lang_encoder.config, "d_model"):
+            self.lang_dim = lang_encoder.config.d_model  # mpt uses d_model
+        else:
+            self.lang_dim = lang_encoder.config.hidden_size
+
         self.vision_encoder = vision_encoder.visual
         self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
+            lang_hidden_size=self.lang_dim,
             vis_hidden_size=self.vis_dim,
             cross_attn_every_n_layers=cross_attn_every_n_layers,
             gradient_checkpointing=gradient_checkpointing,
@@ -215,7 +229,7 @@ class Flamingo(nn.Module):
     def wrap_fsdp(self, wrapper_kwargs):
         """
         Manually wraps submodules for FSDP
-        We have to manually wrap very carefully because 
+        We have to manually wrap very carefully because
         - all parameters within the FSDP wrapper must have the same requires_grad.
         - model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors
             See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
@@ -250,16 +264,19 @@ class Flamingo(nn.Module):
                 wrap(self.lang_encoder.get_input_embeddings())
             )
             self.vision_encoder = wrap(self.vision_encoder)
-            
+
             # OPT has its own custom positional embeddings class that also needs to be wrapped
             if "opt" in self.lang_encoder.__class__.__name__.lower():
-                self.lang_encoder.model.decoder.embed_positions = wrap(self.lang_encoder.model.decoder.embed_positions)
+                self.lang_encoder.model.decoder.embed_positions = wrap(
+                    self.lang_encoder.model.decoder.embed_positions
+                )
 
         # set up clip_grad_norm_ function
         def clip_grad_norm_(max_norm):
             self.perceiver.clip_grad_norm_(max_norm)
             for layer in self.lang_encoder.gated_cross_attn_layers:
-                if layer is not None: layer.clip_grad_norm_(max_norm)
+                if layer is not None:
+                    layer.clip_grad_norm_(max_norm)
             self.lang_encoder.get_input_embeddings().clip_grad_norm_(max_norm)
-        
+
         self.clip_grad_norm_ = clip_grad_norm_

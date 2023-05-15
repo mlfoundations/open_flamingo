@@ -78,6 +78,7 @@ class FlamingoLMMixin(nn.Module):
     def init_flamingo(
         self,
         media_token_id,
+        lang_hidden_size,
         vis_hidden_size,
         cross_attn_every_n_layers,
         gradient_checkpointing,
@@ -89,7 +90,7 @@ class FlamingoLMMixin(nn.Module):
         self.gated_cross_attn_layers = nn.ModuleList(
             [
                 GatedCrossAttentionBlock(
-                    dim=self.config.hidden_size, dim_visual=vis_hidden_size
+                    dim=lang_hidden_size, dim_visual=vis_hidden_size
                 )
                 if (layer_idx + 1) % cross_attn_every_n_layers == 0
                 else None
