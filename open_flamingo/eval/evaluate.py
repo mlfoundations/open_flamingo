@@ -770,8 +770,8 @@ def evaluate_imagenet(
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
-            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                batch_size*batch_idx,
+            "eval {}/{} samples: acc@1 ({}), acc@5 ({})".format(
+                examples_seen,
                 num_samples,
                 acc1 / examples_seen,
                 acc5 / examples_seen
