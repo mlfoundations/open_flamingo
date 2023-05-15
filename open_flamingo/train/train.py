@@ -14,7 +14,7 @@ from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from train_utils import filter_state_dict_to_trainable, train_one_epoch, get_cast_dtype
+from train_utils import filter_state_dict_to_trainable, train_one_epoch, get_mp_policy_dtype
 from transformers import (
     get_constant_schedule_with_warmup,
     get_cosine_schedule_with_warmup,
@@ -274,7 +274,6 @@ def main():
     This means model initialization must be done carefully so that all GPU workers have the identical initial weights.
     """
     model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
-    cast_dtype = get_cast_dtype(args.precision)
 
     if args.fsdp:
         if args.rank == 0:
@@ -282,6 +281,7 @@ def main():
             print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
 
         if args.precision != "fp32":
+            cast_dtype = get_mp_policy_dtype(args.precision)
             mp_policy = MixedPrecision(
                 param_dtype=torch.float32,
                 reduce_dtype=cast_dtype, # gradient communication

@@ -13,6 +13,13 @@ def get_cast_dtype(precision: str):
         cast_dtype = torch.float16
     return cast_dtype
 
+def get_mp_policy_dtype(precision: str):
+    if "bfloat16" in precision or "bf16" in precision:
+        return torch.bfloat16
+    elif precision == "fp16":
+        return torch.float16
+    else:
+        return torch.float32
 
 def get_autocast(precision):
     if precision == "amp":
