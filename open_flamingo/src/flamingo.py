@@ -26,6 +26,8 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 
 from torch.distributed.fsdp import flat_param
 
+from .utils import apply_with_stopping_condition
+
 
 class Flamingo(nn.Module):
     def __init__(
@@ -276,13 +278,12 @@ class Flamingo(nn.Module):
 
         # manually move non-FSDP managed parameters to device_id
         # these are all in lang_encoder
-        def _recurse(module):
-            if isinstance(module, FSDP): return
-            if len(list(module.children())) == 0:
-                module = module.to(device_id)
-            for child in module.children(): _recurse(child)
-
-        _recurse(self.lang_encoder)
+        apply_with_stopping_condition(
+            module=self.lang_encoder,
+            apply_fn=lambda m: m.to(device_id),
+            apply_condition=lambda m: len(list(m.children())) == 0,
+            stopping_condition=lambda m: isinstance(m, FSDP),
+        )
 
         # set up clip_grad_norm_ function
         def clip_grad_norm_(max_norm):

@@ -29,3 +29,19 @@ def setattr_recursive(obj, att, val):
     if "." in att:
         obj = getattr_recursive(obj, ".".join(att.split(".")[:-1]))
     setattr(obj, att.split(".")[-1], val)
+
+
+def apply_with_stopping_condition(
+    module, apply_fn, apply_condition=None, stopping_condition=None
+):
+    if stopping_condition(module):
+        return
+    if apply_condition(module):
+        apply_fn(module)
+    for child in module.children():
+        apply_with_stopping_condition(
+            child,
+            apply_fn,
+            apply_condition=apply_condition,
+            stopping_condition=stopping_condition,
+        )
