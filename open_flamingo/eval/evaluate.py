@@ -686,15 +686,15 @@ def evaluate_imagenet(
             # predictions for this class.
             classname_tokens = tokenizer(imagenet_class_name,
                                          add_special_tokens=False,
-                                         return_tensors="pt")
-            classname_tokens_len = classname_tokens["input_ids"].shape[1]
+                                         return_tensors="pt")["input_ids"]
+
+            if torch.ndim(classname_tokens)==1: # Case: classname is only 1 token
+                classname_tokens = torch.unsqueeze(classname_tokens, 1)
 
             # Compute the outputs one token at a time, using cached activations.
-            for _ in range(classname_tokens_len):
-                # note: no mask is required since we attend to everything in
-                # the current input window; masking was applied to obtain
-                # precomputed.
-                _lang_x = classname_tokens["input_ids"][:, i].reshape((-1, 1))
+            for _ in range(classname_tokens.shape[1]):
+
+                _lang_x = classname_tokens[:, i].reshape((-1, 1))
                 outputs = model(
                     vision_x=None,
                     lang_x=_lang_x.cuda(),
@@ -707,7 +707,7 @@ def evaluate_imagenet(
 
             # Construct the full input sequences: context + prompt + classname
             input_ids = torch.concat((ctx_and_prompt_tokenized["input_ids"],
-                                      classname_tokens["input_ids"]), 1)
+                                      classname_tokens), 1)
             probs = torch.softmax(logits, dim=-1).detach()
 
             # collect the probability of the generated token -- probability
@@ -720,7 +720,7 @@ def evaluate_imagenet(
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
                 idxes = find_sub_list(
-                    classname_tokens["input_ids"].ravel().tolist(),
+                    classname_tokens.ravel().tolist(),
                     input_sentence.detach().cpu().numpy().tolist()
                 )
                 input_probs = input_probs[idxes[-1] + 1:]
