@@ -600,7 +600,7 @@ def evaluate_imagenet(
 
     Args:
         eval_model (eval_model.EvalModel): model to evaluate
-        batch_size (int): batch size
+        batch_size (int): sample size
         imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
         num_samples (int, optional): number of samples to evaluate on. Defaults to 5000 samples.
@@ -620,16 +620,14 @@ def evaluate_imagenet(
     val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
 
     effective_num_shots = num_shots if num_shots > 0 else 2
-    tokenizer.padding_side = (
-        "left"  # For generation padding tokens should be on the left
-    )
+    tokenizer.padding_side = "left"
 
     acc1 = 0
     acc5 = 0
     prompt_text = "<image>A photo of a"
 
-    for i, batch in enumerate(val_dataset):
-        # Choose a different set of random context samples for each batch
+    for i, sample in enumerate(val_dataset):
+        # Choose a different set of random context samples for each sample
         # from the training set
         context_indices = np.random.choice(
             len(train_dataset), effective_num_shots, replace=False
@@ -640,7 +638,7 @@ def evaluate_imagenet(
         vision_x = [
             eval_model.image_processor(data["image"]).unsqueeze(0)
             for data in in_context_samples
-        ] + [eval_model.image_processor(batch["image"]).unsqueeze(0)]
+        ] + [eval_model.image_processor(sample["image"]).unsqueeze(0)]
         vision_x = torch.cat(vision_x, dim=0)
         vision_x = vision_x.unsqueeze(1).unsqueeze(0)
         model._encode_vision_x(vision_x.cuda())
@@ -653,37 +651,53 @@ def evaluate_imagenet(
             for classname in context_class_names
         )
 
-        # TODO(jpgard): cache the context text here, and compute the outputs
-        #  one token at a time by using Flamingo.forward() with
-        #  past_key_values and use_cache parameters.
-        
+        # Cache the context text.
+
+
         # tokenize context and prompt, e.g. '<context> a picture of a '
         ctx_and_prompt_tokenized = tokenizer(context_text + prompt_text + " ",
                                              return_tensors="pt")
-        ctx_and_prompt_activations = model(
+        precomputed = model(
             vision_x=None,
             lang_x=ctx_and_prompt_tokenized["input_ids"].cuda(),
             attention_mask=ctx_and_prompt_tokenized["attention_mask"].cuda(),
             clear_conditioned_layers=False,
             use_cached_vision_x=True,
+            use_cache=True,
         )
+        past_key_values, logits = tuple(precomputed[k]
+                                       for k in ("past_key_values", "logits"))
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
             # target_text = f"{prompt_text} {imagenet_class_name}"
+
             classname_tokens = tokenizer(imagenet_class_name,
                           add_special_tokens=False,
                           return_tensors="pt")
-            import ipdb;ipdb.set_trace()
-            for i in range(classname_tokens["input_ids"].shape[1]):
+            classname_tokens_len = classname_tokens["input_ids"].shape[1]
 
+            # Compute the outputs one token at a time.
+            for _ in range(classname_tokens_len):
+                # Clone the nested structure of the past key values
+                past_key_values = tuple(
+                    [tuple([x.clone() for x in inner]) for inner in
+                     past_key_values])
+                # note: no mask is required since we attend to everything in
+                # the current input window; masking was applied to obtain
+                # precomputed.
                 outputs = model(
                     vision_x=None,
-                    lang_x=lang_x["input_ids"].cuda(),
-                    attention_mask=lang_x["attention_mask"].cuda(),
+                    lang_x=classname_tokens["input_ids"][:,i].cuda(),
                     clear_conditioned_layers=False,
                     use_cached_vision_x=True,
-                )
+                    past_key_values=past_key_values,
+                    use_cache=True)
+                past_key_values = past_key_values
+                # TODO(jpgard): accumulate the logits here.
+
+            import ipdb;ipdb.set_trace()
+
             probs = torch.softmax(outputs.logits, dim=-1).detach()
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1
@@ -704,9 +718,9 @@ def evaluate_imagenet(
             IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
             for pred in np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]
         ]
-        if batch["class_name"] == top5[0]:
+        if sample["class_name"] == top5[0]:
             acc1 += 1
-        if batch["class_name"] in top5:
+        if sample["class_name"] in top5:
             acc5 += 1
         print(
             "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
