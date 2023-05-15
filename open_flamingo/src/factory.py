@@ -108,4 +108,5 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "pythia": "gpt_neox.layers",
     "llama": "model.layers",
     "gptneoxforcausallm": "gpt_neox.layers",
+    "mpt": "transformer.blocks",
 }
