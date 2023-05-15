@@ -666,21 +666,22 @@ def evaluate_imagenet(
         # e.g. '<context> a picture of a '
         ctx_and_prompt_tokenized = tokenizer(context_text + prompt_text + " ",
                                              return_tensors="pt")
-        precomputed = model(
-            vision_x=None,
-            lang_x=ctx_and_prompt_tokenized["input_ids"].cuda(),
-            attention_mask=ctx_and_prompt_tokenized["attention_mask"].cuda(),
-            clear_conditioned_layers=False,
-            use_cached_vision_x=True,
-            use_cache=True,
-        )
+        with torch.no_grad():
+            precomputed = model(
+                vision_x=None,
+                lang_x=ctx_and_prompt_tokenized["input_ids"].cuda(),
+                attention_mask=ctx_and_prompt_tokenized["attention_mask"].cuda(),
+                clear_conditioned_layers=False,
+                use_cached_vision_x=True,
+                use_cache=True,
+            )
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
             # Initialize past_key_values and logits from precomputed.
             past_key_values = tuple(
-                [tuple([x.clone() for x in inner]) for inner in
+                [tuple([x.detach().clone() for x in inner]) for inner in
                  precomputed.past_key_values])
 
             # Tokenize only the class name and iteratively decode the model's
@@ -696,20 +697,23 @@ def evaluate_imagenet(
             # Compute the outputs one token at a time, using cached
             # activations.
 
-            # Keep the last set of logits from precomputed; this will
-            # correspond to the predicted probability of the first
-            # position/token in the imagenet classname.
-            elementwise_logits = [precomputed.logits.clone()[:,-2:-1,:]]
+            # Initialize the elementwise predictions with the last set of
+            # logits from precomputed; this will correspond to the predicted
+            # probability of the first position/token in the imagenet
+            # classname. We will append the logits for each token to this
+            # list (each element has shape [B, 1, vocab_size]).
+            elementwise_logits = [precomputed.logits[:, -2:-1, :]]
             for token_idx in range(classname_tokens.shape[1]):
 
                 _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
-                outputs = model(
-                    vision_x=None,
-                    lang_x=_lang_x,
-                    clear_conditioned_layers=False,
-                    use_cached_vision_x=True,
-                    past_key_values=past_key_values,
-                    use_cache=True)
+                with torch.no_grad():
+                    outputs = model(
+                        vision_x=None,
+                        lang_x=_lang_x,
+                        clear_conditioned_layers=False,
+                        use_cached_vision_x=True,
+                        past_key_values=past_key_values,
+                        use_cache=True)
                 past_key_values = outputs.past_key_values
                 elementwise_logits.append(outputs.logits)
 
