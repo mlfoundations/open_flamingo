@@ -633,39 +633,51 @@ def evaluate_imagenet(
     acc5 = 0
     prompt_text = "<image>A photo of a"
 
-    # TODO(jpgard): this loop uses a fixed batch size of 1. Support arbitrary
-    #  batch sizes and use the batch_size param.
-    for i, sample in enumerate(val_dataset):
-        # Choose a different set of random context samples for each sample
-        # from the training set
-        context_indices = np.random.choice(
-            len(train_dataset), effective_num_shots, replace=False
-        )
+    val_iterator = more_itertools.chunked(val_dataset, batch_size)
+    for batch_idx, batch in enumerate(val_iterator):
 
-        in_context_samples = [train_dataset[i] for i in context_indices]
+        batch_images = []
+        batch_text = []
 
-        vision_x = [
-                       eval_model.image_processor(data["image"]).unsqueeze(0)
-                       for data in in_context_samples
-                   ] + [
-                       eval_model.image_processor(sample["image"]).unsqueeze(0)]
-        vision_x = torch.cat(vision_x, dim=0)
-        vision_x = vision_x.unsqueeze(1).unsqueeze(0)
+        for idx in range(len(batch)):
+            # Choose a different set of random context samples for each sample
+            # from the training set
+            context_indices = np.random.choice(
+                len(train_dataset), effective_num_shots, replace=False)
+
+            in_context_samples = [train_dataset[i] for i in context_indices]
+
+            batch_vision_x = [
+                           eval_model.image_processor(data["image"]).unsqueeze(0)
+                           for data in in_context_samples
+                       ] + [
+                           eval_model.image_processor(batch["image"][idx]).unsqueeze(0)]
+            batch_images.append(torch.cat(batch_vision_x, dim=0))
+
+            context_class_names = [
+                in_context_samples[i]["class_name"] for i in
+                range(effective_num_shots)
+            ]
+            context_text = "".join(
+                f"{prompt_text} {classname}<|endofchunk|>"
+                for classname in context_class_names
+            )
+            batch_text.append(context_text)
+
+        # shape [B, 1, *vision_dims]
+        vision_x = torch.cat(batch_images, dim=0)
+        # shape [B, vision_dims]
+        vision_x = vision_x.unsqueeze(1)
         model._encode_vision_x(vision_x.cuda())
 
-        context_class_names = [
-            in_context_samples[i]["class_name"] for i in
-            range(effective_num_shots)
-        ]
-        context_text = "".join(
-            f"{prompt_text} {classname}<|endofchunk|>"
-            for classname in context_class_names
-        )
 
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
-        ctx_and_prompt_tokenized = tokenizer(context_text + prompt_text + " ",
+        ctx_and_prompt_tokenized = tokenizer(
+            [context_text + prompt_text + " " for context_text in batch_text],
                                              return_tensors="pt")
+
+
         with torch.no_grad():
             precomputed = model(
                 vision_x=None,
