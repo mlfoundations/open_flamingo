@@ -21,7 +21,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy
+from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy, BackwardPrefetch
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper,
     CheckpointWrapper,
@@ -273,13 +273,9 @@ def main():
     Model initialization: Unlike DDP, FSDP does not automatically synchronize model weights between GPU workers. 
     This means model initialization must be done carefully so that all GPU workers have the identical initial weights.
     """
-    model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
-
+    print(f"Initializing distributed training with {args.world_size} GPUs.")
     if args.fsdp:
-        if args.rank == 0:
-            print(f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
-            print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
-
+        # init MixedPrecision
         if args.precision != "fp32":
             cast_dtype = get_mp_policy_dtype(args.precision)
             mp_policy = MixedPrecision(
@@ -293,19 +289,21 @@ def main():
         # init FSDP
         wrapper_kwargs = dict(
             cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
-            device_id=device_id,
-            sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
+            # device_id=device_id,
+            # sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
             sharding_strategy=ShardingStrategy.FULL_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
             mixed_precision=mp_policy,
+            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
         )
-        model.wrap_fsdp(wrapper_kwargs)
+        model.wrap_fsdp(wrapper_kwargs, device_id)
         ddp_model = model
 
         print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
         print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
     
     else:
+        model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
 
     if args.gradient_checkpointing:
@@ -411,6 +409,7 @@ def main():
 
     """Step 6: Train"""
     ddp_model.train()
+    torch.distributed.barrier()
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)

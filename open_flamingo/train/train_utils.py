@@ -82,6 +82,8 @@ def train_one_epoch(
 
         global_step = num_steps + epoch * num_batches_per_epoch
 
+        print(f"Step {num_steps}: before LAION forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+
         #### LAION FORWARD PASS ####
         images = (
             batch_laion[0]
@@ -110,6 +112,8 @@ def train_one_epoch(
                 clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
+
+        print(f"Step {num_steps}: after LAION forward before C4 forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
         #### C4 FORWARD PASS ####
         images = (
@@ -170,10 +174,12 @@ def train_one_epoch(
                 print("input_ids: ", tokenizer.batch_decode(input_ids))
                 print("labels: ", labels)
                 print("images: ", images)
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 continue
 
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
+
+        print(f"Step {num_steps}: after C4 forward before backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
         #### BACKWARD PASS ####
         loss = (
@@ -181,6 +187,8 @@ def train_one_epoch(
             + divided_loss_mmc4 * args.loss_multiplier_mmc4
         )
         loss.backward()
+
+        print(f"Step {num_steps}: after backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
         if args.gradient_checkpointing:
             if args.fsdp: model.lang_encoder.clear_conditioned_layers()
@@ -216,7 +224,7 @@ def train_one_epoch(
         ):
             optimizer.step()
             lr_scheduler.step()
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             # step time and reset end outside of rank 0
             step_time_m.update(time.time() - end)

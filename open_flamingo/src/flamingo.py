@@ -226,9 +226,9 @@ class Flamingo(nn.Module):
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_x)
 
-    def wrap_fsdp(self, wrapper_kwargs):
+    def wrap_fsdp(self, wrapper_kwargs, device_id):
         """
-        Manually wraps submodules for FSDP
+        Manually wraps submodules for FSDP and move other parameters to device_id.
         We have to manually wrap very carefully because
         - all parameters within the FSDP wrapper must have the same requires_grad.
         - model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors
@@ -263,13 +263,26 @@ class Flamingo(nn.Module):
             self.lang_encoder.set_input_embeddings(
                 wrap(self.lang_encoder.get_input_embeddings())
             )
+            self.lang_encoder.set_output_embeddings(
+                wrap(self.lang_encoder.get_output_embeddings())
+            )
             self.vision_encoder = wrap(self.vision_encoder)
 
-            # OPT has its own custom positional embeddings class that also needs to be wrapped
+            # OPT has its own custom position embeddings class that also needs to be wrapped
             if "opt" in self.lang_encoder.__class__.__name__.lower():
                 self.lang_encoder.model.decoder.embed_positions = wrap(
                     self.lang_encoder.model.decoder.embed_positions
                 )
+
+        # manually move non-FSDP managed parameters to device_id
+        # these are all in lang_encoder
+        def _recurse(module):
+            if isinstance(module, FSDP): return
+            if len(list(module.children())) == 0:
+                module = module.to(device_id)
+            for child in module.children(): _recurse(child)
+
+        _recurse(self.lang_encoder)
 
         # set up clip_grad_norm_ function
         def clip_grad_norm_(max_norm):
