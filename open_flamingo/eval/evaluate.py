@@ -676,14 +676,12 @@ def evaluate_imagenet(
                 use_cache=True,
             )
 
+        precomputed_pkvs = precomputed.past_key_values
+
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
-            # Initialize past_key_values and logits from precomputed.
-            past_key_values = tuple(
-                [tuple([x.detach().clone() for x in inner]) for inner in
-                 precomputed.past_key_values])
-
+            past_key_values = None
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
             classname_tokens = tokenizer(imagenet_class_name,
@@ -712,7 +710,8 @@ def evaluate_imagenet(
                         lang_x=_lang_x,
                         clear_conditioned_layers=False,
                         use_cached_vision_x=True,
-                        past_key_values=past_key_values,
+                        past_key_values=(past_key_values if token_idx > 0
+                                         else precomputed_pkvs),
                         use_cache=True)
                 past_key_values = outputs.past_key_values
                 elementwise_logits.append(outputs.logits)
