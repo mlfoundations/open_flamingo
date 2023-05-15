@@ -672,8 +672,6 @@ def evaluate_imagenet(
             use_cached_vision_x=True,
             use_cache=True,
         )
-        past_key_values_pre, logits_pre = tuple(
-            precomputed[k] for k in ("past_key_values", "logits"))
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
@@ -681,8 +679,8 @@ def evaluate_imagenet(
             # Clone the nested structure of the past key values; clone logits.
             past_key_values = tuple(
                 [tuple([x.clone() for x in inner]) for inner in
-                 past_key_values_pre.past_key_values])
-            logits = logits_pre.clone()
+                 precomputed.past_key_values])
+            logits = precomputed.logits.clone()
 
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
