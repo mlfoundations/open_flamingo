@@ -664,9 +664,9 @@ def evaluate_imagenet(
             )
             batch_text.append(context_text)
 
+        # shape [B, *vision_dims]
+        vision_x = torch.stack(batch_images, dim=0)
         # shape [B, 1, *vision_dims]
-        vision_x = torch.cat(batch_images, dim=0)
-        # shape [B, vision_dims]
         vision_x = vision_x.unsqueeze(1)
         model._encode_vision_x(vision_x.cuda())
 
