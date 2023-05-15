@@ -473,7 +473,7 @@ def evaluate_captioning(
         new_predictions = [
             postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
-        
+
         print(new_predictions)
 
         for i, sample in enumerate(batch):
