@@ -651,7 +651,7 @@ def evaluate_imagenet(
                            eval_model.image_processor(data["image"]).unsqueeze(0)
                            for data in in_context_samples
                        ] + [
-                           eval_model.image_processor(batch["image"][idx]).unsqueeze(0)]
+                           eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(batch_vision_x, dim=0))
 
             context_class_names = [
