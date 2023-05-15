@@ -676,7 +676,7 @@ def evaluate_imagenet(
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
 
-            # Clone the nested structure of the past key values; clone logits.
+            # Initialize past_key_values and logits from precomputed.
             past_key_values = tuple(
                 [tuple([x.clone() for x in inner]) for inner in
                  precomputed.past_key_values])
@@ -688,7 +688,7 @@ def evaluate_imagenet(
                                          add_special_tokens=False,
                                          return_tensors="pt")["input_ids"]
 
-            if torch.ndim(classname_tokens) == 1:  # Case: classname is only 1 token
+            if classname_tokens.ndim == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
 
             # Compute the outputs one token at a time, using cached activations.
