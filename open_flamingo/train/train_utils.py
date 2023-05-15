@@ -179,23 +179,26 @@ def train_one_epoch(
             if args.fsdp: model.lang_encoder.clear_conditioned_layers()
             else: model.module.lang_encoder.clear_conditioned_layers()
 
-        if not args.fsdp:
-            ### MASK GRADIENTS FOR EMBEDDINGS ####
-            # Note (anas): Do not apply weight decay to embeddings as it will break this function.
-            def mask_embedding(m):
-                if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
-                    zero_mask = torch.zeros_like(m.weight.grad)
-                    zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-                    zero_mask[endofchunk_token_id] = torch.ones_like(
-                        zero_mask[endofchunk_token_id]
-                    )
-                    m.weight.grad = m.weight.grad * zero_mask
-            model.apply(mask_embedding)
+        if (not args.freeze_lm_embeddings) and (not args.fsdp or args.fsdp_use_orig_params):
+            ### 
+            # Mask gradients for input embeddings s.t. we only update the added tokens 
+            # TODO: output embeddings if weights are not tied
+            # ####
+            embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+            zero_mask = torch.zeros_like(embed_grad)
+            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+            zero_mask[endofchunk_token_id] = torch.ones_like(
+                zero_mask[endofchunk_token_id]
+            )
+            model.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
 
         if args.fsdp:
-            # this is technically incorrect because the root module is not FSDP,
-            # so we're really clipping based on the grad norms over submodules
-            # unclear if this is better than using torch.nn.utils.clip_grad_norm_
+            """
+            The way we clip gradients with FSDP is different than the non-FSDP case,
+            because during FSDP, gradient norms are computed over certain submodules,
+            rather than the entire model.
+            At least for OPT-125M, this didn't seem to make a difference in performance.
+            """
             model.clip_grad_norm_(1.0)
         else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
