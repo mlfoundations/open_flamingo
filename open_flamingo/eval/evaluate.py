@@ -682,7 +682,6 @@ def evaluate_imagenet(
             past_key_values = tuple(
                 [tuple([x.clone() for x in inner]) for inner in
                  precomputed.past_key_values])
-            # logits = precomputed.logits.clone()
 
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
@@ -711,8 +710,6 @@ def evaluate_imagenet(
                     use_cached_vision_x=True,
                     past_key_values=past_key_values,
                     use_cache=True)
-                # TODO(jpgard): verify that past_key_values accumulates;
-                #  otherwise we'll need to manually accumulate them here.
                 past_key_values = outputs.past_key_values
                 elementwise_logits.append(outputs.logits)
 
@@ -727,12 +724,11 @@ def evaluate_imagenet(
             gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]
                                      ).squeeze(-1)
 
-            class_prob = torch.prod(gen_probs)
+            class_prob = torch.prod(gen_probs).detach().cpu().numpy()
             overall_probs.append(class_prob)
-
         top5 = [
             IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-            for pred in np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]
+            for pred in np.argsort(np.array(overall_probs))[::-1][:5]
         ]
         if sample["class_name"] == top5[0]:
             acc1 += 1
