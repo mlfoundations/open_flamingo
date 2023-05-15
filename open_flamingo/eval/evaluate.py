@@ -670,7 +670,6 @@ def evaluate_imagenet(
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            # target_text = f"{prompt_text} {imagenet_class_name}"
 
             classname_tokens = tokenizer(imagenet_class_name,
                           add_special_tokens=False,
@@ -679,30 +678,29 @@ def evaluate_imagenet(
 
             # Compute the outputs one token at a time.
             for _ in range(classname_tokens_len):
-                # Clone the nested structure of the past key values
-                past_key_values = tuple(
-                    [tuple([x.clone() for x in inner]) for inner in
-                     past_key_values])
                 # note: no mask is required since we attend to everything in
                 # the current input window; masking was applied to obtain
                 # precomputed.
+                _lang_x = classname_tokens["input_ids"][:,i].reshape((-1,1))
                 outputs = model(
                     vision_x=None,
-                    lang_x=classname_tokens["input_ids"][:,i].cuda(),
+                    lang_x=_lang_x.cuda(),
                     clear_conditioned_layers=False,
                     use_cached_vision_x=True,
                     past_key_values=past_key_values,
                     use_cache=True)
-                past_key_values = past_key_values
-                # TODO(jpgard): accumulate the logits here.
+                past_key_values = outputs.past_key_values
+                logits = torch.concat((logits, outputs.logits), 1)
 
-            import ipdb;ipdb.set_trace()
+            # Construct the full input sequences: context + prompt + classname
+            input_ids = torch.concat((ctx_and_prompt_tokenized["input_ids"],
+                                      classname_tokens), 1)
+            probs = torch.softmax(logits, dim=-1).detach()
 
-            probs = torch.softmax(outputs.logits, dim=-1).detach()
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1
             probs = probs[:, :-1, :]
-            input_ids = lang_x["input_ids"][:, 1:].cuda()
+            input_ids = input_ids[:, 1:].cuda()
             gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(-1)
 
             probs = []
