@@ -21,12 +21,12 @@ def get_mp_policy_dtype(precision: str):
     else:
         return torch.float32
 
-def get_autocast(precision):
+def get_autocast(precision, cache_enabled=True):
     if precision == "amp":
-        return torch.cuda.amp.autocast
+        return torch.cuda.amp.autocast(cache_enabled=cache_enabled)
     elif precision == "amp_bfloat16" or precision == "amp_bf16":
         # amp_bfloat16 is more stable than amp float16 for clip training
-        return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
+        return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16, cache_enabled=cache_enabled)
     else:
         return suppress
 
@@ -52,7 +52,7 @@ def train_one_epoch(
     num_batches_per_epoch = num_batches_per_epoch_mmc4
     total_training_steps = num_batches_per_epoch * args.num_epochs
 
-    autocast = get_autocast(args.precision)
+    autocast = get_autocast(args.precision, cache_enabled=(not args.fsdp)) # if fsdp, disable cache to save memory
     cast_dtype = get_cast_dtype(args.precision)
 
     media_token_id = tokenizer("<image>", add_special_tokens=False)["input_ids"][-1]
@@ -83,6 +83,7 @@ def train_one_epoch(
         global_step = num_steps + epoch * num_batches_per_epoch
 
         print(f"Step {num_steps}: before LAION forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+        print(f"Before LAION forward parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
 
         #### LAION FORWARD PASS ####
         images = (
@@ -114,6 +115,7 @@ def train_one_epoch(
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
         print(f"Step {num_steps}: after LAION forward before C4 forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+        print(f"After LAION forward parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
 
         #### C4 FORWARD PASS ####
         images = (
@@ -180,6 +182,7 @@ def train_one_epoch(
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
 
         print(f"Step {num_steps}: after C4 forward before backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+        print(f"After C4 forward parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
 
         #### BACKWARD PASS ####
         loss = (
@@ -199,13 +202,17 @@ def train_one_epoch(
             # Mask gradients for input embeddings s.t. we only update the added tokens 
             # TODO: output embeddings if weights are not tied
             # ####
-            embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+            if args.fsdp:
+                embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+            else:
+                embed_grad = model.module.lang_encoder.get_input_embeddings().weight.grad
             zero_mask = torch.zeros_like(embed_grad)
             zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
             zero_mask[endofchunk_token_id] = torch.ones_like(
                 zero_mask[endofchunk_token_id]
             )
-            model.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
+            embed_grad *= zero_mask
+            print("After gradient masking, num nonzero elements in embedding grad: ", torch.nonzero(embed_grad).shape[0])
 
         if args.fsdp:
             """
