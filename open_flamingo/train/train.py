@@ -296,7 +296,7 @@ def main():
             sharding_strategy=ShardingStrategy.FULL_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
             mixed_precision=mp_policy,
-            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+            backward_prefetch=BackwardPrefetch.BACKWARD_POST, # possibly critical to avoid backward post / backward pre race condition
             limit_all_gathers=True,
         )
         model.wrap_fsdp(wrapper_kwargs, device_id)
@@ -320,25 +320,26 @@ def main():
             checkpoint_wrapper_fn=non_reentrant_wrapper,
             check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False) and not isinstance(m, FSDP) and not isinstance(m, CheckpointWrapper)
         )
-    
-    # # tiny test case
-    # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
-    # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
-    # loss = ddp_model(
-    #     vision_x.to(device_id, dtype=cast_dtype, non_blocking=True), 
-    #     lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
-    #     lang_x["attention_mask"].to(device_id, dtype=cast_dtype, non_blocking=True),
-    #     labels=lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
-    #     clear_conditioned_layers=False,
-    # )[0]
-    # loss.backward()
-    # print(f"Loss: {loss.item()} on rank {args.rank}")
 
     if args.rank == 0: 
         print(model) # to check wrapping
         # print params that are being trained
         for name, param in ddp_model.named_parameters():
             if param.requires_grad: print(name)
+    
+    # # tiny test case
+    # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
+    # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
+    # loss = ddp_model(
+    #     vision_x.to(device_id), 
+    #     lang_x["input_ids"].to(device_id).long(),
+    #     lang_x["attention_mask"].to(device_id),
+    #     labels=lang_x["input_ids"].to(device_id).long(),
+    #     clear_conditioned_layers=False,
+    # )[0]
+    # print(f"Toy after forward before backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+    # loss.backward()
+    # print(f"Loss: {loss.item()} on rank {args.rank}")
 
     """
     Step 3: Init and load optimizer

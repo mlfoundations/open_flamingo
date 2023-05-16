@@ -110,12 +110,14 @@ def train_one_epoch(
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
-        divided_loss_laion = loss_laion / args.gradient_accumulation_steps
+        
+        print(f"Step {num_steps}: after LAION forward before LAION backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+        
+        divided_loss_laion = loss_laion / args.gradient_accumulation_steps 
+        (divided_loss_laion * args.loss_multiplier_laion).backward()
 
-        print(f"Step {num_steps}: after LAION forward before C4 forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-        print(f"After LAION forward parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
+        print(f"Step {num_steps}: after LAION backward before C4 forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
         #### C4 FORWARD PASS ####
         images = (
@@ -167,7 +169,6 @@ def train_one_epoch(
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
 
             # if loss is nan, skip this batch
@@ -178,24 +179,13 @@ def train_one_epoch(
                 print("images: ", images)
                 optimizer.zero_grad(set_to_none=True)
                 continue
-
+    
+        print(f"Step {num_steps}: after C4 forward before C4 backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+        
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
+        (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
 
-        print(f"Step {num_steps}: after C4 forward before backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-        print(f"After C4 forward parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
-
-        #### BACKWARD PASS ####
-        loss = (
-            divided_loss_laion * args.loss_multiplier_laion
-            + divided_loss_mmc4 * args.loss_multiplier_mmc4
-        )
-        loss.backward()
-
-        print(f"Step {num_steps}: after backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-
-        if args.gradient_checkpointing:
-            if args.fsdp: model.lang_encoder.clear_conditioned_layers()
-            else: model.module.lang_encoder.clear_conditioned_layers()
+        print(f"Step {num_steps}: after C4 backward before optimizer step {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
         if (not args.freeze_lm_embeddings) and (not args.fsdp or args.fsdp_use_orig_params):
             ### 

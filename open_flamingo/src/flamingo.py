@@ -231,14 +231,40 @@ class Flamingo(nn.Module):
     def wrap_fsdp(self, wrapper_kwargs, device_id):
         """
         Manually wraps submodules for FSDP and move other parameters to device_id.
-        We have to manually wrap very carefully because
-        - all parameters within the FSDP wrapper must have the same requires_grad.
-        - model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors
-            See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
-        - OPTPositionalEmbedding also wants to be individually wrapped or it errors
-        - we would probably save memory if we sharded all of self.vision_encoder, but
-            torch's FSDP checkpiont saver does not play well with nested FSDP modules
 
+        Why manually wrap?
+        - all parameters within the FSDP wrapper must have the same requires_grad. 
+            We have a mix of frozen and unfrozen parameters.
+        - model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors
+            Related: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
+        - OPTPositionalEmbedding also needs to be individually wrapped or it errors
+
+        The rough wrapping structure is:
+        - FlamingoModel
+            - FSDP(FSDP(vision_encoder))
+            - FSDP(FSDP(perceiver))
+            - lang_encoder
+                - FSDP(FSDP(input_embeddings))
+                - FlamingoLayers
+                    - FSDP(FSDP(gated_cross_attn_layer))
+                    - FSDP(FSDP(decoder_layer))
+                - FSDP(FSDP(output_embeddings))
+                - other parameters
+
+        Why double wrap?
+        As of torch==2.0.1 (stable), FSDP's _post_forward_hook and _post_backward_hook
+        only free gathered parameters if the module is NOT FSDP root.
+
+        Why wrap many inner FSDPs to one outer FSDP?
+        torch will unshard independent FSDP instances simultaneously. On the other hand, if several 
+        instances share a parent wrapper, only one will be prefetched at a time.
+        
+        Why set decoder_layers to requires_grad=True?
+        See https://github.com/pytorch/pytorch/issues/95805
+        As of torch==2.0.1 (stable), FSDP's _post_backward_hook is only registed if the flat param
+        requires_grad=True. To effectively freeze the decoder layers, we exclude them from the optimizer.
+
+        What is assumed to be frozen v. unfrozen?         
         Irena: I'm assuming that the model is being trained under normal Flamingo settings
         with these lines being called in factory.py:
             ```
@@ -249,32 +275,33 @@ class Flamingo(nn.Module):
             # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
             model.perceiver.requires_grad_(True)
             model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
-            model.lang_encoder.get_input_embeddings().requires_grad_(True)
+            [optional] model.lang_encoder.get_input_embeddings().requires_grad_(True)
             ```
         """
+        # wrap in FSDP
         with enable_wrap(wrapper_cls=FSDP, **wrapper_kwargs):
-            self.perceiver = wrap(self.perceiver)
+            self.perceiver = wrap(wrap(self.perceiver))
             self.lang_encoder.old_decoder_blocks = nn.ModuleList(
-                wrap(block) for block in self.lang_encoder.old_decoder_blocks
+                wrap(wrap(block)) for block in self.lang_encoder.old_decoder_blocks
             )
             self.lang_encoder.gated_cross_attn_layers = nn.ModuleList(
-                wrap(layer) if layer is not None else None
+                wrap(wrap(layer)) if layer is not None else None
                 for layer in self.lang_encoder.gated_cross_attn_layers
             )
             self.lang_encoder.init_flamingo_layers(self._use_gradient_checkpointing)
             self.lang_encoder.set_input_embeddings(
-                wrap(self.lang_encoder.get_input_embeddings())
+                wrap(wrap(self.lang_encoder.get_input_embeddings()))
             )
             self.lang_encoder.set_output_embeddings(
-                wrap(self.lang_encoder.get_output_embeddings())
+                wrap(wrap(self.lang_encoder.get_output_embeddings()))
             )
-            self.vision_encoder = wrap(self.vision_encoder)
+            self.vision_encoder = wrap(wrap(self.vision_encoder)) # frozen
 
             # OPT has its own custom position embeddings class that also needs to be wrapped
             if "opt" in self.lang_encoder.__class__.__name__.lower():
-                self.lang_encoder.model.decoder.embed_positions = wrap(
+                self.lang_encoder.model.decoder.embed_positions = wrap(wrap(
                     self.lang_encoder.model.decoder.embed_positions
-                )
+                ))
 
         # manually move non-FSDP managed parameters to device_id
         # these are all in lang_encoder
