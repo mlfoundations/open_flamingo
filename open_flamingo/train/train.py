@@ -203,9 +203,9 @@ def main():
             + "This is not recommended because it means we will use uniform weight decay" \
             + " and train all embeddings, not just the newly added ones.")
 
-    if args.fsdp and args.fsdp_use_orig_params and args.cpu_offload:
-        # see https://github.com/pytorch/pytorch/issues/98494
-        raise ValueError("As of torch=2.0.1, FSDP use original params mode has a bug with CPU offload + no_sync context manager.")
+    if args.fsdp and args.cpu_offload:
+        # see https://github.com/pytorch/pytorch/issues/98494, https://github.com/pytorch/pytorch/issues/73784
+        raise ValueError("As of torch=2.0.1, FSDP has issues with original params mode / gradient acc and CPU offload.")
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
         args.train_num_samples_mmc4 // args.batch_size_mmc4
@@ -323,7 +323,7 @@ def main():
     if args.gradient_checkpointing:
         non_reentrant_wrapper = functools.partial(
             checkpoint_wrapper,
-            offload_to_cpu=args.cpu_offload,
+            offload_to_cpu=True, # switch to args.cpu_offload once FSDP compatibility is fixed
             checkpoint_impl=CheckpointImpl.NO_REENTRANT
         )
         apply_activation_checkpointing(

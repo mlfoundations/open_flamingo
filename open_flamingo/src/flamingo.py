@@ -328,10 +328,3 @@ class Flamingo(nn.Module):
             self.lang_encoder.get_input_embeddings().clip_grad_norm_(max_norm)
 
         self.clip_grad_norm_ = clip_grad_norm_
-
-        # set up a list of no_sync functions for outer wrappers
-        self.no_syncs = [
-            m.no_sync
-            for m in self.modules()
-            if isinstance(m, FSDP) and any(isinstance(c, FSDP) for c in m.children())
-        ]
