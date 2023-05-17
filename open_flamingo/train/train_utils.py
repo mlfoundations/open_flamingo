@@ -1,5 +1,5 @@
 import time
-from contextlib import suppress
+from contextlib import suppress, ExitStack
 
 import torch
 from tqdm import tqdm
@@ -104,18 +104,22 @@ def train_one_epoch(
         labels[labels == media_token_id] = -100
         labels = labels.to(device_id)
 
-        with autocast():
-            loss_laion = model(
-                vision_x=images,
-                lang_x=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )[0]
-        
-        print(f"Step {num_steps}: after LAION forward before LAION backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-        
-        divided_loss_laion = loss_laion / args.gradient_accumulation_steps 
-        (divided_loss_laion * args.loss_multiplier_laion).backward()
+        # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
+        contexts = get_context_manager(num_steps, args, model, right_before_optimizer_step=False)
+        with ExitStack() as stack:
+            for context in contexts: stack.enter_context(context())
+            with autocast():
+                loss_laion = model(
+                    vision_x=images,
+                    lang_x=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                )[0]
+            
+            print(f"Step {num_steps}: after LAION forward before LAION backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+            
+            divided_loss_laion = loss_laion / args.gradient_accumulation_steps 
+            (divided_loss_laion * args.loss_multiplier_laion).backward()
 
         print(f"Step {num_steps}: after LAION backward before C4 forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
@@ -163,27 +167,31 @@ def train_one_epoch(
 
         labels = labels.to(device_id)
 
-        with autocast():
-            loss_mmc4 = model(
-                vision_x=images,
-                lang_x=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )[0]
+        # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
+        contexts = get_context_manager(num_steps, args, model, right_before_optimizer_step=True)
+        with ExitStack() as stack:
+            for context in contexts: stack.enter_context(context())
+            with autocast():
+                loss_mmc4 = model(
+                    vision_x=images,
+                    lang_x=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                )[0]
 
-            # if loss is nan, skip this batch
-            if torch.isnan(loss_mmc4):
-                print("loss is nan, skipping this batch")
-                print("input_ids: ", tokenizer.batch_decode(input_ids))
-                print("labels: ", labels)
-                print("images: ", images)
-                optimizer.zero_grad(set_to_none=True)
-                continue
-    
-        print(f"Step {num_steps}: after C4 forward before C4 backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+                # if loss is nan, skip this batch
+                if torch.isnan(loss_mmc4):
+                    print("loss is nan, skipping this batch")
+                    print("input_ids: ", tokenizer.batch_decode(input_ids))
+                    print("labels: ", labels)
+                    print("images: ", images)
+                    optimizer.zero_grad(set_to_none=True)
+                    continue
         
-        divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
-        (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
+            print(f"Step {num_steps}: after C4 forward before C4 backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+            
+            divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
+            (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
 
         print(f"Step {num_steps}: after C4 backward before optimizer step {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
@@ -326,3 +334,15 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+def get_context_manager(step, args, model, right_before_optimizer_step=False):
+    """
+    Handles logic for picking which no_sync context managers
+    to wrap the forward + backward passes in.
+    """
+    # if using gradient accumulation, we need no_sync context managers
+    # for all the steps except the last one
+    if (step % args.gradient_accumulation_steps > 0) or (not right_before_optimizer_step):
+        return model.no_syncs if args.fsdp else [model.module.no_sync]
+    # otherwise, return empty context manager
+    return [suppress]
