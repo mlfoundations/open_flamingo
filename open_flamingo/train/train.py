@@ -306,7 +306,8 @@ def main():
             sharding_strategy=ShardingStrategy.FULL_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
             mixed_precision=mp_policy,
-            backward_prefetch=BackwardPrefetch.BACKWARD_POST, # possibly critical to avoid backward post / backward pre race condition
+            forward_prefetch=True,
+            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
             limit_all_gathers=True,
         )
         model.wrap_fsdp(wrapper_kwargs, device_id)
