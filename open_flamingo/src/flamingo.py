@@ -285,8 +285,6 @@ class Flamingo(nn.Module):
         # unfreeze the decoder layers
         for block in self.lang_encoder.old_decoder_blocks:
             block.requires_grad_(True)
-            for p in block.parameters():
-                p.exclude_from_optimizer = True
 
         # wrap in FSDP
         with enable_wrap(wrapper_cls=FSDP, **wrapper_kwargs):
@@ -327,6 +325,9 @@ class Flamingo(nn.Module):
             apply_condition=lambda m: len(list(m.children())) == 0,
             stopping_condition=lambda m: isinstance(m, FSDP),
         )
+        for block in self.lang_encoder.old_decoder_blocks:
+            for p in block.parameters():
+                p.exclude_from_optimizer = True
 
         # set up clip_grad_norm_ function
         def clip_grad_norm_(max_norm):
