@@ -109,4 +109,5 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "llama": "model.layers",
     "gptneoxforcausallm": "gpt_neox.layers",
     "mpt": "transformer.blocks",
+    "gptneo": "transformer.h",
 }
