@@ -160,7 +160,7 @@ def main():
         "--fsdp_use_orig_params",
         default=False,
         action="store_true",
-        help="Passed into the FSDP constructor. This does not work for OPT models. Enables param_groups for weight_decay."
+        help="Passed into the FSDP constructor. Enables param_groups and gradient masking for weight_decay. Still does not work with OPT."
     )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")

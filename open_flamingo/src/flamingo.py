@@ -265,6 +265,9 @@ class Flamingo(nn.Module):
         requires_grad=True. We need the postback to fire to avoid OOM.
         To effectively freeze the decoder layers, we exclude them from the optimizer.
 
+        Why clone the output embeddings?
+        FSDP gets very confused by tied weights.
+        
         What is assumed to be frozen v. unfrozen?
         Irena: I'm assuming that the model is being trained under normal Flamingo settings
         with these lines being called in factory.py:
@@ -299,6 +302,12 @@ class Flamingo(nn.Module):
             self.lang_encoder.set_input_embeddings(
                 wrap(wrap(self.lang_encoder.get_input_embeddings()))
             )
+            # check for weight tying and clone if necessary
+            if self.lang_encoder.get_input_embeddings().weight.data_ptr() == self.lang_encoder.get_output_embeddings().weight.data_ptr():
+                self.lang_encoder.get_output_embeddings().weight = nn.Parameter(
+                    self.lang_encoder.get_input_embeddings().weight.data.detach().clone(),
+                    requires_grad=self.lang_encoder.get_input_embeddings().weight.requires_grad,
+                )
             self.lang_encoder.set_output_embeddings(
                 wrap(wrap(self.lang_encoder.get_output_embeddings()))
             )
