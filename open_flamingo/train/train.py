@@ -28,6 +28,8 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     CheckpointImpl,
     apply_activation_checkpointing
 ) 
+from torch.distributed.fsdp._init_utils import _init_intra_and_inter_node_groups
+from torch.distributed.distributed_c10d import _get_default_group
 import functools
 
 from open_flamingo import create_model_and_transforms
@@ -151,16 +153,22 @@ def main():
         help="Use FullyShardedDataParallel for distributed training."
     )
     parser.add_argument(
-        "--cpu_offload",
-        default=False,
-        action="store_true",
-        help="CPU offload for FSDP and gradient checkpointing."
-    )
-    parser.add_argument(
         "--fsdp_use_orig_params",
         default=False,
         action="store_true",
         help="Passed into the FSDP constructor. Enables param_groups and gradient masking for weight_decay. Still does not work with OPT."
+    )
+    parser.add_argument(
+        "--fsdp_sharding_strategy",
+        default="full",
+        type=str,
+        choices=["full", "hybrid"]
+    )
+    parser.add_argument(
+        "--cpu_offload",
+        default=False,
+        action="store_true",
+        help="CPU offload for FSDP and gradient checkpointing."
     )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
@@ -300,10 +308,11 @@ def main():
 
         # init FSDP
         wrapper_kwargs = dict(
+            process_group = _init_intra_and_inter_node_groups(_get_default_group()) if args.fsdp_sharding_strategy == "hybrid" else None,
             cpu_offload=CPUOffload(offload_params=args.cpu_offload),
             device_id=device_id,
             sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
-            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            sharding_strategy=ShardingStrategy.FULL_SHARD if args.fsdp_sharding_strategy == "full" else ShardingStrategy.HYBRID_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
             mixed_precision=mp_policy,
             forward_prefetch=True,
@@ -413,12 +422,11 @@ def main():
 
     # load lr scheduler checkpoint
     if args.resume_from_checkpoint is not None:
-        # TODO: this hopefully works with fsdp?
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
     """Step 6: Train"""
     ddp_model.train()
-    torch.distributed.barrier()
+    torch.distributed.barrier() # TODO: don't know if we need this
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)

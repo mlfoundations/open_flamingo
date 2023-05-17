@@ -83,6 +83,7 @@ def create_model_and_transforms(
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
     if not freeze_lm_embeddings:
         model.lang_encoder.get_input_embeddings().requires_grad_(True)
+        # TODO: investigate also training the output embeddings when untied
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"

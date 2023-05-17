@@ -255,10 +255,6 @@ class Flamingo(nn.Module):
         As of torch==2.0.1 (stable), FSDP's _post_forward_hook and _post_backward_hook
         only free gathered parameters if the module is NOT FSDP root.
 
-        Why wrap many inner FSDPs to one outer FSDP?
-        torch will unshard independent FSDP instances simultaneously. On the other hand, if several
-        instances share a parent wrapper, only one will be prefetched at a time.
-
         Why unfreeze the decoder_layers?
         See https://github.com/pytorch/pytorch/issues/95805
         As of torch==2.0.1 (stable), FSDP's _post_backward_hook is only registed if the flat param
@@ -267,6 +263,7 @@ class Flamingo(nn.Module):
 
         Why clone the output embeddings?
         FSDP gets very confused by tied weights.
+        TODO: investigate wrapping both input/output in one wrapper
         
         What is assumed to be frozen v. unfrozen?
         Irena: I'm assuming that the model is being trained under normal Flamingo settings
@@ -325,6 +322,8 @@ class Flamingo(nn.Module):
             apply_condition=lambda m: len(list(m.children())) == 0,
             stopping_condition=lambda m: isinstance(m, FSDP),
         )
+
+        # exclude the original decoder layers from the optimizer
         for block in self.lang_encoder.old_decoder_blocks:
             for p in block.parameters():
                 p.exclude_from_optimizer = True
