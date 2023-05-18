@@ -83,7 +83,6 @@ def train_one_epoch(
         global_step = num_steps + epoch * num_batches_per_epoch
 
         print(f"Step {num_steps}: before LAION forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-        print(f"Before LAION forward parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
 
         #### LAION FORWARD PASS ####
         images = (
@@ -189,6 +188,7 @@ def train_one_epoch(
 
         print(f"Step {num_steps}: after C4 backward before optimizer step {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
 
+        # TODO: does this work with FDSP optimizer state saving?
         if (not args.freeze_lm_embeddings) and (not args.fsdp or args.fsdp_use_orig_params):
             ### 
             # Mask gradients for input embeddings s.t. we only update the added tokens 
@@ -203,8 +203,12 @@ def train_one_epoch(
             zero_mask[endofchunk_token_id] = torch.ones_like(
                 zero_mask[endofchunk_token_id]
             )
-            embed_grad *= zero_mask
-            print("After gradient masking, num nonzero elements in embedding grad: ", torch.nonzero(embed_grad).shape[0])
+            if args.fsdp:
+                model.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
+            else:
+                model.module.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
+            print("Before gradient masking, num nonzero elements in embedding grad: ", torch.nonzero(embed_grad).shape[0])
+            print("After gradient masking, num nonzero elements in embedding grad: ", torch.nonzero(embed_grad * zero_mask).shape[0])
 
         if args.fsdp:
             """

@@ -378,20 +378,6 @@ def main():
         print(model) # to check wrapping
         for n, _ in params_to_optimize: print(n) # print params that are being trained
 
-    # # tiny test case
-    # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
-    # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
-    # loss = ddp_model(
-    #     vision_x.to(device_id), 
-    #     lang_x["input_ids"].to(device_id).long(),
-    #     lang_x["attention_mask"].to(device_id),
-    #     labels=lang_x["input_ids"].to(device_id).long(),
-    #     clear_conditioned_layers=False,
-    # )[0]
-    # print(f"Toy after forward before backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-    # loss.backward()
-    # print(f"Loss: {loss.item()} on rank {args.rank}")
-
     """Step 4: Init data"""  
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
     mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
@@ -433,6 +419,49 @@ def main():
         laion_loader = laion_dataset.dataloader
         mmc4_dataset.set_epoch(epoch)
         mmc4_loader = mmc4_dataset.dataloader
+
+        # # tiny test case
+        # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
+        # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
+        # loss = ddp_model(
+        #     vision_x.to(device_id), 
+        #     lang_x["input_ids"].to(device_id).long(),
+        #     lang_x["attention_mask"].to(device_id),
+        #     labels=lang_x["input_ids"].to(device_id).long(),
+        #     clear_conditioned_layers=False,
+        # )[0]
+        # print(f"Toy after forward before backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+        # loss.backward()
+        # print(f"Loss: {loss.item()} on rank {args.rank}")
+        # media_token_id = tokenizer("<image>", add_special_tokens=False)["input_ids"][-1]
+        # endofchunk_token_id = tokenizer("<|endofchunk|>", add_special_tokens=False)[
+        #     "input_ids"
+        # ][-1]
+
+        # if (not args.freeze_lm_embeddings) and (not args.fsdp or args.fsdp_use_orig_params):
+        #     ### 
+        #     # Mask gradients for input embeddings s.t. we only update the added tokens 
+        #     # TODO: output embeddings if weights are not tied
+        #     # ####
+        #     if args.fsdp:
+        #         embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+        #     else:
+        #         embed_grad = model.module.lang_encoder.get_input_embeddings().weight.grad
+        #     zero_mask = torch.ones_like(embed_grad)
+        #     zero_mask[media_token_id] = torch.zeros_like(zero_mask[media_token_id])
+        #     zero_mask[endofchunk_token_id] = torch.zeros_like(
+        #         zero_mask[endofchunk_token_id]
+        #     )
+        #     if args.fsdp:
+        #         model.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
+        #     else:
+        #         model.module.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
+        #     print("Before gradient masking, num nonzero elements in embedding grad: ", torch.nonzero(embed_grad).shape[0])
+        #     print("After gradient masking, num nonzero elements in embedding grad: ", torch.nonzero(embed_grad * zero_mask).shape[0])
+
+        # optimizer.step()
+        # lr_scheduler.step()
+        # optimizer.zero_grad(set_to_none=True)
 
         train_one_epoch(
             args=args,
