@@ -161,7 +161,7 @@ parser.add_argument(
     "--hf_auth_token",
     type=str,
     default=None,
-    help="HuggingFace auth token is needed to download the Winoground dataset"
+    help="HuggingFace auth token is needed to download the Winoground dataset",
 )
 
 parser.add_argument(
@@ -295,9 +295,11 @@ def main():
         print("Evaluating on Winoground...")
         winoground_result = evaluate_winoground(eval_model, args.hf_auth_token)
         results["winoground"].append(winoground_result)
-        print(f'Text Score {winoground_result["text_score"] * 100:4.1f} | '
-              f'Image Score {winoground_result["image_score"] * 100:4.1f} | '
-              f'Group Score {winoground_result["group_score"] * 100:4.1f}')
+        print(
+            f'Text Score {winoground_result["text_score"] * 100:4.1f} | '
+            f'Image Score {winoground_result["image_score"] * 100:4.1f} | '
+            f'Group Score {winoground_result["group_score"] * 100:4.1f}'
+        )
 
     if args.results_file is not None:
         with open(args.results_file, "w") as f:
@@ -757,9 +759,9 @@ def winoground_acc(scores):
 
     denominator = len(scores)
     return {
-        'text_score': text_correct_count / denominator,
-        'image_score': image_correct_count / denominator,
-        'group_score': group_correct_count / denominator,
+        "text_score": text_correct_count / denominator,
+        "image_score": image_correct_count / denominator,
+        "group_score": group_correct_count / denominator,
     }
 
 
@@ -772,6 +774,7 @@ def evaluate_winoground(eval_model, auth_token):
     assert isinstance(model, Flamingo)
 
     from datasets import load_dataset
+
     winoground = load_dataset("facebook/winoground", use_auth_token=auth_token)["test"]
 
     prompt_text = "<image>A photo of a"
@@ -779,9 +782,9 @@ def evaluate_winoground(eval_model, auth_token):
     all_results = []
     for sample_idx in tqdm(range(len(winoground))):
         sample = winoground[sample_idx]
-        images = [sample[f'image_{i}'].convert('RGB') for i in range(2)]
-        captions = [sample[f'caption_{i}'] for i in range(2)]
-        cur_res = {'c0_i0': 0, 'c1_i0': 0, 'c0_i1': 0, 'c1_i1': 0}
+        images = [sample[f"image_{i}"].convert("RGB") for i in range(2)]
+        captions = [sample[f"caption_{i}"] for i in range(2)]
+        cur_res = {"c0_i0": 0, "c1_i0": 0, "c0_i1": 0, "c1_i1": 0}
 
         for img_idx, img in enumerate(images):
             vision_x = eval_model.image_processor(img).unsqueeze(0)
@@ -807,7 +810,7 @@ def evaluate_winoground(eval_model, auth_token):
                 input_ids = lang_x["input_ids"][:, 1:].to(eval_model.device)
                 gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(-1)
                 cur_prob = torch.prod(gen_probs.squeeze()).item()
-                cur_res[f'c{cap_idx}_i{img_idx}'] = cur_prob
+                cur_res[f"c{cap_idx}_i{img_idx}"] = cur_prob
 
         all_results.append(cur_res)
 
