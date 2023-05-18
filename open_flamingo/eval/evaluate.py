@@ -376,30 +376,31 @@ def evaluate_captioning(
 
     """
 
+    if dataset_name == "coco":
+        image_train_dir_path = args.coco_train_image_dir_path
+        image_val_dir_path = args.coco_val_image_dir_path
+        annotations_path = args.coco_karpathy_json_path
+    elif dataset_name == "flickr":
+        image_train_dir_path = (
+            args.flickr_image_dir_path
+        )  # Note: calling this "train" for consistency with COCO but Flickr only has one split for images
+        image_val_dir_path = None
+        annotations_path = args.flickr_karpathy_json_path
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+
     train_dataset = CaptionDataset(
-        image_train_dir_path=args.coco_train_image_dir_path
-        if dataset_name == "coco"
-        else args.flickr_image_dir_path,
-        image_val_dir_path=args.coco_val_image_dir_path
-        if dataset_name == "coco"
-        else None,
-        annotations_path=args.coco_karpathy_json_path
-        if dataset_name == "coco"
-        else args.flickr_karpathy_json_path,
+        image_train_dir_path=image_train_dir_path,
+        image_val_dir_path=image_val_dir_path,
+        annotations_path=annotations_path,
         is_train=True,
         dataset_name=dataset_name,
     )
 
     test_dataset = CaptionDataset(
-        image_train_dir_path=args.coco_train_image_dir_path
-        if dataset_name == "coco"
-        else args.flickr_image_dir_path,
-        image_val_dir_path=args.coco_val_image_dir_path
-        if dataset_name == "coco"
-        else None,
-        annotations_path=args.coco_karpathy_json_path
-        if dataset_name == "coco"
-        else args.flickr_karpathy_json_path,
+        image_train_dir_path=image_train_dir_path,
+        image_val_dir_path=image_val_dir_path,
+        annotations_path=annotations_path,
         is_train=False,
         dataset_name=dataset_name,
     )
@@ -516,29 +517,34 @@ def evaluate_vqa(
         float: accuracy score
     """
 
+    if dataset_name == "ok_vqa":
+        train_image_dir_path = args.ok_vqa_train_image_dir_path
+        train_questions_json_path = args.ok_vqa_train_questions_json_path
+        train_annotations_json_path = args.ok_vqa_train_annotations_json_path
+        test_image_dir_path = args.ok_vqa_test_image_dir_path
+        test_questions_json_path = args.ok_vqa_test_questions_json_path
+        test_annotations_json_path = args.ok_vqa_test_annotations_json_path
+    elif dataset_name == "vqav2":
+        train_image_dir_path = args.vqav2_train_image_dir_path
+        train_questions_json_path = args.vqav2_train_questions_json_path
+        train_annotations_json_path = args.vqav2_train_annotations_json_path
+        test_image_dir_path = args.vqav2_test_image_dir_path
+        test_questions_json_path = args.vqav2_test_questions_json_path
+        test_annotations_json_path = args.vqav2_test_annotations_json_path
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+
     train_dataset = VQADataset(
-        image_dir_path=args.ok_vqa_train_image_dir_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_train_image_dir_path,
-        question_path=args.ok_vqa_train_questions_json_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_train_questions_json_path,
-        annotations_path=args.ok_vqa_train_annotations_json_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_train_annotations_json_path,
+        image_dir_path=train_image_dir_path,
+        question_path=train_questions_json_path,
+        annotations_path=train_annotations_json_path,
         is_train=True,
     )
 
     test_dataset = VQADataset(
-        image_dir_path=args.ok_vqa_test_image_dir_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_test_image_dir_path,
-        question_path=args.ok_vqa_test_questions_json_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_test_questions_json_path,
-        annotations_path=args.ok_vqa_test_annotations_json_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_test_annotations_json_path,
+        image_dir_path=test_image_dir_path,
+        question_path=test_questions_json_path,
+        annotations_path=test_annotations_json_path,
         is_train=False,
     )
 
