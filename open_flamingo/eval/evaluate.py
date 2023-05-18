@@ -5,7 +5,6 @@ import os
 import random
 import uuid
 from collections import defaultdict
-from typing import Callable
 
 import more_itertools
 import numpy as np
@@ -14,12 +13,13 @@ from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
-from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
+from ok_vqa_utils import postprocess_ok_vqa_generation
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 from open_flamingo.src.flamingo import Flamingo
-from open_flamingo.eval.imagenet_utils import (
+from imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
+    find_sub_list,
 )
 from open_flamingo.eval import eval_model
 
@@ -212,18 +212,8 @@ def main():
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
     eval_model = module.EvalModel(leftovers)
 
-    if len(args.trial_seeds) < args.num_trials:
-        print(
-            f"Number of trial seeds ({len(args.trial_seeds)}) is less than number of trials ({args.num_trials})."
-        )
-        print("Appending random seeds to trial seeds.")
-        args.trial_seeds.extend(
-            [
-                random.randint(0, 1000000)
-                for _ in range(args.num_trials - len(args.trial_seeds))
-            ]
-        )
-        print(f"Trial seeds: {args.trial_seeds}")
+    if len(args.trial_seeds) != args.num_trials:
+        raise ValueError("Number of trial seeds must be == number of trials.")
 
     results = defaultdict(list)
 
@@ -275,7 +265,7 @@ def main():
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
-                    vqa_dataset="ok_vqa",
+                    dataset_name="ok_vqa",
                 )
                 print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
                 scores.append(ok_vqa_score)
@@ -294,7 +284,7 @@ def main():
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
-                    vqa_dataset="vqav2",
+                    dataset_name="vqav2",
                 )
                 print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
                 scores.append(vqa_score)
@@ -361,15 +351,14 @@ def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
 
 
 def evaluate_captioning(
-    args,
-    eval_model,
-    seed=42,
-    max_generation_length=20,
-    num_beams=3,
-    length_penalty=-2.0,
-    query_set_size=2048,
-    num_shots=8,
-    dataset_name="coco",
+    args: argparse.Namespace,
+    eval_model: eval_model.EvalModel,
+    seed: int = 42,
+    max_generation_length: int = 20,
+    num_beams: int = 3,
+    length_penalty: float = -2.0,
+    num_shots: int = 8,
+    dataset_name: str = "coco",
 ):
     """Evaluate a model on COCO dataset.
 
@@ -377,13 +366,11 @@ def evaluate_captioning(
         args (argparse.Namespace): arguments
         eval_model (eval_model.EvalModel): model to evaluate
         seed (int, optional): seed for random number generator. Defaults to 42.
-        max_generation_length (int, optional): maximum length of the generated caption. Defaults to 10.
+        max_generation_length (int, optional): maximum length of the generated caption. Defaults to 20.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
-        query_set_size (int, optional): number of samples to use for query set. Defaults to 2048.
         num_shots (int, optional): number of in-context samples to use. Defaults to 8.
-        num_workers (int, optional): number of workers to use for dataloader. Defaults to 4.
-        dataset_name (str, optional): dataset to evaluate on. Defaults to "coco". Can be "coco" or "flickr".
+        dataset_name (str, optional): dataset to evaluate on. Can be "coco" or "flickr". Defaults to "coco".
     Returns:
         float: CIDEr score
 
@@ -429,13 +416,10 @@ def evaluate_captioning(
 
     predictions = defaultdict()
 
-    desc = (
-        "Running inference Flickr30k"
-        if dataset_name == "flickr"
-        else "Running inference MS-COCO"
-    )
-
-    for batch in more_itertools.chunked(tqdm(test_dataset, desc=desc), args.batch_size):
+    for batch in more_itertools.chunked(
+        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+        args.batch_size,
+    ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
         )
@@ -474,8 +458,6 @@ def evaluate_captioning(
             postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
 
-        print(new_predictions)
-
         for i, sample in enumerate(batch):
             predictions[sample["image_id"]] = {
                 "caption": new_predictions[i],
@@ -509,14 +491,14 @@ def evaluate_captioning(
 
 
 def evaluate_vqa(
-    args,
-    eval_model,
-    seed=42,
-    max_generation_length=5,
-    num_beams=3,
-    length_penalty=-2.0,
-    num_shots=8,
-    vqa_dataset="vqav2",
+    args: argparse.Namespace,
+    eval_model: eval_model.EvalModel,
+    seed: int = 42,
+    max_generation_length: int = 5,
+    num_beams: int = 3,
+    length_penalty: float = -2.0,
+    num_shots: int = 8,
+    dataset_name: str = "vqav2",
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0.
@@ -529,34 +511,33 @@ def evaluate_vqa(
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of shots to use. Defaults to 8.
-        num_workers (int, optional): number of workers to use. Defaults to 4.
-        vqa_dataset (string): type of vqa dataset: currently supports vqa, ok_vqa. Defaults to vqa.
+        dataset_name (string): type of vqa dataset: currently supports vqav2, ok_vqa. Defaults to vqav2.
     Returns:
         float: accuracy score
     """
 
     train_dataset = VQADataset(
         image_dir_path=args.ok_vqa_train_image_dir_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_train_image_dir_path,
         question_path=args.ok_vqa_train_questions_json_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_train_questions_json_path,
         annotations_path=args.ok_vqa_train_annotations_json_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_train_annotations_json_path,
         is_train=True,
     )
 
     test_dataset = VQADataset(
         image_dir_path=args.ok_vqa_test_image_dir_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_test_image_dir_path,
         question_path=args.ok_vqa_test_questions_json_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_test_questions_json_path,
         annotations_path=args.ok_vqa_test_annotations_json_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_test_annotations_json_path,
         is_train=False,
     )
@@ -573,7 +554,8 @@ def evaluate_vqa(
     predictions = []
 
     for batch in more_itertools.chunked(
-        tqdm(test_dataset, desc="Running inference"), args.batch_size
+        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+        args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
@@ -615,7 +597,7 @@ def evaluate_vqa(
 
         process_function = (
             postprocess_vqa_generation
-            if vqa_dataset == "vqav2"
+            if dataset_name == "vqav2"
             else postprocess_ok_vqa_generation
         )
 
@@ -629,32 +611,23 @@ def evaluate_vqa(
         )
     # save the predictions to a temporary file
     random_uuid = str(uuid.uuid4())
-    with open(f"{vqa_dataset}results_{random_uuid}.json", "w") as f:
+    with open(f"{dataset_name}results_{random_uuid}.json", "w") as f:
         f.write(json.dumps(predictions, indent=4))
 
     acc = compute_vqa_accuracy(
-        f"{vqa_dataset}results_{random_uuid}.json",
+        f"{dataset_name}results_{random_uuid}.json",
         args.ok_vqa_test_questions_json_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_test_questions_json_path,
         args.ok_vqa_test_annotations_json_path
-        if vqa_dataset == "ok_vqa"
+        if dataset_name == "ok_vqa"
         else args.vqav2_test_annotations_json_path,
     )
 
     # delete the temporary file
-    os.remove(f"{vqa_dataset}results_{random_uuid}.json")
+    os.remove(f"{dataset_name}results_{random_uuid}.json")
 
     return acc
-
-
-def find_sub_list(sl, l):
-    results = []
-    sll = len(sl)
-    for ind in (i for i, e in enumerate(l) if e == sl[0]):
-        if l[ind : ind + sll] == sl:
-            results.append(ind + sll - 1)
-    return results
 
 
 def evaluate_imagenet(
