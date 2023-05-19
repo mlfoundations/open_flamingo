@@ -9,19 +9,19 @@ from collections import defaultdict
 import more_itertools
 import numpy as np
 import torch
-from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
-from ok_vqa_utils import postprocess_ok_vqa_generation
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.src.flamingo import Flamingo
+from coco_metric import compute_cider, postprocess_captioning_generation
+from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
     find_sub_list,
 )
+from ok_vqa_utils import postprocess_ok_vqa_generation
 from open_flamingo.eval import eval_model
+from open_flamingo.src.flamingo import Flamingo
+from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -43,10 +43,12 @@ parser.add_argument(
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
-    "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
+    "--num_samples", type=int, default=5000,
+    help="Number of samples to evaluate on"
 )
 parser.add_argument(
-    "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
+    "--query_set_size", type=int, default=2048,
+    help="Size of demonstration query set"
 )
 
 parser.add_argument("--batch_size", type=int, default=8)
@@ -267,7 +269,8 @@ def main():
                     seed=seed,
                     dataset_name="ok_vqa",
                 )
-                print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
+                print(
+                    f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
                 scores.append(ok_vqa_score)
             print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
             results["ok_vqa"].append(
@@ -336,13 +339,15 @@ def get_random_indices(num_samples, query_set_size, full_dataset, seed):
 
 def get_query_set(train_dataset, query_set_size, seed):
     np.random.seed(seed)
-    query_set = np.random.choice(len(train_dataset), query_set_size, replace=False)
+    query_set = np.random.choice(len(train_dataset), query_set_size,
+                                 replace=False)
     return [train_dataset[i] for i in query_set]
 
 
 def prepare_eval_samples(test_dataset, num_samples, seed):
     np.random.seed(seed)
-    random_indices = np.random.choice(len(test_dataset), num_samples, replace=False)
+    random_indices = np.random.choice(len(test_dataset), num_samples,
+                                      replace=False)
     return torch.utils.data.Subset(test_dataset, random_indices)
 
 
@@ -351,14 +356,14 @@ def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
 
 
 def evaluate_captioning(
-    args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
-    seed: int = 42,
-    max_generation_length: int = 20,
-    num_beams: int = 3,
-    length_penalty: float = -2.0,
-    num_shots: int = 8,
-    dataset_name: str = "coco",
+        args: argparse.Namespace,
+        eval_model: eval_model.BaseEvalModel,
+        seed: int = 42,
+        max_generation_length: int = 20,
+        num_beams: int = 3,
+        length_penalty: float = -2.0,
+        num_shots: int = 8,
+        dataset_name: str = "coco",
 ):
     """Evaluate a model on COCO dataset.
 
@@ -413,13 +418,15 @@ def evaluate_captioning(
         seed,
     )
 
-    in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
+    in_context_samples = get_query_set(train_dataset, args.query_set_size,
+                                       seed)
 
     predictions = defaultdict()
 
     for batch in more_itertools.chunked(
-        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-        args.batch_size,
+            tqdm(test_dataset,
+                 desc=f"Running inference {dataset_name.upper()}"),
+            args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
@@ -456,7 +463,8 @@ def evaluate_captioning(
         )
 
         new_predictions = [
-            postprocess_captioning_generation(out).replace('"', "") for out in outputs
+            postprocess_captioning_generation(out).replace('"', "") for out in
+            outputs
         ]
 
         for i, sample in enumerate(batch):
@@ -492,14 +500,14 @@ def evaluate_captioning(
 
 
 def evaluate_vqa(
-    args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
-    seed: int = 42,
-    max_generation_length: int = 5,
-    num_beams: int = 3,
-    length_penalty: float = -2.0,
-    num_shots: int = 8,
-    dataset_name: str = "vqav2",
+        args: argparse.Namespace,
+        eval_model: eval_model.BaseEvalModel,
+        seed: int = 42,
+        max_generation_length: int = 5,
+        num_beams: int = 3,
+        length_penalty: float = -2.0,
+        num_shots: int = 8,
+        dataset_name: str = "vqav2",
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0.
@@ -556,12 +564,14 @@ def evaluate_vqa(
         seed,
     )
 
-    in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
+    in_context_samples = get_query_set(train_dataset, args.query_set_size,
+                                       seed)
     predictions = []
 
     for batch in more_itertools.chunked(
-        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-        args.batch_size,
+            tqdm(test_dataset,
+                 desc=f"Running inference {dataset_name.upper()}"),
+            args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
@@ -590,7 +600,8 @@ def evaluate_vqa(
                 context_text = context_text.replace("<image>", "")
 
             batch_text.append(
-                context_text + eval_model.vqa_prompt(question=batch[i]["question"])
+                context_text + eval_model.vqa_prompt(
+                    question=batch[i]["question"])
             )
 
         outputs = eval_model.get_outputs(
@@ -637,12 +648,12 @@ def evaluate_vqa(
 
 
 def evaluate_imagenet(
-    eval_model,
-    batch_size: int,
-    imagenet_root: str,
-    seed: int = 42,
-    num_samples: int = 5000,
-    num_shots: int = 8,
+        eval_model,
+        batch_size: int,
+        imagenet_root: str,
+        seed: int = 42,
+        num_samples: int = 5000,
+        num_shots: int = 8,
 ):
     """
     Evaluate a model on ImageNet dataset.
@@ -658,7 +669,8 @@ def evaluate_imagenet(
     Returns:
         float: accuracy score
     """
-    if not hasattr(eval_model, "model") or not hasattr(eval_model, "tokenizer"):
+    if not hasattr(eval_model, "model") or not hasattr(eval_model,
+                                                       "tokenizer"):
         raise NotImplementedError(
             "evaluate_imagenet is currently only supported for OpenFlamingo " "models"
         )
@@ -693,10 +705,12 @@ def evaluate_imagenet(
             in_context_samples = [train_dataset[i] for i in context_indices]
 
             vision_x = [
-                           eval_model.image_processor(data["image"]).unsqueeze(0)
+                           eval_model.image_processor(data["image"]).unsqueeze(
+                               0)
                            for data in in_context_samples
                        ] + [
-                           eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
+                           eval_model.image_processor(
+                               batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
 
             context_class_names = [
@@ -719,7 +733,8 @@ def evaluate_imagenet(
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
             target_text = f"{prompt_text} {imagenet_class_name}"
             prompt_tokens = (
-                tokenizer(prompt_text, add_special_tokens=False, return_tensors="np")[
+                tokenizer(prompt_text, add_special_tokens=False,
+                          return_tensors="np")[
                     "input_ids"
                 ]
                 .ravel()
@@ -746,14 +761,16 @@ def evaluate_imagenet(
             # at index 0 corresponds to the token at index 1
             probs = probs[:, :-1, :]
             input_ids = lang_x["input_ids"][:, 1:].cuda()
-            gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(-1)
+            gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(
+                -1)
 
             probs = []
             for input_sentence, input_probs in zip(input_ids, gen_probs):
                 idxes = find_sub_list(
-                    prompt_tokens, input_sentence.detach().cpu().numpy().tolist()
+                    prompt_tokens,
+                    input_sentence.detach().cpu().numpy().tolist()
                 )
-                input_probs = input_probs[idxes[-1] + 1 :]
+                input_probs = input_probs[idxes[-1] + 1:]
                 probs.append(torch.prod(input_probs).item())
             # overall_probs is a nested list; the ith element of
             # overall_probs contains a list of shape [batch_size,],
@@ -763,15 +780,22 @@ def evaluate_imagenet(
 
         # [num_clases, batch_size] -> [batch_size, num_classes]
         overall_probs = np.array(overall_probs).T
-        top5 = [
-            IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-            for i in range(batch_size)
-            for pred in np.argsort(overall_probs[i])[::-1][:5]
-        ]
-        acc5 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in
-                       range(batch_size))
-        acc1 += np.sum(batch[i]['class_name'] == top5[i][0] for i in
-                       range(batch_size))
+
+        def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
+            """Return the indices of the top k elements in probs_ary."""
+            return np.argsort(probs_ary)[::-1][:k]
+
+        for i in range(batch_size):
+
+            top5 = [IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                for pred in topk(overall_probs[i], 5)]
+
+            y_i = batch[i]['class_name']
+            acc5 += int(y_i in set(top5))
+            acc1 += int(y_i == top5[0])
+
+            print(f"DEBUG: batch {idx} elem{i}/{batch_size}:"
+                  f"label {y_i}// top5 {top5}")
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
