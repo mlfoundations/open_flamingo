@@ -711,8 +711,8 @@ def evaluate_imagenet(
 
         # shape [B, T_img, C, h, w]
         vision_x = torch.stack(batch_images, dim=0)
-        # shape [B, 1, T_img, C, h, w] where 1 is the frame dimension
-        vision_x = vision_x.unsqueeze(1)
+        # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
+        vision_x = vision_x.unsqueeze(2)
         model._encode_vision_x(vision_x.cuda())
 
         overall_probs = []
