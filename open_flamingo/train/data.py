@@ -261,8 +261,7 @@ class ResampledShards2(IterableDataset):
 
 
 def preprocess_image(sample, image_processor):
-    image = [image_processor(s).unsqueeze(0) for s in sample]
-    image = torch.cat(image, dim=0)
+    image = image_processor(images=sample, return_tensors="pt")["pixel_values"]
     # apply random horizontal flip
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
     # NOTE: potentially move jitter into the image_preprocessor before normalization

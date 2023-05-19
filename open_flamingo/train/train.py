@@ -7,19 +7,24 @@ import os
 import random
 
 import numpy as np
+from flamingo.configuration_flamingo import FlamingoConfig
 import torch
 import wandb
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
+from accelerate.state import AcceleratorState
+
 from train_utils import get_checkpoint, train_one_epoch
 from transformers import (
     get_constant_schedule_with_warmup,
     get_cosine_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
+from transformers import CLIPImageProcessor
 
-from open_flamingo import create_model_and_transforms
+from flamingo import FlamingoForConditionalGeneration
+from accelerate import Accelerator
 
 
 def random_seed(seed=42, rank=0):
@@ -170,20 +175,19 @@ def main():
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     args.local_rank, args.rank, args.world_size = world_info_from_env()
-
-    device_id = init_distributed_device(args)
+    
+    accelerator = Accelerator()
+    accelerator.print(f"{AcceleratorState()}")
+    
+    device_id = accelerator.device #init_distributed_device(args)
 
     random_seed(args.seed)
 
-    model, image_processor, tokenizer = create_model_and_transforms(
-        args.vision_encoder_path,
-        args.vision_encoder_pretrained,
-        args.lm_path,
-        args.tokenizer_path if args.tokenizer_path else args.lm_path,
-        cross_attn_every_n_layers=args.cross_attn_every_n_layers,
-        use_local_files=args.offline,
-    )
-
+    model = FlamingoForConditionalGeneration.from_pretrained("luodian/openflamingo-9b-hf")
+        
+    tokenizer = model.text_tokenizer
+    image_processor = CLIPImageProcessor()
+    
     random_seed(args.seed, args.rank)
 
     print(f"Start running training on rank {args.rank}.")
@@ -196,11 +200,6 @@ def main():
             config=vars(args),
         )
 
-    device_id = args.rank % torch.cuda.device_count()
-    model = model.to(device_id)
-
-    ddp_model = DDP(model, device_ids=[device_id])
-
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
     mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
 
@@ -210,25 +209,19 @@ def main():
         def apply_decay(x):
             return (
                 "gated_cross_attn_layer" in x
-                and "ff_gate" not in x
-                and "attn_gate" not in x
-                and "norm" not in x
-                and "bias" not in x
             )
 
         for n, p in model.named_parameters():
-            # if p.requires_grad:
-            if apply_decay(n):
-                params_with_wd.append(p)
-            else:
-                params_without_wd.append(p)
+            if p.requires_grad:
+                if apply_decay(n):
+                    params_with_wd.append(p)
+                else:
+                    params_without_wd.append(p)
 
         return [
             {"params": params_with_wd, "weight_decay": args.weight_decay},
             {"params": params_without_wd, "weight_decay": 0.0},
         ]
-
-    optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
 
     total_training_steps = (
         (args.train_num_samples_mmc4) // (args.batch_size_mmc4 * args.world_size)
@@ -236,6 +229,8 @@ def main():
 
     if args.rank == 0:
         print(f"Total training steps: {total_training_steps}")
+
+    optimizer = torch.optim.AdamW(get_grouped_params(model), lr=args.learning_rate)
 
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
@@ -253,7 +248,7 @@ def main():
         lr_scheduler = get_constant_schedule_with_warmup(
             optimizer, num_warmup_steps=args.warmup_steps
         )
-
+            
     # check if a checkpoint exists for this run
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
         checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
@@ -267,27 +262,35 @@ def main():
                 f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
             )
 
+    model.train()
+
+    AcceleratorState().deepspeed_plugin.deepspeed_config['train_micro_batch_size_per_gpu'] = args.batch_size_mmc4 + args.batch_size_laion
+    model, lr_scheduler, optimizer = accelerator.prepare(
+        model, lr_scheduler, optimizer
+    )
+    
     resume_from_epoch = 0
     if args.resume_from_checkpoint is not None:
         if args.rank == 0:
             print(f"Loading checkpoint from {args.resume_from_checkpoint}")
-        checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
-        ddp_model.load_state_dict(checkpoint["model_state_dict"], False)
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
-        resume_from_epoch = checkpoint["epoch"] + 1
-
-    ddp_model.train()
+        # checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
+        # model.load_state_dict(checkpoint["model_state_dict"], False)
+        # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        # lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
+        accelerator.load_state(args.resume_from_checkpoint)
+        # checkpoint path in the format run_name/checkpoint_epoch.pt
+        resume_from_epoch = int(args.resume_from_checkpoint.split("_")[-1].split(".")[0])
+        #checkpoint["epoch"] + 1
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
         laion_loader = laion_dataset.dataloader
         mmc4_dataset.set_epoch(epoch)
         mmc4_loader = mmc4_dataset.dataloader
-
+        
         train_one_epoch(
             args=args,
-            model=ddp_model,
+            model=model,
             epoch=epoch,
             tokenizer=tokenizer,
             optimizer=optimizer,
@@ -296,6 +299,7 @@ def main():
             mmc4_loader=mmc4_loader,
             device_id=device_id,
             wandb=wandb,
+            accelerator=accelerator,
         )
 
         if args.rank == 0:
@@ -304,7 +308,7 @@ def main():
 
             checkpoint_dict = {
                 "epoch": epoch,
-                "model_state_dict": get_checkpoint(ddp_model),
+                "model_state_dict": get_checkpoint(accelerator.unwrap_model(model)),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "lr_scheduler_state_dict": lr_scheduler.state_dict(),
             }
@@ -322,7 +326,7 @@ def main():
         if not os.path.exists(args.run_name):
             os.makedirs(args.run_name)
 
-        torch.save(get_checkpoint(ddp_model), f"{args.run_name}/final_weights.pt")
+        torch.save(get_checkpoint(accelerator.unwrap_model(model)), f"{args.run_name}/final_weights.pt")
         if args.report_to_wandb and args.save_checkpoints_to_wandb:
             wandb.save(f"{args.run_name}/final_weights.pt")
 

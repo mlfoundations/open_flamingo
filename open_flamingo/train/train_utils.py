@@ -35,6 +35,7 @@ def train_one_epoch(
     lr_scheduler,
     device_id,
     wandb,
+    accelerator,
 ):
     num_batches_per_epoch_laion = laion_loader.num_batches
     num_batches_per_epoch_mmc4 = mmc4_loader.num_batches
@@ -45,8 +46,8 @@ def train_one_epoch(
     num_batches_per_epoch = num_batches_per_epoch_mmc4
     total_training_steps = num_batches_per_epoch * args.num_epochs
 
-    autocast = get_autocast(args.precision)
-    cast_dtype = get_cast_dtype(args.precision)
+    # autocast = get_autocast(args.precision)
+    # cast_dtype = get_cast_dtype(args.precision)
 
     media_token_id = tokenizer("<image>", add_special_tokens=False)["input_ids"][-1]
     endofchunk_token_id = tokenizer("<|endofchunk|>", add_special_tokens=False)[
@@ -78,14 +79,14 @@ def train_one_epoch(
         #### LAION FORWARD PASS ####
         images = (
             batch_laion[0]
-            .to(device_id, dtype=cast_dtype, non_blocking=True)
+            .to(device_id, dtype=torch.bfloat16, non_blocking=True)
             .unsqueeze(1)
             .unsqueeze(1)
         )
 
-        input_ids = batch_laion[1][0].to(device_id, dtype=cast_dtype, non_blocking=True)
+        input_ids = batch_laion[1][0].to(device_id, non_blocking=True)
         attention_mask = batch_laion[1][1].to(
-            device_id, dtype=cast_dtype, non_blocking=True
+            device_id, non_blocking=True
         )
 
         labels = input_ids.clone()
@@ -94,23 +95,25 @@ def train_one_epoch(
         labels[labels == media_token_id] = -100
         labels.to(device_id)
 
-        with autocast():
-            loss_laion = model(
-                vision_x=images,
-                lang_x=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )[0]
+        # with autocast():
+        loss_laion = model(
+            vision_x=images,
+            lang_x=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+        )[0]
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
         #### C4 FORWARD PASS ####
         images = (
             batch_mmc4[0]
-            .to(device_id, dtype=cast_dtype, non_blocking=True)
+            .to(device_id, dtype=torch.bfloat16, non_blocking=True)
             .unsqueeze(2)
         )
-        input_ids = torch.stack([x[0] for x in batch_mmc4[1]]).squeeze(1)
-        attention_mask = torch.stack([x[1] for x in batch_mmc4[1]]).squeeze(1)
+        input_ids = torch.stack([x[0] for x in batch_mmc4[1]]).squeeze(1).to(device_id)
+        attention_mask = torch.stack([x[1] for x in batch_mmc4[1]]).squeeze(1).to(
+            device_id
+        )
 
         # NOTE: irena: expected shape of clip_text_input_ids / attention_mask is (N, I, max_seq_len)
         labels = input_ids.clone()
@@ -140,22 +143,13 @@ def train_one_epoch(
         labels[labels == media_token_id] = -100
         labels.to(device_id)
 
-        with autocast():
-            loss_mmc4 = model(
-                vision_x=images,
-                lang_x=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )[0]
-
-            # if loss is nan, skip this batch
-            if torch.isnan(loss_mmc4):
-                print("loss is nan, skipping this batch")
-                print("input_ids: ", tokenizer.batch_decode(input_ids))
-                print("labels: ", labels)
-                print("images: ", images)
-                optimizer.zero_grad()
-                continue
+        # with autocast():
+        loss_mmc4 = model(
+            vision_x=images,
+            lang_x=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+        )[0]
 
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
 
@@ -164,22 +158,23 @@ def train_one_epoch(
             divided_loss_laion * args.loss_multiplier_laion
             + divided_loss_mmc4 * args.loss_multiplier_mmc4
         )
-        loss.backward()
+        accelerator.backward(loss)
+        # loss.backward()
 
         #### MASK GRADIENTS FOR EMBEDDINGS ####
         # Note (anas): Do not apply weight decay to embeddings as it will break this function.
-        def mask_embedding(m):
-            if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
-                zero_mask = torch.zeros_like(m.weight.grad)
-                zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-                zero_mask[endofchunk_token_id] = torch.ones_like(
-                    zero_mask[endofchunk_token_id]
-                )
-                m.weight.grad = m.weight.grad * zero_mask
+        # def mask_embedding(m):
+        #     if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
+        #         zero_mask = torch.zeros_like(m.weight.grad)
+        #         zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+        #         zero_mask[endofchunk_token_id] = torch.ones_like(
+        #             zero_mask[endofchunk_token_id]
+        #         )
+        #         m.weight.grad = m.weight.grad * zero_mask
 
-        model.apply(mask_embedding)
+        # model.apply(mask_embedding)
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         # step optimizer and log
         if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (

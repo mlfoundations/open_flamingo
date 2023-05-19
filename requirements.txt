@@ -1,7 +1,8 @@
 einops
 einops-exts
-transformers
-torch
+transformers==4.28.1
+tokenizers==0.13.3
+torch==2.0.0
 torchvision
 pillow
 more-itertools
@@ -12,5 +13,7 @@ wandb
 nltk
 scipy
 inflection
-sentencepiece
-open_clip_torch
+sentencepiece==0.1.98
+pycocoevalcap
+pycocotools
+open_clip_torch>=2.16.0
