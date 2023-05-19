@@ -628,34 +628,42 @@ def evaluate_imagenet(
     acc5 = 0
     prompt_text = "<image>A photo of a"
 
-    for i, batch in enumerate(val_dataset):
-        # Choose a different set of random context samples for each batch
-        # from the training set
-        context_indices = np.random.choice(
-            len(train_dataset), effective_num_shots, replace=False
-        )
+    val_iterator = more_itertools.chunked(val_dataset, batch_size)
+    for batch_idx, batch in enumerate(val_iterator):
 
-        in_context_samples = [train_dataset[i] for i in context_indices]
+        batch_images = []
+        batch_text = []
 
-        vision_x = [
-            eval_model.image_processor(data["image"]).unsqueeze(0)
-            for data in in_context_samples
-        ] + [eval_model.image_processor(batch["image"]).unsqueeze(0)]
-        vision_x = torch.cat(vision_x, dim=0)
-        vision_x = vision_x.unsqueeze(1).unsqueeze(0)
+        for idx in range(len(batch)):
+            # Choose a different set of random context samples for each sample
+            # from the training set
+            context_indices = np.random.choice(
+                len(train_dataset), effective_num_shots, replace=False)
+
+            in_context_samples = [train_dataset[i] for i in context_indices]
+
+            batch_vision_x = [
+                           eval_model.image_processor(data["image"]).unsqueeze(0)
+                           for data in in_context_samples
+                       ] + [
+                           eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
+            batch_images.append(torch.cat(batch_vision_x, dim=0))
+
+            context_class_names = [
+                in_context_samples[i]["class_name"] for i in
+                range(effective_num_shots)
+            ]
+            context_text = "".join(
+                f"{prompt_text} {classname}<|endofchunk|>"
+                for classname in context_class_names
+            )
+            batch_text.append(context_text)
+
+        # shape [B, T_img, C, h, w]
+        vision_x = torch.stack(batch_images, dim=0)
+        # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
+        vision_x = vision_x.unsqueeze(2)
         model._encode_vision_x(vision_x.cuda())
-
-        context_class_names = [
-            in_context_samples[i]["class_name"] for i in range(effective_num_shots)
-        ]
-        context_text = "".join(
-            f"{prompt_text} {classname}<|endofchunk|>"
-            for classname in context_class_names
-        )
-
-        # TODO(jpgard): cache the context text here, and compute the outputs
-        #  one token at a time by using Flamingo.forward() with
-        #  past_key_values and use_cache parameters.
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
@@ -668,7 +676,13 @@ def evaluate_imagenet(
                 .tolist()
             )
 
-            lang_x = tokenizer([context_text + target_text], return_tensors="pt")
+            lang_x = tokenizer(
+                [context_text + target_text for context_text in batch_text],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=2048
+            )
 
             outputs = model(
                 vision_x=None,
@@ -693,21 +707,28 @@ def evaluate_imagenet(
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
 
-        top5 = [
-            IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-            for pred in np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]
-        ]
-        if batch["class_name"] == top5[0]:
-            acc1 += 1
-        if batch["class_name"] in top5:
-            acc5 += 1
-        print(
-            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                i, num_samples, acc1 / (i + 1), acc5 / (i + 1)
+            # for each element, compute the top 5
+            top5 = [
+                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                for i in range(batch_size)
+                for pred in np.argsort(np.array(overall_probs[i]))[::-1][:5]
+            ]
+            acc5 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in
+                           range(batch_size))
+            acc1 += np.sum(batch[i]['class_name'] == top5[i][0] for i in
+                           range(batch_size))
+
+            examples_seen = (batch_idx + 1) * batch_size
+            print(
+                "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
+                    batch_size * batch_idx,
+                    num_samples,
+                    acc1 / examples_seen,
+                    acc5 / examples_seen
+                )
             )
-        )
-        if i >= num_samples - 1:
-            break
+            if batch_idx * batch_size >= num_samples - 1:
+                break
 
     return float(acc1) / num_samples
 
