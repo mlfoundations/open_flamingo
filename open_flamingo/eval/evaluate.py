@@ -613,6 +613,7 @@ def evaluate_imagenet(
         raise NotImplementedError(
             "evaluate_imagenet is currently only supported for OpenFlamingo " "models"
         )
+    np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
     assert isinstance(model, Flamingo)
 
@@ -642,12 +643,12 @@ def evaluate_imagenet(
 
             in_context_samples = [train_dataset[i] for i in context_indices]
 
-            batch_vision_x = [
+            vision_x = [
                            eval_model.image_processor(data["image"]).unsqueeze(0)
                            for data in in_context_samples
                        ] + [
                            eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
-            batch_images.append(torch.cat(batch_vision_x, dim=0))
+            batch_images.append(torch.cat(vision_x, dim=0))
 
             context_class_names = [
                 in_context_samples[i]["class_name"] for i in
@@ -661,8 +662,8 @@ def evaluate_imagenet(
 
         # shape [B, T_img, C, h, w]
         vision_x = torch.stack(batch_images, dim=0)
-        # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
-        vision_x = vision_x.unsqueeze(2)
+        # shape [B, 1, T_img, C, h, w] where 1 is the frame dimension
+        vision_x = vision_x.unsqueeze(1)
         model._encode_vision_x(vision_x.cuda())
 
         overall_probs = []
