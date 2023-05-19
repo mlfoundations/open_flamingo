@@ -755,13 +755,18 @@ def evaluate_imagenet(
                 )
                 input_probs = input_probs[idxes[-1] + 1 :]
                 probs.append(torch.prod(input_probs).item())
+            # overall_probs is a nested list; the ith element of
+            # overall_probs contains a list of shape [batch_size,],
+            # where the j^th nested element represents the probability that
+            # batch element j has class i.
             overall_probs.append(probs)
 
-        # for each element, compute the top 5
+        # [num_clases, batch_size] -> [batch_size, num_classes]
+        overall_probs = np.array(overall_probs).T
         top5 = [
             IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
             for i in range(batch_size)
-            for pred in np.argsort(np.array(overall_probs[i]))[::-1][:5]
+            for pred in np.argsort(overall_probs[i])[::-1][:5]
         ]
         acc5 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in
                        range(batch_size))
