@@ -662,7 +662,7 @@ def evaluate_imagenet(
         raise NotImplementedError(
             "evaluate_imagenet is currently only supported for OpenFlamingo " "models"
         )
-    np.random_seed(seed)
+    np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
     assert isinstance(model, Flamingo)
 
