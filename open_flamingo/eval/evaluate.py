@@ -707,28 +707,28 @@ def evaluate_imagenet(
                 probs.append(torch.prod(input_probs).item())
             overall_probs.append(probs)
 
-            # for each element, compute the top 5
-            top5 = [
-                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-                for i in range(batch_size)
-                for pred in np.argsort(np.array(overall_probs[i]))[::-1][:5]
-            ]
-            acc5 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in
-                           range(batch_size))
-            acc1 += np.sum(batch[i]['class_name'] == top5[i][0] for i in
-                           range(batch_size))
+        # for each element, compute the top 5
+        top5 = [
+            IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+            for i in range(batch_size)
+            for pred in np.argsort(np.array(overall_probs[i]))[::-1][:5]
+        ]
+        acc5 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in
+                       range(batch_size))
+        acc1 += np.sum(batch[i]['class_name'] == top5[i][0] for i in
+                       range(batch_size))
 
-            examples_seen = (batch_idx + 1) * batch_size
-            print(
-                "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                    batch_size * batch_idx,
-                    num_samples,
-                    acc1 / examples_seen,
-                    acc5 / examples_seen
-                )
+        examples_seen = (batch_idx + 1) * batch_size
+        print(
+            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
+                batch_size * batch_idx,
+                num_samples,
+                acc1 / examples_seen,
+                acc5 / examples_seen
             )
-            if batch_idx * batch_size >= num_samples - 1:
-                break
+        )
+        if batch_idx * batch_size >= num_samples - 1:
+            break
 
     return float(acc1) / num_samples
 
