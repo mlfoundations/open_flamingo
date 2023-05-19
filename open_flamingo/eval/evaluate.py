@@ -683,14 +683,14 @@ def evaluate_imagenet(
                 truncation=True,
                 max_length=2048
             )
-
-            outputs = model(
-                vision_x=None,
-                lang_x=lang_x["input_ids"].cuda(),
-                attention_mask=lang_x["attention_mask"].cuda(),
-                clear_conditioned_layers=False,
-                use_cached_vision_x=True,
-            )
+            with torch.no_grad():
+                outputs = model(
+                    vision_x=None,
+                    lang_x=lang_x["input_ids"].cuda(),
+                    attention_mask=lang_x["attention_mask"].cuda(),
+                    clear_conditioned_layers=False,
+                    use_cached_vision_x=True,
+                )
             probs = torch.softmax(outputs.logits, dim=-1).detach()
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1
