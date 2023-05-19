@@ -108,3 +108,12 @@ class EvalModel(BaseEvalModel):
         outputs = outputs[:, len(input_ids[0]) :]
 
         return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+
+    def vqa_prompt(self, question, answer=None) -> str:
+        return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
+
+    def caption_prompt(self, caption=None) -> str:
+        return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
+
+    def classification_prompt(self, class_str=None) -> str:
+        return f"<image>A photo of a {class_str if class_str is not None else ''}{'<|endofchunk|>' if class_str is not None else ''}"
