@@ -352,7 +352,7 @@ def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
 
 def evaluate_captioning(
     args: argparse.Namespace,
-    eval_model: eval_model.EvalModel,
+    eval_model: eval_model.BaseEvalModel,
     seed: int = 42,
     max_generation_length: int = 20,
     num_beams: int = 3,
@@ -364,7 +364,7 @@ def evaluate_captioning(
 
     Args:
         args (argparse.Namespace): arguments
-        eval_model (eval_model.EvalModel): model to evaluate
+        eval_model (eval_model.BaseEvalModel): model to evaluate
         seed (int, optional): seed for random number generator. Defaults to 42.
         max_generation_length (int, optional): maximum length of the generated caption. Defaults to 20.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
@@ -493,7 +493,7 @@ def evaluate_captioning(
 
 def evaluate_vqa(
     args: argparse.Namespace,
-    eval_model: eval_model.EvalModel,
+    eval_model: eval_model.BaseEvalModel,
     seed: int = 42,
     max_generation_length: int = 5,
     num_beams: int = 3,
@@ -506,7 +506,7 @@ def evaluate_vqa(
 
     Args:
         args (argparse.Namespace): arguments
-        eval_model (eval_model.EvalModel): model to evaluate
+        eval_model (eval_model.BaseEvalModel): model to evaluate
         seed (int, optional): random seed. Defaults to 42.
         max_generation_length (int, optional): max generation length. Defaults to 5.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
@@ -648,7 +648,7 @@ def evaluate_imagenet(
     Evaluate a model on ImageNet dataset.
 
     Args:
-        eval_model (eval_model.EvalModel): model to evaluate
+        eval_model (eval_model.BaseEvalModel): model to evaluate
         batch_size (int): batch size
         imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
