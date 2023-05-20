@@ -707,12 +707,14 @@ def evaluate_imagenet(
 
             in_context_samples = [train_dataset[i] for i in context_indices]
 
-            batch_vision_x = [
-                           eval_model.image_processor(data["image"]).unsqueeze(0)
+            vision_x = [
+                           eval_model.image_processor(data["image"]).unsqueeze(
+                               0)
                            for data in in_context_samples
                        ] + [
-                           eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
-            batch_images.append(torch.cat(batch_vision_x, dim=0))
+                           eval_model.image_processor(
+                               batch[idx]["image"]).unsqueeze(0)]
+            batch_images.append(torch.cat(vision_x, dim=0))
 
             context_class_names = [
                 in_context_samples[i]["class_name"] for i in
@@ -818,18 +820,25 @@ def evaluate_imagenet(
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
 
-        # for each element, compute the top 5
-        top5 = [
-            IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-            for i in range(batch_size)
-            for pred in np.argsort(np.array(overall_probs[i]))[::-1][:5]
-        ]
-        acc5 += np.sum(np.isin(batch[i]['class_name'], top5[i]) for i in range(batch_size))
-        acc1 += np.sum(batch[i]['class_name'] == top5[i][0] for i in range(batch_size))
+        def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
+            """Return the indices of the top k elements in probs_ary."""
+            return np.argsort(probs_ary)[::-1][:k]
+
+        for i in range(batch_size):
+
+            top5 = [IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                for pred in topk(overall_probs[i], 5)]
+
+            y_i = batch[i]['class_name']
+            acc5 += int(y_i in set(top5))
+            acc1 += int(y_i == top5[0])
+
+            print(f"DEBUG: batch {idx} elem{i}/{batch_size}:"
+                  f"label {y_i}// top5 {top5}")
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
-            "eval {}/{} samples: acc@1 ({}), acc@5 ({})".format(
+            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
                 examples_seen,
                 num_samples,
                 acc1 / examples_seen,
