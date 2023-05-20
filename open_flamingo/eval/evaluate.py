@@ -833,8 +833,8 @@ def evaluate_imagenet(
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
 
-            print(f"DEBUG: batch {idx} elem{i}/{batch_size}:"
-                  f"label {y_i}// top5 {top5}")
+            print(f"DEBUG: batch {idx} elem {i} of {batch_size}:"
+                  f"label {y_i} // top5 {top5}")
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
