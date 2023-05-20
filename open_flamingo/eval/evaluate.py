@@ -47,8 +47,7 @@ parser.add_argument(
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
-    "--num_samples", type=int, default=5000,
-    help="Number of samples to evaluate on"
+    "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
 )
 parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
@@ -272,8 +271,7 @@ def main():
                     seed=seed,
                     dataset_name="ok_vqa",
                 )
-                print(
-                    f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
+                print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
                 scores.append(ok_vqa_score)
             print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
             results["ok_vqa"].append(
@@ -340,11 +338,9 @@ def get_random_indices(num_samples, query_set_size, full_dataset, seed):
     return random_indices
 
 
-def prepare_eval_samples_and_dataset(full_dataset, random_indices,
-                                     query_set_size):
+def prepare_eval_samples_and_dataset(full_dataset, random_indices, query_set_size):
     # get in context samples
-    in_context_samples = [full_dataset[i] for i in
-                          random_indices[:query_set_size]]
+    in_context_samples = [full_dataset[i] for i in random_indices[:query_set_size]]
     eval_dataset = torch.utils.data.Subset(
         full_dataset, random_indices[query_set_size:]
     )
@@ -654,12 +650,12 @@ def evaluate_vqa(
 
 
 def evaluate_imagenet(
-        eval_model,
-        batch_size: int,
-        imagenet_root: str,
-        seed: int = 42,
-        num_samples: int = 5000,
-        num_shots: int = 8,
+    eval_model,
+    batch_size: int,
+    imagenet_root: str,
+    seed: int = 42,
+    num_samples: int = 5000,
+    num_shots: int = 8,
 ):
     """
     Evaluate a model on ImageNet dataset.
@@ -695,7 +691,6 @@ def evaluate_imagenet(
 
     val_iterator = more_itertools.chunked(val_dataset, batch_size)
     for batch_idx, batch in enumerate(val_iterator):
-
         batch_images = []
         batch_text = []
 
@@ -703,22 +698,19 @@ def evaluate_imagenet(
             # Choose a different set of random context samples for each sample
             # from the training set
             context_indices = np.random.choice(
-                len(train_dataset), effective_num_shots, replace=False)
+                len(train_dataset), effective_num_shots, replace=False
+            )
 
             in_context_samples = [train_dataset[i] for i in context_indices]
 
             vision_x = [
-                           eval_model.image_processor(data["image"]).unsqueeze(
-                               0)
-                           for data in in_context_samples
-                       ] + [
-                           eval_model.image_processor(
-                               batch[idx]["image"]).unsqueeze(0)]
+                eval_model.image_processor(data["image"]).unsqueeze(0)
+                for data in in_context_samples
+            ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
 
             context_class_names = [
-                in_context_samples[i]["class_name"] for i in
-                range(effective_num_shots)
+                in_context_samples[i]["class_name"] for i in range(effective_num_shots)
             ]
             context_text = "".join(
                 f"{prompt_text} {classname}<|endofchunk|>"
@@ -732,7 +724,6 @@ def evaluate_imagenet(
         vision_x = vision_x.unsqueeze(2)
         model._encode_vision_x(vision_x.cuda())
 
-
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
         ctx_and_prompt_tokenized = tokenizer(
@@ -740,7 +731,8 @@ def evaluate_imagenet(
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=2048)
+            max_length=2048,
+        )
 
         with torch.no_grad():
             precomputed = model(
@@ -754,8 +746,7 @@ def evaluate_imagenet(
 
         def _detach_pkvs(pkvs):
             """Detach a set of past key values."""
-            return tuple(
-                [tuple([x.detach() for x in inner]) for inner in pkvs])
+            return tuple([tuple([x.detach() for x in inner]) for inner in pkvs])
 
         precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
 
@@ -763,21 +754,19 @@ def evaluate_imagenet(
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
-
             past_key_values = None
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
-            classname_tokens = tokenizer(imagenet_class_name,
-                                         add_special_tokens=False,
-                                         return_tensors="pt"
-                                         )["input_ids"].cuda()
+            classname_tokens = tokenizer(
+                imagenet_class_name, add_special_tokens=False, return_tensors="pt"
+            )["input_ids"].cuda()
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
 
-            classname_tokens = repeat(classname_tokens,
-                                      'b s -> (repeat b) s',
-                                      repeat=batch_size)
+            classname_tokens = repeat(
+                classname_tokens, "b s -> (repeat b) s", repeat=batch_size
+            )
 
             # Compute the outputs one token at a time, using cached
             # activations.
@@ -790,7 +779,6 @@ def evaluate_imagenet(
             elementwise_logits = [precomputed_logits[:, -2:-1, :]]
 
             for token_idx in range(classname_tokens.shape[1]):
-
                 _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
                 with torch.no_grad():
                     outputs = model(
@@ -798,9 +786,11 @@ def evaluate_imagenet(
                         lang_x=_lang_x,
                         clear_conditioned_layers=False,
                         use_cached_vision_x=True,
-                        past_key_values=(past_key_values if token_idx > 0
-                                         else precomputed_pkvs),
-                        use_cache=True)
+                        past_key_values=(
+                            past_key_values if token_idx > 0 else precomputed_pkvs
+                        ),
+                        use_cache=True,
+                    )
                 past_key_values = _detach_pkvs(outputs.past_key_values)
                 elementwise_logits.append(outputs.logits.detach())
 
@@ -812,8 +802,7 @@ def evaluate_imagenet(
             # at index 0 corresponds to the token at index 1.
             probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
 
-            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]
-                                     ).squeeze(-1)
+            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1)
 
             class_prob = torch.prod(gen_probs, 1).detach().cpu().numpy()
             overall_probs.append(class_prob)
@@ -825,24 +814,24 @@ def evaluate_imagenet(
             return np.argsort(probs_ary)[::-1][:k]
 
         for i in range(batch_size):
+            top5 = [
+                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                for pred in topk(overall_probs[i], 5)
+            ]
 
-            top5 = [IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-                for pred in topk(overall_probs[i], 5)]
-
-            y_i = batch[i]['class_name']
+            y_i = batch[i]["class_name"]
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
 
-            print(f"DEBUG: batch {idx} elem {i} of {batch_size}:"
-                  f"label {y_i} // top5 {top5}")
+            print(
+                f"DEBUG: batch {idx} elem {i} of {batch_size}:"
+                f"label {y_i} // top5 {top5}"
+            )
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
             "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                examples_seen,
-                num_samples,
-                acc1 / examples_seen,
-                acc5 / examples_seen
+                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
             )
         )
         if batch_idx * batch_size >= num_samples - 1:
