@@ -10,22 +10,19 @@ from einops import repeat
 import more_itertools
 import numpy as np
 import torch
-from tqdm import tqdm
+
 
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
-from ok_vqa_utils import postprocess_ok_vqa_generation
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.src.flamingo import Flamingo
-from imagenet_utils import (
-from eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
+
+from eval_datasets import VQADataset, ImageNetDataset
 from open_flamingo.eval.imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
-    find_sub_list,
 )
+from open_flamingo.eval import eval_model
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from open_flamingo.src.flamingo import Flamingo
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
@@ -352,6 +349,12 @@ def prepare_eval_samples_and_dataset(full_dataset, random_indices,
         full_dataset, random_indices[query_set_size:]
     )
     return in_context_samples, eval_dataset
+
+
+def get_query_set(train_dataset, query_set_size, seed):
+    np.random.seed(seed)
+    query_set = np.random.choice(len(train_dataset), query_set_size, replace=False)
+    return [train_dataset[i] for i in query_set]
 
 
 def prepare_eval_samples(test_dataset, num_samples, seed):
