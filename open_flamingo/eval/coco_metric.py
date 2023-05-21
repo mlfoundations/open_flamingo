@@ -4,7 +4,7 @@ from pycocotools.coco import COCO
 
 def compute_cider(
     result_path,
-    annotations_path,
+    annotations_path="/data/yfcc-tmp/data/mscoco/annotations/captions_train2017.json",
 ):
     # create coco object and coco_result object
     coco = COCO(annotations_path)
