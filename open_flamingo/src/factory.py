@@ -55,6 +55,18 @@ def create_model_and_transforms(
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path, local_files_only=use_local_files, trust_remote_code=True,
     )
+    # hacks for mosaicml/mpt-1b-redpajama-200b-dolly
+    if "mosaicml/mpt-1b-redpajama-200b-dolly" in lang_encoder_path:
+        class EmbeddingFnMixin():
+            def get_input_embeddings(self):
+                return self.transformer.wte
+            def set_input_embeddings(self, new_embeddings):
+                self.transformer.wte = new_embeddings
+        extend_instance(lang_encoder, EmbeddingFnMixin)
+        lang_encoder.is_mpt_1b = True
+    else:
+        lang_encoder.is_mpt_1b = False
+
     extend_instance(lang_encoder, FlamingoLMMixin)
 
     if decoder_layers_attr_name is None:
@@ -109,4 +121,5 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "llama": "model.layers",
     "gptneoxforcausallm": "gpt_neox.layers",
     "mpt": "transformer.blocks",
+    "mosaicgpt": "transformer.blocks",
 }
