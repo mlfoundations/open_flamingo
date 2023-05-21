@@ -295,6 +295,7 @@ def filter_state_dict_to_trainable(model, state_dict):
         if 'fsdp' in name: continue
         if 'embed' in name or isinstance(p, torch.nn.Embedding): continue
         if not p.requires_grad:
+            name = name.replace('._checkpoint_wrapped_module', '')
             del state_dict[name]
 
     # also remove the keys in state_dict generated from
