@@ -5,6 +5,7 @@ import copy
 import glob
 import os
 import random
+import re
 
 import numpy as np
 import torch
@@ -12,12 +13,22 @@ import wandb
 from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
-from train_utils import get_checkpoint, train_one_epoch
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from train_utils import filter_state_dict_to_trainable, train_one_epoch, get_mp_policy_dtype
 from transformers import (
     get_constant_schedule_with_warmup,
     get_cosine_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
+
+from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    checkpoint_wrapper,
+    CheckpointWrapper,
+    CheckpointImpl,
+    apply_activation_checkpointing
+) 
+import functools
 
 from open_flamingo import create_model_and_transforms
 
@@ -46,6 +57,11 @@ def main():
         help="how often to add a cross-attention layer after each transformer layer",
     )
     parser.add_argument(
+        "--freeze_lm_embeddings",
+        action="store_true",
+        help="whether to freeze the LM embeddings. useful for FSDP, since we can't mask gradients.",
+    )
+    parser.add_argument(
         "--run_name",
         type=str,
         default="openflamingo3B",
@@ -61,6 +77,7 @@ def main():
     parser.add_argument("--batch_size_mmc4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--gradient_checkpointing", action="store_true", help="AKA activation checkpointing.")
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
@@ -127,6 +144,24 @@ def main():
         action="store_true",
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
     )
+    parser.add_argument(
+        "--fsdp",
+        default=False,
+        action="store_true",
+        help="Use FullyShardedDataParallel for distributed training."
+    )
+    parser.add_argument(
+        "--fsdp_cpu_offload",
+        default=False,
+        action="store_true",
+        help="CPU offloading for FSDP and checkpoint saving. This does not work with gradient accumulation."
+    )
+    parser.add_argument(
+        "--fsdp_use_orig_params",
+        default=False,
+        action="store_true",
+        help="Passed into the FSDP constructor. This does not work for OPT models. Enables param_groups for weight_decay."
+    )
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
     parser.add_argument(
@@ -157,6 +192,7 @@ def main():
 
     if args.mmc4_shards.startswith("s3"):
         args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
+    args.mmc4_shards = "{"+args.mmc4_shards + ",pipe:aws s3 cp s3://s-laion/flamingo/chatgpt-shards/{00000..00418}.tar -}" # add in the chatgpt shards
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
@@ -182,6 +218,8 @@ def main():
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
+        gradient_checkpointing=args.gradient_checkpointing,
+        freeze_lm_embeddings=args.freeze_lm_embeddings,
     )
 
     random_seed(args.seed, args.rank)
@@ -196,40 +234,151 @@ def main():
             config=vars(args),
         )
 
-    device_id = args.rank % torch.cuda.device_count()
-    model = model.to(device_id)
-
-    ddp_model = DDP(model, device_ids=[device_id])
-
-    laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
-    mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
-
-    def get_grouped_params(model):
-        params_with_wd, params_without_wd = [], []
-
-        def apply_decay(x):
-            return (
-                "gated_cross_attn_layer" in x
-                and "ff_gate" not in x
-                and "attn_gate" not in x
-                and "norm" not in x
-                and "bias" not in x
+    
+    """Step 1: Load the model checkpoint on CPU"""
+    # check if a checkpoint exists for this run
+    if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
+        checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
+        if len(checkpoint_list) == 0:
+            print(f"Found no checkpoints for run {args.run_name}.")
+        else:
+            args.resume_from_checkpoint = sorted(
+                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
+            )[-1]
+            print(
+                f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
             )
 
-        for n, p in model.named_parameters():
-            # if p.requires_grad:
-            if apply_decay(n):
-                params_with_wd.append(p)
-            else:
-                params_without_wd.append(p)
+    # load the model state dict
+    resume_from_epoch = 0
+    if args.resume_from_checkpoint is not None:
+        if args.rank == 0:
+            print(f"Loading checkpoint from {args.resume_from_checkpoint}")
+        checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
+        msd = checkpoint["model_state_dict"]
+        msd = {k.replace("module.", ""): v for k, v in msd.items()}
+        resume_from_epoch = checkpoint["epoch"] + 1
 
-        return [
-            {"params": params_with_wd, "weight_decay": args.weight_decay},
-            {"params": params_without_wd, "weight_decay": 0.0},
-        ]
+        # for fsdp, only one rank needs to load the state dict
+        if not args.fsdp or args.rank == 0: model.load_state_dict(msd, False)
 
-    optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
+    """
+    Step 2: Init FSDP/DDP, and ensure model is on GPU
+    Model wrapping: In order to minimize the transient GPU memory needs, users need to wrap a model in a nested fashion. 
+    This introduces additional complexity. The auto_wrap utility is useful in annotating existing PyTorch model 
+    code for nested wrapping purposes.
+        Wrapping gotchas: all parameters in a wrapped module must have the same requires_grad setting.
+        model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors (not sure why)
+        See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
+    Model initialization: Unlike DDP, FSDP does not automatically synchronize model weights between GPU workers. 
+    This means model initialization must be done carefully so that all GPU workers have the identical initial weights.
+    """
+    model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
 
+    if args.fsdp:
+        if args.rank == 0:
+            print(f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+
+        if args.precision != "fp32":
+            cast_dtype = get_mp_policy_dtype(args.precision)
+            mp_policy = MixedPrecision(
+                param_dtype=torch.float32,
+                reduce_dtype=cast_dtype, # gradient communication
+                buffer_dtype=cast_dtype,
+            )
+        else:
+            mp_policy = None
+
+        # init FSDP
+        wrapper_kwargs = dict(
+            cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
+            device_id=device_id,
+            sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
+            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            use_orig_params=args.fsdp_use_orig_params,
+            mixed_precision=mp_policy,
+        )
+        model.wrap_fsdp(wrapper_kwargs)
+        ddp_model = model
+
+        print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
+        print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
+    
+    else:
+        ddp_model = DDP(model, device_ids=[device_id])
+
+    if args.gradient_checkpointing:
+        non_reentrant_wrapper = functools.partial(
+            checkpoint_wrapper,
+            offload_to_cpu=False,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT
+        )
+        apply_activation_checkpointing(
+            ddp_model, 
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False) and not isinstance(m, FSDP) and not isinstance(m, CheckpointWrapper)
+        )
+    
+    # # tiny test case
+    # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
+    # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
+    # loss = ddp_model(
+    #     vision_x.to(device_id, dtype=cast_dtype, non_blocking=True), 
+    #     lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
+    #     lang_x["attention_mask"].to(device_id, dtype=cast_dtype, non_blocking=True),
+    #     labels=lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
+    #     clear_conditioned_layers=False,
+    # )[0]
+    # loss.backward()
+    # print(f"Loss: {loss.item()} on rank {args.rank}")
+
+    if args.rank == 0: 
+        print(model) # to check wrapping
+        # print params that are being trained
+        for name, param in ddp_model.named_parameters():
+            if param.requires_grad: print(name)
+
+    """
+    Step 3: Init and load optimizer
+    Optimizer settings: Due to sharding and wrapping, only certain types of optimizer and optimizer settings are supported by FSDP. 
+    In particular, if a module is wrapped by FSDP and its parameters are flattened into a single tensor, users cannot use different 
+    hyperparameters for different parameter groups in such a module.
+    """
+    if not args.fsdp or args.fsdp_use_orig_params:
+        # apply weight decay only to certain params
+        # specifically, do not apply weight decay to the Perceiver Resampler
+        def get_grouped_params(model):
+            params_with_wd, params_without_wd = [], []
+
+            def apply_decay(x):
+                return "gated_cross_attn" in x
+
+            for n, p in model.named_parameters():
+                if p.requires_grad:
+                    if apply_decay(n):
+                        params_with_wd.append(p)
+                    else:
+                        params_without_wd.append(p)
+
+            return [
+                {"params": params_with_wd, "weight_decay": args.weight_decay},
+                {"params": params_without_wd, "weight_decay": 0.0},
+            ]
+        optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
+    else:
+        # unclear if we should be using no weight decay or small weight decay for all parameters
+        optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+
+    # load optimizer checkpoint
+    if args.resume_from_checkpoint is not None:
+        osd = checkpoint["optimizer_state_dict"]
+        if args.fsdp: osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
+        optimizer.load_state_dict(osd)
+
+    """Step 4: Init data"""  
+    laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
+    mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
     total_training_steps = (
         (args.train_num_samples_mmc4) // (args.batch_size_mmc4 * args.world_size)
     ) * args.num_epochs
@@ -237,6 +386,7 @@ def main():
     if args.rank == 0:
         print(f"Total training steps: {total_training_steps}")
 
+    """Step 5: Init and load LR Scheduler"""
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
             optimizer,
@@ -254,29 +404,12 @@ def main():
             optimizer, num_warmup_steps=args.warmup_steps
         )
 
-    # check if a checkpoint exists for this run
-    if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
-        checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
-        if len(checkpoint_list) == 0:
-            print(f"Found no checkpoints for run {args.run_name}.")
-        else:
-            args.resume_from_checkpoint = sorted(
-                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
-            )[-1]
-            print(
-                f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
-            )
-
-    resume_from_epoch = 0
+    # load lr scheduler checkpoint
     if args.resume_from_checkpoint is not None:
-        if args.rank == 0:
-            print(f"Loading checkpoint from {args.resume_from_checkpoint}")
-        checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
-        ddp_model.load_state_dict(checkpoint["model_state_dict"], False)
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        # TODO: this hopefully works with fsdp?
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
-        resume_from_epoch = checkpoint["epoch"] + 1
 
+    """Step 6: Train"""
     ddp_model.train()
 
     for epoch in range(resume_from_epoch, args.num_epochs):
@@ -298,14 +431,39 @@ def main():
             wandb=wandb,
         )
 
+        """
+        Step 7: Saving checkpoints
+        State checkpointing and inference: When the model scale is large, saving and loading 
+        the model state can become challenging. FSDP supports several ways to make that 
+        task possible, but it is by no means trivial.
+        Note: requires enough CPU memory for both model and optimizer state
+        Note: the pytorch fsdp code has a bug where it doesn't handle nested FSDPs well.
+        """
+        if args.fsdp:
+            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            with FSDP.state_dict_type(
+                ddp_model, StateDictType.FULL_STATE_DICT, save_policy
+            ):
+                model_state = ddp_model.state_dict()
+        else:
+            model_state = ddp_model.state_dict()
+        
+        if args.fsdp:
+            optim_state = FSDP.full_optim_state_dict(ddp_model, optimizer, rank0_only=True)
+        else:
+            optim_state = optimizer.state_dict()
+
         if args.rank == 0:
+            if not (args.fsdp and not args.fsdp_use_orig_params):
+                model_state = filter_state_dict_to_trainable(ddp_model, model_state)
+
             if not os.path.exists(args.run_name):
                 os.makedirs(args.run_name)
 
             checkpoint_dict = {
                 "epoch": epoch,
-                "model_state_dict": get_checkpoint(ddp_model),
-                "optimizer_state_dict": optimizer.state_dict(),
+                "model_state_dict": model_state,
+                "optimizer_state_dict": optim_state,
                 "lr_scheduler_state_dict": lr_scheduler.state_dict(),
             }
 
@@ -318,13 +476,13 @@ def main():
                 if epoch > 0:
                     os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
 
-    if args.rank == 0:
-        if not os.path.exists(args.run_name):
-            os.makedirs(args.run_name)
+    # if args.rank == 0:
+    #     if not os.path.exists(args.run_name):
+    #         os.makedirs(args.run_name)
 
-        torch.save(get_checkpoint(ddp_model), f"{args.run_name}/final_weights.pt")
-        if args.report_to_wandb and args.save_checkpoints_to_wandb:
-            wandb.save(f"{args.run_name}/final_weights.pt")
+    #     torch.save(get_checkpoint(ddp_model), f"{args.run_name}/final_weights.pt")
+    #     if args.report_to_wandb and args.save_checkpoints_to_wandb:
+    #         wandb.save(f"{args.run_name}/final_weights.pt")
 
 
 if __name__ == "__main__":

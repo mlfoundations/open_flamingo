@@ -2,7 +2,30 @@ import torch
 from einops import rearrange
 from torch import nn
 
+from torch.utils.checkpoint import checkpoint
+
+
 from .helpers import PerceiverResampler
+
+from torch.distributed.fsdp.wrap import (
+    enable_wrap,
+    wrap,
+)
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
+from functools import partial
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+    CPUOffload,
+    CPUOffload,
+    MixedPrecision,
+    FullStateDictConfig,
+    StateDictType,
+)
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+
+from torch.distributed.fsdp import flat_param
 
 
 class Flamingo(nn.Module):
@@ -14,6 +37,7 @@ class Flamingo(nn.Module):
         media_token_id: int,
         vis_dim: int,
         cross_attn_every_n_layers: int = 1,
+        gradient_checkpointing: bool = False,
     ):
         """
         Args:
@@ -29,14 +53,23 @@ class Flamingo(nn.Module):
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
         self.vis_dim = vis_dim
-        self.vision_encoder = vision_encoder
+        if hasattr(lang_encoder.config, "d_model"):
+            self.lang_dim = lang_encoder.config.d_model  # mpt uses d_model
+        else:
+            self.lang_dim = lang_encoder.config.hidden_size
+
+        self.vision_encoder = vision_encoder.visual
         self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
+            lang_hidden_size=self.lang_dim,
             vis_hidden_size=self.vis_dim,
             cross_attn_every_n_layers=cross_attn_every_n_layers,
+            gradient_checkpointing=gradient_checkpointing,
         )
+        self._use_gradient_checkpointing = gradient_checkpointing
+        self.perceiver._use_gradient_checkpointing = gradient_checkpointing
 
     def forward(
         self,
@@ -87,13 +120,39 @@ class Flamingo(nn.Module):
             # Case: do not use caching (i.e. this is a standard forward pass);
             self._encode_vision_x(vision_x=vision_x)
 
-        output = self.lang_encoder(
-            input_ids=lang_x,
-            attention_mask=attention_mask,
-            labels=labels,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-        )
+        if not self.lang_encoder.is_mpt_1b:
+            output = self.lang_encoder(
+                input_ids=lang_x,
+                attention_mask=attention_mask,
+                labels=labels,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+            )
+        else:
+            output = self.lang_encoder(
+                input_ids=lang_x,
+                attention_mask=attention_mask.bool(),
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+            )
+            # compute loss from logits
+            if labels is not None:
+                logits = output.logits
+                # Shift so that tokens < n predict n
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                # Flatten the tokens
+                loss_fct = torch.nn.CrossEntropyLoss()
+                loss = loss_fct(
+                    shift_logits.view(-1, self.lang_encoder.get_input_embeddings().num_embeddings), shift_labels.view(-1)
+                )
+                output = CausalLMOutputWithPast(
+                    loss=loss,
+                    logits=logits,
+                    past_key_values=output.past_key_values,
+                    hidden_states=output.hidden_states,
+                    attentions=output.attentions,
+                )
 
         if clear_conditioned_layers:
             self.lang_encoder.clear_conditioned_layers()
@@ -187,10 +246,64 @@ class Flamingo(nn.Module):
 
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         with torch.no_grad():
-            vision_x = self.vision_encoder.visual(vision_x)[1]
+            vision_x = self.vision_encoder(vision_x)[1]
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
-
-        vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
+        vision_x = self.perceiver(vision_x)
 
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_x)
+
+    def wrap_fsdp(self, wrapper_kwargs):
+        """
+        Manually wraps submodules for FSDP
+        We have to manually wrap very carefully because
+        - all parameters within the FSDP wrapper must have the same requires_grad.
+        - model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors
+            See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
+        - OPTPositionalEmbedding also wants to be individually wrapped or it errors
+        - we would probably save memory if we sharded all of self.vision_encoder, but
+            torch's FSDP checkpiont saver does not play well with nested FSDP modules
+
+        Irena: I'm assuming that the model is being trained under normal Flamingo settings
+        with these lines being called in factory.py:
+            ```
+            # Freeze all parameters
+            model.requires_grad_(False)
+            assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+
+            # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
+            model.perceiver.requires_grad_(True)
+            model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
+            model.lang_encoder.get_input_embeddings().requires_grad_(True)
+            ```
+        """
+        with enable_wrap(wrapper_cls=FSDP, **wrapper_kwargs):
+            self.perceiver = wrap(self.perceiver)
+            self.lang_encoder.old_decoder_blocks = nn.ModuleList(
+                wrap(block) for block in self.lang_encoder.old_decoder_blocks
+            )
+            self.lang_encoder.gated_cross_attn_layers = nn.ModuleList(
+                wrap(layer) if layer is not None else None
+                for layer in self.lang_encoder.gated_cross_attn_layers
+            )
+            self.lang_encoder.init_flamingo_layers(self._use_gradient_checkpointing)
+            self.lang_encoder.set_input_embeddings(
+                wrap(self.lang_encoder.get_input_embeddings())
+            )
+            self.vision_encoder = wrap(self.vision_encoder)
+
+            # OPT has its own custom positional embeddings class that also needs to be wrapped
+            if "opt" in self.lang_encoder.__class__.__name__.lower():
+                self.lang_encoder.model.decoder.embed_positions = wrap(
+                    self.lang_encoder.model.decoder.embed_positions
+                )
+
+        # set up clip_grad_norm_ function
+        def clip_grad_norm_(max_norm):
+            self.perceiver.clip_grad_norm_(max_norm)
+            for layer in self.lang_encoder.gated_cross_attn_layers:
+                if layer is not None:
+                    layer.clip_grad_norm_(max_norm)
+            self.lang_encoder.get_input_embeddings().clip_grad_norm_(max_norm)
+
+        self.clip_grad_norm_ = clip_grad_norm_

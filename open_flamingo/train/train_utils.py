@@ -13,6 +13,13 @@ def get_cast_dtype(precision: str):
         cast_dtype = torch.float16
     return cast_dtype
 
+def get_mp_policy_dtype(precision: str):
+    if "bfloat16" in precision or "bf16" in precision:
+        return torch.bfloat16
+    elif precision == "fp16":
+        return torch.float16
+    else:
+        return torch.float32
 
 def get_autocast(precision):
     if precision == "amp":
@@ -92,7 +99,7 @@ def train_one_epoch(
         labels[labels == tokenizer.pad_token_id] = -100
         labels[:, 0] = -100
         labels[labels == media_token_id] = -100
-        labels.to(device_id)
+        labels = labels.to(device_id)
 
         with autocast():
             loss_laion = model(
@@ -100,6 +107,7 @@ def train_one_epoch(
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
+                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
 
@@ -138,7 +146,14 @@ def train_one_epoch(
                     token_idx += 1
 
         labels[labels == media_token_id] = -100
-        labels.to(device_id)
+
+        # try to catch this nan loss case before it happens
+        if torch.all(labels == -100):
+            print("all labels are -100, skipping this batch")
+            # not sure if this is the right way to recover in fsdp setting
+            continue
+
+        labels = labels.to(device_id)
 
         with autocast():
             loss_mmc4 = model(
@@ -146,6 +161,7 @@ def train_one_epoch(
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
+                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
 
             # if loss is nan, skip this batch
@@ -166,20 +182,35 @@ def train_one_epoch(
         )
         loss.backward()
 
-        #### MASK GRADIENTS FOR EMBEDDINGS ####
-        # Note (anas): Do not apply weight decay to embeddings as it will break this function.
-        def mask_embedding(m):
-            if isinstance(m, torch.nn.Embedding) and m.weight.requires_grad:
-                zero_mask = torch.zeros_like(m.weight.grad)
-                zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-                zero_mask[endofchunk_token_id] = torch.ones_like(
-                    zero_mask[endofchunk_token_id]
-                )
-                m.weight.grad = m.weight.grad * zero_mask
+        if args.gradient_checkpointing:
+            if args.fsdp: model.lang_encoder.clear_conditioned_layers()
+            else: model.module.lang_encoder.clear_conditioned_layers()
 
-        model.apply(mask_embedding)
+        if (not args.freeze_lm_embeddings) and (not args.fsdp or args.fsdp_use_orig_params):
+            ### 
+            # Mask gradients for input embeddings s.t. we only update the added tokens 
+            # TODO: output embeddings if weights are not tied
+            # ####
+            if args.fsdp: embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+            else: embed_grad = model.module.lang_encoder.get_input_embeddings().weight.grad
+            zero_mask = torch.zeros_like(embed_grad)
+            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+            zero_mask[endofchunk_token_id] = torch.ones_like(
+                zero_mask[endofchunk_token_id]
+            )
+            if args.fsdp: model.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
+            else: model.module.lang_encoder.get_input_embeddings().weight.grad = embed_grad * zero_mask
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        if args.fsdp:
+            """
+            The way we clip gradients with FSDP is different than the non-FSDP case,
+            because during FSDP, gradient norms are computed over certain submodules,
+            rather than the entire model.
+            At least for OPT-125M, this didn't seem to make a difference in performance.
+            """
+            model.clip_grad_norm_(1.0)
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         # step optimizer and log
         if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
@@ -236,13 +267,13 @@ def train_one_epoch(
 
                 wandb.log(
                     {
-                        "loss_laion": divided_loss_laion.item(),
+                        "loss_laion": loss_laion.item(),
                         "global_step": global_step,
                     },
                     commit=False,
                 )
                 wandb.log(
-                    {"loss_mmc4": divided_loss_mmc4.item(), "global_step": global_step},
+                    {"loss_mmc4": loss_mmc4.item(), "global_step": global_step},
                     commit=True,
                 )
 
@@ -253,13 +284,25 @@ def train_one_epoch(
             )
 
 
-def get_checkpoint(model):
-    state_dict = model.state_dict()
-
-    for name, p in model.named_parameters():
+def filter_state_dict_to_trainable(model, state_dict):
+    """
+    Remove non-trainable parameters from model state dict.
+    Exception: Embeddings will not be removed, even if frozen. 
+    This is because we need the new <image> <|endofchunk|> tokens to 
+    be consistent across initializations.
+    """
+    for name, p in model.named_parameters(): # won't work for fsdp + use_orig_params=False
+        if 'fsdp' in name: continue
+        if 'embed' in name or isinstance(p, torch.nn.Embedding): continue
         if not p.requires_grad:
             del state_dict[name]
 
+    # also remove the keys in state_dict generated from
+    # lang_encoder.old_decoder_blocks and lang_encoder.gated_cross_attn_layers
+    # because these are already saved in lang_encoder.model...
+    to_delete = [n for n in state_dict.keys() if ('lang_encoder.old_decoder_blocks' in n) or ('lang_encoder.gated_cross_attn_layers' in n) or ('vision_encoder' in n)]
+    for name in to_delete:
+        del state_dict[name]
     return state_dict
 
 
