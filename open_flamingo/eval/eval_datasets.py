@@ -137,11 +137,26 @@ class ClassificationDataset:
             len(self.train_dataset), num, replace=False
         )
 
-    def metric_fn(self, labels, outputs) -> Mapping[str, float]:
+    def metric_fn(self, labels: Sequence[int], outputs: Sequence[float]) -> Mapping[str, float]:
+        """
+        Compute metrics for a set of labels and predictions.
+
+        labels: An array-like of shape [batch_size,]
+        outputs: Model outputs; an array-like of shape [batch_size, num_classes]. The
+            [i,j]^th element of outputs should correspond to the probability
+            that the i^th observation has numeric class label j.
+        """
         batch_size = len(labels)
-        assert len(outputs) == len(labels), "sanity check of input shapes"
+
+        # Sanity check that batch size is consistent
+        assert len(outputs) == len(labels)
+
+        # Sanity check that outputs has same dimension as class mapping.
+        assert outputs.shape[1] == len(self.class_id_to_label)
+
         acc5 = 0.
         acc1 = 0.
+
         for i in range(batch_size):
             top5 = [
                 self.class_id_to_label[pred]
