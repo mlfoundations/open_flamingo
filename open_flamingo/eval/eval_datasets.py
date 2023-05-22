@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Sequence, Mapping
 
 import numpy as np
@@ -120,9 +120,14 @@ class ClassificationDataset:
         ImageNetDataset for an example.
     """
     train_dataset: Dataset
-    prompts: Sequence[str]
-    # mapping of integer class labels to string class names.
-    class_id_to_label: Mapping[int, str]
+    prompts: Sequence[str] = field(
+        metadata={"help": "A sequence of prompts to be used during evaluation;"
+                          "e.g. 'A photo of a'. It is recommended to 'strip' the prompt (remove leading/trailing "
+                          "spaces) for best performance."}
+    )
+    class_id_to_label: Mapping[int, str] = field(
+        metadata={"help": "mapping of numeric class IDs to string class names/labels."
+                          "Downstream metrics will be evaluated against the mapped strings."})
     val_dataset: Optional[Dataset] = None
     test_dataset: Optional[Dataset] = None
 
