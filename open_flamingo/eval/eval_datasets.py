@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Sequence, Mapping
 
+import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
@@ -104,6 +105,11 @@ class VQADataset(Dataset):
         }
 
 
+def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
+    """Return the indices of the top k elements in probs_ary."""
+    return np.argsort(probs_ary)[::-1][:k]
+
+
 @dataclass
 class ClassificationDataset:
     """Class to hold a classification dataset for evals.
@@ -119,6 +125,33 @@ class ClassificationDataset:
     class_id_to_label: Mapping[int, str]
     val_dataset: Optional[Dataset] = None
     test_dataset: Optional[Dataset] = None
+
+    def get_in_context_samples(self, num: int, **kwargs) -> Sequence[int]:
+        """Fetch a set of `num` in-context sample indices."""
+        return np.random.choice(
+            len(self.train_dataset), num, replace=False
+        )
+
+    def metric_fn(self, labels, outputs) -> Mapping[str, float]:
+        batch_size = len(labels)
+        assert len(outputs) == len(labels), "sanity check of input shapes"
+        acc5 = 0.
+        acc1 = 0.
+        for i in range(batch_size):
+            top5 = [
+                self.class_id_to_label[pred]
+                for pred in topk(outputs[i], 5)
+            ]
+
+            y_i = labels[i]["class_name"]
+            acc5 += int(y_i in set(top5))
+            acc1 += int(y_i == top5[0])
+
+            print(
+                f"[DEBUG]: elem {i} of {batch_size}:"
+                f"label {y_i} // top5 {top5}"
+            )
+        return {"acc1": acc1, "acc5": acc5}
 
 
 class ImageNetDataset(ImageFolder):

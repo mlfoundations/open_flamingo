@@ -12,11 +12,9 @@ import more_itertools
 import numpy as np
 import torch
 
-
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import CaptionDataset, ImageNetDataset, ClassificationDataset
 from tqdm import tqdm
-
 
 from eval_datasets import VQADataset, ImageNetDataset
 from open_flamingo.eval.imagenet_utils import (
@@ -302,12 +300,11 @@ def main():
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-
                 imagenet_dataset = ClassificationDataset(
-                    train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train")),
-                    val_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val")),
+                    train_dataset=ImageNetDataset(os.path.join(args.imagenet_root, "train")),
+                    val_dataset=ImageNetDataset(os.path.join(args.imagenet_root, "val")),
                     class_id_to_label=IMAGENET_1K_CLASS_ID_TO_LABEL,
-                    prompts=["A photo of a",]
+                    prompts=["A photo of a", ]
                 )
                 imagenet_score = evaluate_classification(
                     eval_model=eval_model,
@@ -371,14 +368,14 @@ def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
 
 
 def evaluate_captioning(
-    args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
-    seed: int = 42,
-    max_generation_length: int = 20,
-    num_beams: int = 3,
-    length_penalty: float = -2.0,
-    num_shots: int = 8,
-    dataset_name: str = "coco",
+        args: argparse.Namespace,
+        eval_model: eval_model.BaseEvalModel,
+        seed: int = 42,
+        max_generation_length: int = 20,
+        num_beams: int = 3,
+        length_penalty: float = -2.0,
+        num_shots: int = 8,
+        dataset_name: str = "coco",
 ):
     """Evaluate a model on COCO dataset.
 
@@ -438,8 +435,8 @@ def evaluate_captioning(
     predictions = defaultdict()
 
     for batch in more_itertools.chunked(
-        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-        args.batch_size,
+            tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+            args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
@@ -512,14 +509,14 @@ def evaluate_captioning(
 
 
 def evaluate_vqa(
-    args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
-    seed: int = 42,
-    max_generation_length: int = 5,
-    num_beams: int = 3,
-    length_penalty: float = -2.0,
-    num_shots: int = 8,
-    dataset_name: str = "vqav2",
+        args: argparse.Namespace,
+        eval_model: eval_model.BaseEvalModel,
+        seed: int = 42,
+        max_generation_length: int = 5,
+        num_beams: int = 3,
+        length_penalty: float = -2.0,
+        num_shots: int = 8,
+        dataset_name: str = "vqav2",
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0.
@@ -580,8 +577,8 @@ def evaluate_vqa(
     predictions = []
 
     for batch in more_itertools.chunked(
-        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-        args.batch_size,
+            tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+            args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
@@ -657,13 +654,13 @@ def evaluate_vqa(
 
 
 def evaluate_classification(
-    eval_model,
-    batch_size: int,
-    classification_dataset: ClassificationDataset,
-    seed: int = 42,
-    num_samples: int = 5000,
-    num_shots: int = 8,
-    ):
+        eval_model,
+        batch_size: int,
+        classification_dataset: ClassificationDataset,
+        seed: int = 42,
+        num_samples: int = 5000,
+        num_shots: int = 8,
+):
     """
     Evaluate a model on a classification dataset.
 
@@ -692,8 +689,7 @@ def evaluate_classification(
     effective_num_shots = num_shots if num_shots > 0 else 2
     tokenizer.padding_side = "left"
 
-    acc1 = 0
-    acc5 = 0
+    _metrics = defaultdict(float)  # accumulates metric values over each batch, to be averaged at end.
     # TODO(jpgard): iterate over prompts here.
     prompt_text = f"<image>{classification_dataset.prompts[0]}"
 
@@ -705,16 +701,15 @@ def evaluate_classification(
         for idx in range(len(batch)):
             # Choose a different set of random context samples for each sample
             # from the training set
-            context_indices = np.random.choice(
-                len(train_dataset), effective_num_shots, replace=False
-            )
+            context_indices = classification_dataset.get_in_context_samples(
+                effective_num_shots)
 
             in_context_samples = [train_dataset[i] for i in context_indices]
 
             vision_x = [
-                eval_model.image_processor(data["image"]).unsqueeze(0)
-                for data in in_context_samples
-            ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
+                           eval_model.image_processor(data["image"]).unsqueeze(0)
+                           for data in in_context_samples
+                       ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
 
             context_class_names = [
@@ -817,35 +812,21 @@ def evaluate_classification(
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
 
-        def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
-            """Return the indices of the top k elements in probs_ary."""
-            return np.argsort(probs_ary)[::-1][:k]
+        targets = [x["class_name"] for x in batch]
+        metrics = classification_dataset.metric_fn(targets, overall_probs)
 
-        for i in range(batch_size):
-            top5 = [
-                class_id_to_label[pred]
-                for pred in topk(overall_probs[i], 5)
-            ]
-
-            y_i = batch[i]["class_name"]
-            acc5 += int(y_i in set(top5))
-            acc1 += int(y_i == top5[0])
-
-            print(
-                f"DEBUG: batch {idx} elem {i} of {batch_size}:"
-                f"label {y_i} // top5 {top5}"
-            )
+        for k in metrics.keys():
+            _metrics[k] += metrics[k]
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
-            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
-            )
+            f"eval {examples_seen}/{num_samples}: "
+            + '\n\t'.join([f'{k}: {v / examples_seen:.4f}' for k, v in _metrics.items()])
         )
         if batch_idx * batch_size >= num_samples - 1:
             break
 
-    return float(acc1) / num_samples
+    return float(_metrics["acc1"]) / num_samples
 
 
 if __name__ == "__main__":
