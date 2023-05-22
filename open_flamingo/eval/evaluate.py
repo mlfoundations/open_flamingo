@@ -5,6 +5,7 @@ import os
 import random
 import uuid
 from collections import defaultdict
+from typing import Mapping
 
 from einops import repeat
 import more_itertools
@@ -13,13 +14,12 @@ import torch
 
 
 from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
+from eval_datasets import CaptionDataset, ImageNetDataset, ClassificationDataset
 from tqdm import tqdm
 
 
 from eval_datasets import VQADataset, ImageNetDataset
 from open_flamingo.eval.imagenet_utils import (
-    openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
 )
 from open_flamingo.eval import eval_model
@@ -302,13 +302,20 @@ def main():
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                imagenet_score = evaluate_imagenet(
+
+                imagenet_dataset = ClassificationDataset(
+                    train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train")),
+                    val_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val")),
+                    class_id_to_label=IMAGENET_1K_CLASS_ID_TO_LABEL,
+                    prompts=["A photo of a",]
+                )
+                imagenet_score = evaluate_classification(
                     eval_model=eval_model,
                     batch_size=args.batch_size,
                     num_samples=args.num_samples,
                     num_shots=shot,
                     seed=seed,
-                    imagenet_root=args.imagenet_root,
+                    classification_dataset=imagenet_dataset
                 )
                 print(
                     f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
@@ -649,21 +656,20 @@ def evaluate_vqa(
     return acc
 
 
-def evaluate_imagenet(
+def evaluate_classification(
     eval_model,
     batch_size: int,
-    imagenet_root: str,
+    classification_dataset: ClassificationDataset,
     seed: int = 42,
     num_samples: int = 5000,
     num_shots: int = 8,
-):
+    ):
     """
-    Evaluate a model on ImageNet dataset.
+    Evaluate a model on a classification dataset.
 
     Args:
         eval_model (eval_model.BaseEvalModel): model to evaluate
         batch_size (int): batch size
-        imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
         num_samples (int, optional): number of samples to evaluate on. Defaults to 5000 samples.
         num_shots (int, optional): number of shots to use. Defaults to 8.
@@ -679,15 +685,17 @@ def evaluate_imagenet(
     model, tokenizer = eval_model.model, eval_model.tokenizer
     assert isinstance(model, Flamingo)
 
-    train_dataset = ImageNetDataset(os.path.join(imagenet_root, "train"))
-    val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
+    train_dataset = classification_dataset.train_dataset
+    val_dataset = classification_dataset.val_dataset
+    class_id_to_label = classification_dataset.class_id_to_label
 
     effective_num_shots = num_shots if num_shots > 0 else 2
     tokenizer.padding_side = "left"
 
     acc1 = 0
     acc5 = 0
-    prompt_text = "<image>A photo of a"
+    # TODO(jpgard): iterate over prompts here.
+    prompt_text = f"<image>{classification_dataset.prompts[0]}"
 
     val_iterator = more_itertools.chunked(val_dataset, batch_size)
     for batch_idx, batch in enumerate(val_iterator):
@@ -753,12 +761,12 @@ def evaluate_imagenet(
         precomputed_logits = precomputed.logits.detach()
 
         overall_probs = []
-        for imagenet_class_name in tqdm(openai_imagenet_classnames):
+        for class_name in tqdm(class_id_to_label.values()):
             past_key_values = None
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
             classname_tokens = tokenizer(
-                imagenet_class_name, add_special_tokens=False, return_tensors="pt"
+                class_name, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].cuda()
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
@@ -815,7 +823,7 @@ def evaluate_imagenet(
 
         for i in range(batch_size):
             top5 = [
-                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                class_id_to_label[pred]
                 for pred in topk(overall_probs[i], 5)
             ]
 

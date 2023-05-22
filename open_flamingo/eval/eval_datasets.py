@@ -1,5 +1,7 @@
 import json
 import os
+from dataclasses import dataclass
+from typing import Optional, Sequence, Mapping
 
 from PIL import Image
 from torch.utils.data import Dataset
@@ -10,12 +12,12 @@ from open_flamingo.eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
 
 class CaptionDataset(Dataset):
     def __init__(
-        self,
-        image_train_dir_path,
-        annotations_path,
-        is_train,
-        dataset_name,
-        image_val_dir_path=None,
+            self,
+            image_train_dir_path,
+            annotations_path,
+            is_train,
+            dataset_name,
+            image_val_dir_path=None,
     ):
         self.image_train_dir_path = image_train_dir_path
         self.image_val_dir_path = image_val_dir_path
@@ -66,11 +68,11 @@ class CaptionDataset(Dataset):
 
 class VQADataset(Dataset):
     def __init__(
-        self,
-        image_dir_path,
-        question_path,
-        annotations_path,
-        is_train,
+            self,
+            image_dir_path,
+            question_path,
+            annotations_path,
+            is_train,
     ):
         self.questions = json.load(open(question_path, "r"))["questions"]
         self.answers = json.load(open(annotations_path, "r"))["annotations"]
@@ -100,6 +102,23 @@ class VQADataset(Dataset):
             "answers": [a["answer"] for a in answers["answers"]],
             "question_id": question["question_id"],
         }
+
+
+@dataclass
+class ClassificationDataset:
+    """Class to hold a classification dataset for evals.
+
+    All Dataset objects (train_dataset, val_dataset, test_dataset)
+        should return a dictionary containing at least the
+        following keys: image, class_id, class_name. See
+        ImageNetDataset for an example.
+    """
+    train_dataset: Dataset
+    prompts: Sequence[str]
+    # mapping of integer class labels to string class names.
+    class_id_to_label: Mapping[int, str]
+    val_dataset: Optional[Dataset] = None
+    test_dataset: Optional[Dataset] = None
 
 
 class ImageNetDataset(ImageFolder):
