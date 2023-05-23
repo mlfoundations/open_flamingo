@@ -338,15 +338,6 @@ def get_random_indices(num_samples, query_set_size, full_dataset, seed):
     return random_indices
 
 
-def prepare_eval_samples_and_dataset(full_dataset, random_indices, query_set_size):
-    # get in context samples
-    in_context_samples = [full_dataset[i] for i in random_indices[:query_set_size]]
-    eval_dataset = torch.utils.data.Subset(
-        full_dataset, random_indices[query_set_size:]
-    )
-    return in_context_samples, eval_dataset
-
-
 def get_query_set(train_dataset, query_set_size, seed):
     np.random.seed(seed)
     query_set = np.random.choice(len(train_dataset), query_set_size, replace=False)
