@@ -22,6 +22,7 @@ from transformers import (
 )
 
 from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy, BackwardPrefetch
+from torch.distributed.fsdp.api import FullOptimStateDictConfig
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper,
     CheckpointWrapper,
@@ -215,6 +216,14 @@ def main():
         # see https://github.com/pytorch/pytorch/issues/98494, https://github.com/pytorch/pytorch/issues/73784
         raise ValueError("As of torch=2.0.1, FSDP has issues with original params mode / gradient acc and CPU offload.")
 
+    if args.fsdp and args.fsdp_sharding_strategy == "hybrid":
+        print(
+            "Warning: As of torch=2.0.1, the FSDP logic for optim_state_dict() is broken for hybrid sharding." \
+            + "To make this method work, we need to modify torch.distributed.fsdp._optim_utils.py" \
+            + "Copy and paste the code from the _optim_utils.py in this repo into the torch file." \
+            + "The main issue was the missing group kwarg on line 1596 in _all_gather_optim_state." \
+        )
+
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
         args.train_num_samples_mmc4 // args.batch_size_mmc4
     ), "number of samples per epoch must be equal for mmc4 and laion"
@@ -306,9 +315,18 @@ def main():
         else:
             mp_policy = None
 
+        # init process groups
+        if args.fsdp_sharding_strategy == "hybrid":
+            intra_node_group, inter_node_group = _init_intra_and_inter_node_groups(_get_default_group())
+            my_group = intra_node_group # for optimizer saving
+            process_group = (intra_node_group, inter_node_group) # for FSDP init
+        else:
+            my_group = None # for optimizer saving
+            process_group = None # for FSDP init
+        
         # init FSDP
         wrapper_kwargs = dict(
-            process_group = _init_intra_and_inter_node_groups(_get_default_group()) if args.fsdp_sharding_strategy == "hybrid" else None,
+            process_group=process_group,
             cpu_offload=CPUOffload(offload_params=args.cpu_offload),
             device_id=device_id,
             sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
@@ -485,17 +503,17 @@ def main():
         Note: the pytorch fsdp code has a bug where it doesn't handle nested FSDPs well.
         """
         if args.fsdp:
-            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            with FSDP.state_dict_type(
-                ddp_model, StateDictType.FULL_STATE_DICT, save_policy
-            ):
-                model_state = ddp_model.state_dict()
+            FSDP.set_state_dict_type(
+                ddp_model,
+                StateDictType.FULL_STATE_DICT,
+                FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
+                FullOptimStateDictConfig(rank0_only=True),
+            )
+            model_state = ddp_model.state_dict()
+            optim_state = FSDP.optim_state_dict(ddp_model, optimizer, group=my_group)
+        
         else:
             model_state = ddp_model.state_dict()
-        
-        if args.fsdp:
-            optim_state = FSDP.full_optim_state_dict(ddp_model, optimizer, rank0_only=True)
-        else:
             optim_state = optimizer.state_dict()
 
         if args.rank == 0:
