@@ -6,22 +6,26 @@ import random
 import uuid
 from collections import defaultdict
 
+from einops import repeat
 import more_itertools
 import numpy as np
 import torch
+
+
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
-from ok_vqa_utils import postprocess_ok_vqa_generation
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.src.flamingo import Flamingo
-from imagenet_utils import (
+
+from eval_datasets import VQADataset, ImageNetDataset
+from open_flamingo.eval.imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
-    find_sub_list,
 )
 from open_flamingo.eval import eval_model
+from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
+from open_flamingo.src.flamingo import Flamingo
+from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -670,93 +674,158 @@ def evaluate_imagenet(
     val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
 
     effective_num_shots = num_shots if num_shots > 0 else 2
-    tokenizer.padding_side = (
-        "left"  # For generation padding tokens should be on the left
-    )
+    tokenizer.padding_side = "left"
 
     acc1 = 0
     acc5 = 0
     prompt_text = "<image>A photo of a"
 
-    for i, batch in enumerate(val_dataset):
-        # Choose a different set of random context samples for each batch
-        # from the training set
-        context_indices = np.random.choice(
-            len(train_dataset), effective_num_shots, replace=False
-        )
+    val_iterator = more_itertools.chunked(val_dataset, batch_size)
+    for batch_idx, batch in enumerate(val_iterator):
+        batch_images = []
+        batch_text = []
 
-        in_context_samples = [train_dataset[i] for i in context_indices]
+        for idx in range(len(batch)):
+            # Choose a different set of random context samples for each sample
+            # from the training set
+            context_indices = np.random.choice(
+                len(train_dataset), effective_num_shots, replace=False
+            )
 
-        vision_x = [
-            eval_model.image_processor(data["image"]).unsqueeze(0)
-            for data in in_context_samples
-        ] + [eval_model.image_processor(batch["image"]).unsqueeze(0)]
-        vision_x = torch.cat(vision_x, dim=0)
-        vision_x = vision_x.unsqueeze(1).unsqueeze(0)
+            in_context_samples = [train_dataset[i] for i in context_indices]
+
+            vision_x = [
+                eval_model.image_processor(data["image"]).unsqueeze(0)
+                for data in in_context_samples
+            ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
+            batch_images.append(torch.cat(vision_x, dim=0))
+
+            context_class_names = [
+                in_context_samples[i]["class_name"] for i in range(effective_num_shots)
+            ]
+            context_text = "".join(
+                f"{prompt_text} {classname}<|endofchunk|>"
+                for classname in context_class_names
+            )
+            batch_text.append(context_text)
+
+        # shape [B, T_img, C, h, w]
+        vision_x = torch.stack(batch_images, dim=0)
+        # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
+        vision_x = vision_x.unsqueeze(2)
         model._encode_vision_x(vision_x.cuda())
 
-        context_class_names = [
-            in_context_samples[i]["class_name"] for i in range(effective_num_shots)
-        ]
-        context_text = "".join(
-            f"{prompt_text} {classname}<|endofchunk|>"
-            for classname in context_class_names
+        # Cache the context text: tokenize context and prompt,
+        # e.g. '<context> a picture of a '
+        ctx_and_prompt_tokenized = tokenizer(
+            [context_text + prompt_text + " " for context_text in batch_text],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048,
         )
 
-        # TODO(jpgard): cache the context text here, and compute the outputs
-        #  one token at a time by using Flamingo.forward() with
-        #  past_key_values and use_cache parameters.
+        with torch.no_grad():
+            precomputed = model(
+                vision_x=None,
+                lang_x=ctx_and_prompt_tokenized["input_ids"].cuda(),
+                attention_mask=ctx_and_prompt_tokenized["attention_mask"].cuda(),
+                clear_conditioned_layers=False,
+                use_cached_vision_x=True,
+                use_cache=True,
+            )
+
+        def _detach_pkvs(pkvs):
+            """Detach a set of past key values."""
+            return tuple([tuple([x.detach() for x in inner]) for inner in pkvs])
+
+        precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
+
+        precomputed_logits = precomputed.logits.detach()
 
         overall_probs = []
         for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            target_text = f"{prompt_text} {imagenet_class_name}"
-            prompt_tokens = (
-                tokenizer(prompt_text, add_special_tokens=False, return_tensors="np")[
-                    "input_ids"
-                ]
-                .ravel()
-                .tolist()
+            past_key_values = None
+            # Tokenize only the class name and iteratively decode the model's
+            # predictions for this class.
+            classname_tokens = tokenizer(
+                imagenet_class_name, add_special_tokens=False, return_tensors="pt"
+            )["input_ids"].cuda()
+
+            if classname_tokens.ndim == 1:  # Case: classname is only 1 token
+                classname_tokens = torch.unsqueeze(classname_tokens, 1)
+
+            classname_tokens = repeat(
+                classname_tokens, "b s -> (repeat b) s", repeat=batch_size
             )
 
-            lang_x = tokenizer([context_text + target_text], return_tensors="pt")
+            # Compute the outputs one token at a time, using cached
+            # activations.
 
-            outputs = model(
-                vision_x=None,
-                lang_x=lang_x["input_ids"].cuda(),
-                attention_mask=lang_x["attention_mask"].cuda(),
-                clear_conditioned_layers=False,
-                use_cached_vision_x=True,
-            )
-            probs = torch.softmax(outputs.logits, dim=-1).detach()
+            # Initialize the elementwise predictions with the last set of
+            # logits from precomputed; this will correspond to the predicted
+            # probability of the first position/token in the imagenet
+            # classname. We will append the logits for each token to this
+            # list (each element has shape [B, 1, vocab_size]).
+            elementwise_logits = [precomputed_logits[:, -2:-1, :]]
+
+            for token_idx in range(classname_tokens.shape[1]):
+                _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
+                with torch.no_grad():
+                    outputs = model(
+                        vision_x=None,
+                        lang_x=_lang_x,
+                        clear_conditioned_layers=False,
+                        use_cached_vision_x=True,
+                        past_key_values=(
+                            past_key_values if token_idx > 0 else precomputed_pkvs
+                        ),
+                        use_cache=True,
+                    )
+                past_key_values = _detach_pkvs(outputs.past_key_values)
+                elementwise_logits.append(outputs.logits.detach())
+
+            # logits/probs has shape [B, classname_tokens + 1, vocab_size]
+            logits = torch.concat(elementwise_logits, 1)
+            probs = torch.softmax(logits, dim=-1).detach()
+
             # collect the probability of the generated token -- probability
-            # at index 0 corresponds to the token at index 1
-            probs = probs[:, :-1, :]
-            input_ids = lang_x["input_ids"][:, 1:].cuda()
-            gen_probs = torch.gather(probs, 2, input_ids[:, :, None]).squeeze(-1)
+            # at index 0 corresponds to the token at index 1.
+            probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
 
-            probs = []
-            for input_sentence, input_probs in zip(input_ids, gen_probs):
-                idxes = find_sub_list(
-                    prompt_tokens, input_sentence.detach().cpu().numpy().tolist()
-                )
-                input_probs = input_probs[idxes[-1] + 1 :]
-                probs.append(torch.prod(input_probs).item())
-            overall_probs.append(probs)
+            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1)
 
-        top5 = [
-            IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-            for pred in np.argsort(np.array(overall_probs)[:, 0])[::-1][:5]
-        ]
-        if batch["class_name"] == top5[0]:
-            acc1 += 1
-        if batch["class_name"] in top5:
-            acc5 += 1
+            class_prob = torch.prod(gen_probs, 1).detach().cpu().numpy()
+            overall_probs.append(class_prob)
+
+        overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
+
+        def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
+            """Return the indices of the top k elements in probs_ary."""
+            return np.argsort(probs_ary)[::-1][:k]
+
+        for i in range(batch_size):
+            top5 = [
+                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                for pred in topk(overall_probs[i], 5)
+            ]
+
+            y_i = batch[i]["class_name"]
+            acc5 += int(y_i in set(top5))
+            acc1 += int(y_i == top5[0])
+
+            print(
+                f"DEBUG: batch {idx} elem {i} of {batch_size}:"
+                f"label {y_i} // top5 {top5}"
+            )
+
+        examples_seen = (batch_idx + 1) * batch_size
         print(
             "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                i, num_samples, acc1 / (i + 1), acc5 / (i + 1)
+                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
             )
         )
-        if i >= num_samples - 1:
+        if batch_idx * batch_size >= num_samples - 1:
             break
 
     return float(acc1) / num_samples
