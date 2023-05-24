@@ -212,7 +212,7 @@ def main():
     args, leftovers = parser.parse_known_args()
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
     eval_model = module.EvalModel(leftovers)
-    
+
     if args.model != "open_flamingo" and args.shots != [0]:
         raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
 
@@ -353,10 +353,12 @@ def prepare_eval_samples(test_dataset, num_samples, seed):
 def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
     return [random.sample(query_set, num_samples) for _ in range(batch_size)]
 
+
 def compute_effective_num_shots(num_shots, model_type):
     if model_type == "open_flamingo":
         return num_shots if num_shots > 0 else 2
     return num_shots
+
 
 def evaluate_captioning(
     args: argparse.Namespace,
@@ -454,7 +456,7 @@ def evaluate_captioning(
                 context_text = context_text.replace("<image>", "")
 
             batch_text.append(context_text + eval_model.caption_prompt())
-        
+
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
             batch_text=batch_text,
@@ -466,7 +468,7 @@ def evaluate_captioning(
         new_predictions = [
             postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
-        
+
         for i, sample in enumerate(batch):
             predictions[sample["image_id"]] = {
                 "caption": new_predictions[i],
