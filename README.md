@@ -38,11 +38,7 @@ conda env create -f environment.yml
 # Usage
 We provide an initial [OpenFlamingo 9B model](https://huggingface.co/openflamingo/OpenFlamingo-9B) using a CLIP ViT-Large vision encoder and a LLaMA-7B language model. In general, we support any [CLIP vision encoder](https://huggingface.co/models?search=clip). For the language model, we support [LLaMA](https://huggingface.co/models?search=llama), [OPT](https://huggingface.co/models?search=opt), [GPT-Neo](https://huggingface.co/models?search=gpt-neo), [GPT-J](https://huggingface.co/models?search=gptj), and [Pythia](https://huggingface.co/models?search=pythia) models.
 
-#### NOTE: To use LLaMA models, you will need to install the latest version of transformers via
-```
-pip install git+https://github.com/huggingface/transformers
-```
-Use this [script](https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/convert_llama_weights_to_hf.py) for converting LLaMA weights to HuggingFace format.
+NOTE: To use LLaMA models, you will need to use this [script](https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/convert_llama_weights_to_hf.py) for converting LLaMA weights to HuggingFace format.
 
 ## Initializing an OpenFlamingo model
 ``` python
@@ -163,21 +159,17 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
 --lr_scheduler constant \
 --warmup_steps 5000 \
 --use_media_placement_augmentation \
---mmc4_textsim_threshold 30
+--mmc4_textsim_threshold 0.32
 ```
 
 ## Dataset
 We expect all our training datasets to be [WebDataset](https://github.com/webdataset/webdataset) shards.
-We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and [Multimodal C4](https://github.com/allenai/mmc4) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and Multimodal C4 comes packaged in the WebDataset format.
+We train our models on the [LAION 2B](https://huggingface.co/datasets/laion/laion2B-en) and [Multimodal C4](https://github.com/allenai/mmc4) datasets. By default the LAION 2B dataset is in WebDataset format if it is downloaded using the [img2dataset tool](https://github.com/rom1504/img2dataset) and Multimodal C4 can be converted to the WebDataset format using this [script](https://github.com/mlfoundations/open_flamingo/blob/main/open_flamingo/train/convert_mmc4_to_wds.py).
 
 
 # Evaluation
 We currently support running evaluations on [COCO](https://cocodataset.org/#home), [VQAv2](https://visualqa.org/index.html), [OKVQA](https://okvqa.allenai.org), [Flickr30k](https://www.kaggle.com/datasets/hsankesara/flickr-image-dataset), and [ImageNet](https://image-net.org/index.php). Note that currently these evaluations are ran in validation mode (as specified in the Flamingo paper). We will be adding support for running evaluations in test mode in the future.
 
-Before evaluating the model, you will need to install the coco evaluation package by running the following command:
-```
-pip install pycocoevalcap
-```
 
 To run evaluations on OKVQA you will need to run the following command:
 ```

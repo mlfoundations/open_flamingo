@@ -25,6 +25,7 @@ from webdataset.tariterators import (
     url_opener,
     valid_sample,
 )
+import base64
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
@@ -262,9 +263,10 @@ class ResampledShards2(IterableDataset):
 def preprocess_image(sample, image_processor):
     image = [image_processor(s).unsqueeze(0) for s in sample]
     image = torch.cat(image, dim=0)
-    # apply random horizontal flip and color jitter
+    # apply random horizontal flip
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
-    image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
+    # NOTE: potentially move jitter into the image_preprocessor before normalization
+    # image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
     return image
 
 
@@ -284,42 +286,35 @@ def preprocess_text(sample, tokenizer):
 
 
 MIN_KB = 10
-MAX_NUM_IMAGES = 5
 
 
 def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
     info = json.loads(sample[0])
-    tar_file_obj = io.BytesIO(sample[1])
-    image_tar = tarfile.open(fileobj=tar_file_obj)
     sentences = info["text_list"]
 
-    images, image_idxs = [], []
-    for image_path, sim in zip(info["image_info"], info["similarity_matrix"]):
-        # pick one image per sentence
-        if info["image_info"][image_path]["matched_text_index"] in image_idxs:
-            continue
-        rawbytes = image_tar.extractfile(
-            os.path.join(image_tar.getnames()[0], image_path)
-        ).read()
+    images, sentence_ixs = [], []
+    for sample_image in info["image_info"]:
+        image_base64 = sample_image["image_base64"]
+        rawbytes = base64.b64decode(image_base64)
 
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
-        if sim[info["image_info"][image_path]["matched_text_index"]] < sim_threshold:
+        if sample_image["matched_sim"] < sim_threshold:
             continue
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
         images.append(image)
-        image_idxs.append(info["image_info"][image_path]["matched_text_index"])
+        sentence_ixs.append(sample_image["matched_text_index"])
 
     if len(images) == 0:
         raise ValueError("No images in sample")
 
-    # filter out images that are exact duplicates
+    # images -> tensors
     images_tensors = preprocess_image(images, clip_processor)
     keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
     images_tensors = images_tensors[keep_ixs]
-    image_idxs = [image_idxs[ix] for ix in keep_ixs]
+    sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
 
     # pad to 5 images
     if len(images_tensors) < MAX_NUM_IMAGES:
@@ -330,7 +325,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold):
 
     # add in <image> and <eoc> tokens
     # eoc after sentence = "sentence loss"
-    for ix in image_idxs:
+    for ix in sentence_ixs:
         sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
 
     text = " ".join(sentences)
@@ -427,7 +422,7 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
     pipeline.extend(
         [
-            wds.to_tuple("json", "tar", handler=log_and_continue),
+            wds.to_tuple("json", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size_mmc4, partial=False),
         ]

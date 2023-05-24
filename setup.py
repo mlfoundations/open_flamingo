@@ -19,7 +19,7 @@ if __name__ == "__main__":
     REQUIREMENTS = [
         "einops",
         "einops-exts",
-        "transformers",
+        "transformers>=4.28.1",
         "torch",
         "torchvision",
         "pillow",
@@ -39,7 +39,7 @@ if __name__ == "__main__":
         name="open_flamingo",
         packages=find_packages(),
         include_package_data=True,
-        version="0.0.2",
+        version="0.0.3",
         license="MIT",
         description="An open-source framework for training large multimodal models",
         long_description=long_description,

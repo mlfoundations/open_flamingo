@@ -4,11 +4,11 @@ eval "$(conda shell.bash hook)"
 conda activate openflamingo
 which python
 
-LM_PATH="<path to llama model>"
-LM_TOKENIZER_PATH="<path to llama model>"
+LM_PATH="luodian/llama-7b-hf"
+LM_TOKENIZER_PATH="luodian/llama-7b-hf"
 VISION_ENCODER_NAME="ViT-L-14"
 VISION_ENCODER_PRETRAINED="openai"
-CKPT_PATH="checkpoint.pt"
+CKPT_PATH="openflamingo/OpenFlamingo-9B/checkpoint.pt"
 DEVICE="0"
 
 COCO_IMG_PATH="<path to coco>/train2017/"
@@ -38,7 +38,8 @@ python open_flamingo/eval/evaluate.py \
     --eval_vqav2 \
     --num_samples 5000 \
     --shots 8 \
-    --num_trials 1
+    --num_trials 1 \
+    --batch_size 1
 
 
 echo "evaluation complete! results written to ${RESULTS_FILE}"

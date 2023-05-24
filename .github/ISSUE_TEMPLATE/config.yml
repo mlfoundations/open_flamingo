@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: About the OpenFlamingo Project
+    url: https://laion.ai/blog/open-flamingo/
+    about: General information about OpenFlamingo, privacy policy, and FAQ
+  - name: Blank issue
+    url: https://github.com/scikit-learn/scikit-learn/issues/new
+    about: Please note that bug reports and feature requests should be used in most cases instead

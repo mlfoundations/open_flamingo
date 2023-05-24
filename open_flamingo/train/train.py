@@ -145,7 +145,7 @@ def main():
     )
     parser.add_argument(
         "--mmc4_textsim_threshold",
-        default=30,
+        default=0.32,
         type=float,
         help="threshold for filtering images in mmc4 based on image-text similarity",
     )
