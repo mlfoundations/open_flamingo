@@ -407,6 +407,8 @@ class VQAEval:
             resAns = resAns.replace("\n", " ")
             resAns = resAns.replace("\t", " ")
             resAns = resAns.strip()
+            resAns = self.processPunctuation(resAns)
+            resAns = self.processDigitArticle(resAns)
             gtAcc = []
             gtAnswers = [ans["answer"] for ans in gts[quesId]["answers"]]
 
@@ -414,8 +416,6 @@ class VQAEval:
                 for ansDic in gts[quesId]["answers"]:
                     ansDic["answer"] = self.processPunctuation(ansDic["answer"])
                     ansDic["answer"] = self.processDigitArticle(ansDic["answer"])
-                resAns = self.processPunctuation(resAns)
-                resAns = self.processDigitArticle(resAns)
 
             for gtAnsDatum in gts[quesId]["answers"]:
                 otherGTAns = [
@@ -575,4 +575,6 @@ def compute_vqa_accuracy(result_json_path, question_json_path, annotation_json_p
 
 
 def postprocess_vqa_generation(predictions):
-    return re.split("Question|Answer|Short", predictions, 1)[0]
+    answer = re.split("Question|Answer|Short", predictions, 1)[0]
+    answer = re.split(", ", answer, 1)[0]
+    return answer
