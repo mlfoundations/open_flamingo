@@ -410,12 +410,10 @@ class VQAEval:
             resAns = self.processPunctuation(resAns)
             resAns = self.processDigitArticle(resAns)
             gtAcc = []
-            gtAnswers = [ans["answer"] for ans in gts[quesId]["answers"]]
 
-            if len(set(gtAnswers)) > 1:
-                for ansDic in gts[quesId]["answers"]:
-                    ansDic["answer"] = self.processPunctuation(ansDic["answer"])
-                    ansDic["answer"] = self.processDigitArticle(ansDic["answer"])
+            for ansDic in gts[quesId]["answers"]:
+                ansDic["answer"] = self.processPunctuation(ansDic["answer"])
+                ansDic["answer"] = self.processDigitArticle(ansDic["answer"])
 
             for gtAnsDatum in gts[quesId]["answers"]:
                 otherGTAns = [
