@@ -22,7 +22,9 @@ from open_flamingo.eval.imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
 )
-from open_flamingo.eval import eval_model
+
+from eval_model import BaseEvalModel
+
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from open_flamingo.src.flamingo import Flamingo
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
@@ -214,7 +216,14 @@ parser.add_argument(
 def main():
     args, leftovers = parser.parse_known_args()
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
-    eval_model = module.EvalModel(leftovers)
+
+    model_args = {
+        leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
+    }
+    eval_model = module.EvalModel(model_args)
+
+    if args.model != "open_flamingo" and args.shots != [0]:
+        raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
 
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
@@ -354,9 +363,15 @@ def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
     return [random.sample(query_set, num_samples) for _ in range(batch_size)]
 
 
+def compute_effective_num_shots(num_shots, model_type):
+    if model_type == "open_flamingo":
+        return num_shots if num_shots > 0 else 2
+    return num_shots
+
+
 def evaluate_captioning(
     args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
+    eval_model: BaseEvalModel,
     seed: int = 42,
     max_generation_length: int = 20,
     num_beams: int = 3,
@@ -368,7 +383,7 @@ def evaluate_captioning(
 
     Args:
         args (argparse.Namespace): arguments
-        eval_model (eval_model.BaseEvalModel): model to evaluate
+        eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): seed for random number generator. Defaults to 42.
         max_generation_length (int, optional): maximum length of the generated caption. Defaults to 20.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
@@ -409,7 +424,7 @@ def evaluate_captioning(
         dataset_name=dataset_name,
     )
 
-    effective_num_shots = num_shots if num_shots > 0 else 2
+    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
     test_dataset = prepare_eval_samples(
         test_dataset,
@@ -440,7 +455,7 @@ def evaluate_captioning(
 
             context_text = "".join(
                 [
-                    eval_model.caption_prompt(caption=x["caption"].strip())
+                    eval_model.get_caption_prompt(caption=x["caption"].strip())
                     for x in batch_demo_samples[i]
                 ]
             )
@@ -449,7 +464,7 @@ def evaluate_captioning(
             if num_shots == 0:
                 context_text = context_text.replace("<image>", "")
 
-            batch_text.append(context_text + eval_model.caption_prompt())
+            batch_text.append(context_text + eval_model.get_caption_prompt())
 
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
@@ -497,7 +512,7 @@ def evaluate_captioning(
 
 def evaluate_vqa(
     args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
+    eval_model: BaseEvalModel,
     seed: int = 42,
     max_generation_length: int = 5,
     num_beams: int = 3,
@@ -510,7 +525,7 @@ def evaluate_vqa(
 
     Args:
         args (argparse.Namespace): arguments
-        eval_model (eval_model.BaseEvalModel): model to evaluate
+        eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): random seed. Defaults to 42.
         max_generation_length (int, optional): max generation length. Defaults to 5.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
@@ -552,7 +567,7 @@ def evaluate_vqa(
         is_train=False,
     )
 
-    effective_num_shots = num_shots if num_shots > 0 else 2
+    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
     test_dataset = prepare_eval_samples(
         test_dataset,
@@ -582,7 +597,7 @@ def evaluate_vqa(
 
             context_text = "".join(
                 [
-                    eval_model.vqa_prompt(
+                    eval_model.get_vqa_prompt(
                         question=x["question"], answer=x["answers"][0]
                     )
                     for x in batch_demo_samples[i]
@@ -594,7 +609,7 @@ def evaluate_vqa(
                 context_text = context_text.replace("<image>", "")
 
             batch_text.append(
-                context_text + eval_model.vqa_prompt(question=batch[i]["question"])
+                context_text + eval_model.get_vqa_prompt(question=batch[i]["question"])
             )
 
         outputs = eval_model.get_outputs(
@@ -652,7 +667,7 @@ def evaluate_imagenet(
     Evaluate a model on ImageNet dataset.
 
     Args:
-        eval_model (eval_model.BaseEvalModel): model to evaluate
+        eval_model (BaseEvalModel): model to evaluate
         batch_size (int): batch size
         imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
@@ -673,8 +688,10 @@ def evaluate_imagenet(
     train_dataset = ImageNetDataset(os.path.join(imagenet_root, "train"))
     val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
 
-    effective_num_shots = num_shots if num_shots > 0 else 2
-    tokenizer.padding_side = "left"
+    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
+    tokenizer.padding_side = (
+        "left"  # For generation padding tokens should be on the left
+    )
 
     acc1 = 0
     acc5 = 0
