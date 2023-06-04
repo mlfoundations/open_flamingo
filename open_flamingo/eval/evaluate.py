@@ -571,7 +571,7 @@ def evaluate_captioning(
 
             context_text = "".join(
                 [
-                    eval_model.caption_prompt(caption=x["caption"].strip())
+                    eval_model.get_caption_prompt(caption=x["caption"].strip())
                     for x in batch_demo_samples[i]
                 ]
             )
@@ -580,7 +580,7 @@ def evaluate_captioning(
             if num_shots == 0:
                 context_text = context_text.replace("<image>", "")
 
-            batch_text.append(context_text + eval_model.caption_prompt())
+            batch_text.append(context_text + eval_model.get_caption_prompt())
 
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
@@ -729,7 +729,7 @@ def evaluate_vqa(
 
             context_text = "".join(
                 [
-                    eval_model.vqa_prompt(
+                    eval_model.get_vqa_prompt(
                         question=x["question"], answer=x["answers"][0]
                     )
                     for x in batch_demo_samples[i]
@@ -741,7 +741,7 @@ def evaluate_vqa(
                 context_text = context_text.replace("<image>", "")
 
             batch_text.append(
-                context_text + eval_model.vqa_prompt(question=batch[i]["question"])
+                context_text + eval_model.get_vqa_prompt(question=batch[i]["question"])
             )
 
         outputs = eval_model.get_outputs(
