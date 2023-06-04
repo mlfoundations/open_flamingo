@@ -1,4 +1,3 @@
-import argparse
 from typing import List
 
 from PIL import Image
@@ -14,25 +13,26 @@ class EvalModel(BaseEvalModel):
     Attributes:
       model (nn.Module): Underlying Torch model.
       tokenizer (transformers.PreTrainedTokenizer): Tokenizer for model.
-      device: Index of GPU to use, or the string "CPU"
+      device: Index of GPU to use, or the string "cpu"
     """
 
-    def __init__(self, args: List[str]):
-        parser = argparse.ArgumentParser()
-        parser.add_argument(
-            "--lm_path", type=str, default="Salesforce/blip2-flan-t5-xl"
-        )
-        parser.add_argument(
-            "--processor_path", type=str, default="Salesforce/blip2-flan-t5-xl"
-        )
-        parser.add_argument("--device", type=int, default=0)
-        args = parser.parse_args(args)
+    def __init__(self, model_args):
+        assert (
+            "processor_path" in model_args
+            and "lm_path" in model_args
+            and "device" in model_args
+        ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
 
-        # load model
-        self.device = args.device if args.device >= 0 else "cpu"
-        self.processor = Blip2Processor.from_pretrained(args.processor_path)
-        self.model = Blip2ForConditionalGeneration.from_pretrained(args.lm_path)
+        model_args["device"] = int(model_args["device"])
+
+        self.device = model_args["device"] if model_args["device"] >= 0 else "cpu"
+        self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
+        self.model = Blip2ForConditionalGeneration.from_pretrained(
+            model_args["lm_path"]
+        )
         self.model.to(self.device)
+        self.model.eval()
+        self.processor.tokenizer.padding_side = "left"
 
     def _prepare_images(self, batch: List[List[torch.Tensor]]) -> torch.Tensor:
         """Preprocess images and stack them.
@@ -76,9 +76,6 @@ class EvalModel(BaseEvalModel):
         num_beams: int,
         length_penalty: float,
     ) -> List[str]:
-        self.model.eval()
-
-        self.processor.tokenizer.padding_side = "left"
         encodings = self.processor.tokenizer(
             batch_text,
             padding="longest",
@@ -101,13 +98,13 @@ class EvalModel(BaseEvalModel):
 
         return self.processor.tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
-    def vqa_prompt(self, question, answer=None) -> str:
+    def get_vqa_prompt(self, question, answer=None) -> str:
         return (
             f"Question:{question} Short answer:{answer if answer is not None else ''}"
         )
 
-    def caption_prompt(self, caption=None) -> str:
+    def get_caption_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
 
-    def classification_prompt(self, class_str=None) -> str:
+    def get_classification_prompt(self, class_str=None) -> str:
         raise NotImplementedError
