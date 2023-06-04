@@ -1,5 +1,5 @@
 # classnames via https://github.com/mlfoundations/wise-ft/blob/master/src/datasets/imagenet_classnames.py#L1
-openai_imagenet_classnames = [
+IMAGENET_CLASSNAMES = [
     "tench",
     "goldfish",
     "great white shark",
@@ -1001,7 +1001,12 @@ openai_imagenet_classnames = [
     "corn cob",
     "toilet paper",
 ]
-# Maps numeric class ids to labels
 IMAGENET_1K_CLASS_ID_TO_LABEL = dict(
-    zip(range(len(openai_imagenet_classnames)), openai_imagenet_classnames)
+    zip(range(len(IMAGENET_CLASSNAMES)), IMAGENET_CLASSNAMES)
 )
+
+HM_CLASSNAMES = [
+    "yes",
+    "no",
+]
+HM_CLASS_ID_TO_LABEL = dict(zip(range(len(HM_CLASSNAMES)), HM_CLASSNAMES))

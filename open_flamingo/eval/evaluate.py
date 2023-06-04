@@ -10,17 +10,24 @@ from einops import repeat
 import more_itertools
 import numpy as np
 import torch
-
+from sklearn.metrics import roc_auc_score
 
 from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
+from eval_datasets import (
+    CaptionDataset,
+    VQADataset,
+    ImageNetDataset,
+    HatefulMemesDataset,
+)
 from tqdm import tqdm
 
 
 from eval_datasets import VQADataset, ImageNetDataset
 from open_flamingo.eval.imagenet_utils import (
-    openai_imagenet_classnames,
+    IMAGENET_CLASSNAMES,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
+    HM_CLASSNAMES,
+    HM_CLASS_ID_TO_LABEL,
 )
 
 from eval_model import BaseEvalModel
@@ -94,12 +101,17 @@ parser.add_argument(
     default=False,
     help="Whether to evaluate on ImageNet.",
 )
-
 parser.add_argument(
     "--eval_flickr30",
     action="store_true",
     default=False,
     help="Whether to evaluate on Flickr30.",
+)
+parser.add_argument(
+    "--eval_hateful_memes",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on Hateful Memes.",
 )
 
 # Dataset arguments
@@ -287,6 +299,24 @@ parser.add_argument(
 ## Imagenet dataset
 parser.add_argument("--imagenet_root", type=str, default="/tmp")
 
+## Hateful Memes dataset
+parser.add_argument(
+    "--hateful_memes_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--hateful_memes_train_annotations_json_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--hateful_memes_test_annotations_json_path",
+    type=str,
+    default=None,
+)
+
+
 parser.add_argument(
     "--model",
     type=str,
@@ -431,13 +461,12 @@ def main():
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                imagenet_score = evaluate_imagenet(
+                imagenet_score = evaluate_classification(
+                    args,
                     eval_model=eval_model,
-                    batch_size=args.batch_size,
-                    num_samples=args.num_samples,
                     num_shots=shot,
                     seed=seed,
-                    imagenet_root=args.imagenet_root,
+                    dataset_name="imagenet",
                 )
                 print(
                     f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
@@ -445,6 +474,28 @@ def main():
                 scores.append(imagenet_score)
             print(f"Shots {shot} Mean ImageNet score: {np.mean(scores)}")
             results["imagenet"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+
+    if args.eval_hateful_memes:
+        print("Evaluating on Hateful Memes...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                hateful_memes_score = evaluate_classification(
+                    args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    dataset_name="hateful_memes",
+                )
+                print(
+                    f"Shots {shot} Trial {trial} "
+                    f"Hateful Memes score: {hateful_memes_score}"
+                )
+                scores.append(hateful_memes_score)
+            print(f"Shots {shot} Mean Hateful Memes score: {np.mean(scores)}")
+            results["hateful_memes"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
 
@@ -787,38 +838,55 @@ def evaluate_vqa(
     return acc
 
 
-def evaluate_imagenet(
+def evaluate_classification(
+    args: argparse.Namespace,
     eval_model,
-    batch_size: int,
-    imagenet_root: str,
     seed: int = 42,
-    num_samples: int = 5000,
     num_shots: int = 8,
+    dataset_name: str = "imagenet",
 ):
     """
-    Evaluate a model on ImageNet dataset.
+    Evaluate a model on classification dataset.
 
     Args:
         eval_model (BaseEvalModel): model to evaluate
-        batch_size (int): batch size
         imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
-        num_samples (int, optional): number of samples to evaluate on. Defaults to 5000 samples.
         num_shots (int, optional): number of shots to use. Defaults to 8.
+        dataset_name (str, optional): dataset name. Defaults to "imagenet".
 
     Returns:
         float: accuracy score
     """
     if not hasattr(eval_model, "model") or not hasattr(eval_model, "tokenizer"):
         raise NotImplementedError(
-            "evaluate_imagenet is currently only supported for OpenFlamingo " "models"
+            "evaluate_classification is currently only supported for OpenFlamingo "
+            "models"
         )
+    batch_size = args.batch_size
+    num_samples = args.num_samples
     np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
     assert isinstance(model, Flamingo)
 
-    train_dataset = ImageNetDataset(os.path.join(imagenet_root, "train"))
-    val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
+    if dataset_name == "imagenet":
+        train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
+        val_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
+    elif dataset_name == "hateful_memes":
+        train_dataset = HatefulMemesDataset(
+            args.hateful_memes_image_dir_path,
+            args.hateful_memes_train_annotations_json_path,
+        )
+        val_dataset = HatefulMemesDataset(
+            args.hateful_memes_image_dir_path,
+            args.hateful_memes_test_annotations_json_path,
+        )
+
+    if num_samples > len(val_dataset):
+        raise ValueError(
+            f"num_samples ({num_samples}) cannot be larger than the number of samples "
+            f"in the dataset ({len(val_dataset)})"
+        )
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
     tokenizer.padding_side = (
@@ -827,7 +895,17 @@ def evaluate_imagenet(
 
     acc1 = 0
     acc5 = 0
-    prompt_text = "<image>A photo of a"
+
+    if dataset_name == "imagenet":
+        prompt_text = "<image>A photo of a"
+    elif dataset_name == "hateful_memes":
+        prompt_text = "<image>is an image with written: '{meme_text}' on it. Is it hateful? Answer:"
+    else:
+        raise NotImplementedError(f"Dataset {dataset_name} not supported")
+
+    # used to calculate the ROC-AUC score
+    gts = []
+    pred_scores = []
 
     val_iterator = more_itertools.chunked(val_dataset, batch_size)
     for batch_idx, batch in enumerate(val_iterator):
@@ -849,12 +927,9 @@ def evaluate_imagenet(
             ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
 
-            context_class_names = [
-                in_context_samples[i]["class_name"] for i in range(effective_num_shots)
-            ]
             context_text = "".join(
-                f"{prompt_text} {classname}<|endofchunk|>"
-                for classname in context_class_names
+                f"{prompt_text.replace('{meme_text}', in_context_samples[i]['ocr']) if dataset_name == 'hateful_memes' else prompt_text} {in_context_samples[i]['class_name']}<|endofchunk|>"
+                for i in range(effective_num_shots)
             )
             batch_text.append(context_text)
 
@@ -892,13 +967,23 @@ def evaluate_imagenet(
 
         precomputed_logits = precomputed.logits.detach()
 
+        all_class_names = (
+            IMAGENET_CLASSNAMES if dataset_name == "imagenet" else HM_CLASSNAMES
+        )
+
+        class_id_to_name = (
+            IMAGENET_1K_CLASS_ID_TO_LABEL
+            if dataset_name == "imagenet"
+            else HM_CLASS_ID_TO_LABEL
+        )
+
         overall_probs = []
-        for imagenet_class_name in tqdm(openai_imagenet_classnames):
+        for class_name in tqdm(all_class_names):
             past_key_values = None
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
             classname_tokens = tokenizer(
-                imagenet_class_name, add_special_tokens=False, return_tensors="pt"
+                class_name, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].cuda()
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
@@ -944,7 +1029,10 @@ def evaluate_imagenet(
 
             gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1)
 
-            class_prob = torch.prod(gen_probs, 1).detach().cpu().numpy()
+            print(f"DEBUG: gen_probs.shape = {gen_probs.shape}")
+            print(f"DEBUG: gen_probs = {gen_probs}")
+
+            class_prob = gen_probs.detach().cpu().numpy()
             overall_probs.append(class_prob)
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
@@ -954,10 +1042,9 @@ def evaluate_imagenet(
             return np.argsort(probs_ary)[::-1][:k]
 
         for i in range(batch_size):
-            top5 = [
-                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
-                for pred in topk(overall_probs[i], 5)
-            ]
+            highest_prob_idxs = topk(overall_probs[i], 5)
+
+            top5 = [class_id_to_name[pred] for pred in highest_prob_idxs]
 
             y_i = batch[i]["class_name"]
             acc5 += int(y_i in set(top5))
@@ -968,6 +1055,10 @@ def evaluate_imagenet(
                 f"label {y_i} // top5 {top5}"
             )
 
+            if dataset_name == "hateful_memes":
+                gts.append(highest_prob_idxs[0])
+                pred_scores.append(overall_probs[i][highest_prob_idxs[0]])
+
         examples_seen = (batch_idx + 1) * batch_size
         print(
             "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
@@ -977,7 +1068,14 @@ def evaluate_imagenet(
         if batch_idx * batch_size >= num_samples - 1:
             break
 
-    return float(acc1) / num_samples
+    if dataset_name == "imagenet":
+        # return top-1 accuracy
+        return float(acc1) / num_samples
+    elif dataset_name == "hateful_memes":
+        # return ROC-AUC score
+        return roc_auc_score(gts, pred_scores)
+    else:
+        raise ValueError(f"Unknown dataset {dataset_name}")
 
 
 if __name__ == "__main__":
