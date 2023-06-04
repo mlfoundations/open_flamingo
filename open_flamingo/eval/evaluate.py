@@ -77,6 +77,18 @@ parser.add_argument(
     help="Whether to evaluate on OK-VQA.",
 )
 parser.add_argument(
+    "--eval_vizwiz",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on VizWiz.",
+)
+parser.add_argument(
+    "--eval_textvqa",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on TextVQA.",
+)
+parser.add_argument(
     "--eval_imagenet",
     action="store_true",
     default=False,
@@ -202,6 +214,76 @@ parser.add_argument(
     default=None,
 )
 
+## VizWiz Dataset
+parser.add_argument(
+    "--vizwiz_train_image_dir_path",
+    type=str,
+    help="Path to the vizwiz train images directory.",
+    default=None,
+)
+parser.add_argument(
+    "--vizwiz_test_image_dir_path",
+    type=str,
+    help="Path to the vizwiz test images directory.",
+    default=None,
+)
+parser.add_argument(
+    "--vizwiz_train_questions_json_path",
+    type=str,
+    help="Path to the vizwiz questions json file.",
+    default=None,
+)
+parser.add_argument(
+    "--vizwiz_train_annotations_json_path",
+    type=str,
+    help="Path to the vizwiz annotations json file.",
+    default=None,
+)
+parser.add_argument(
+    "--vizwiz_test_questions_json_path",
+    type=str,
+    help="Path to the vizwiz questions json file.",
+    default=None,
+)
+parser.add_argument(
+    "--vizwiz_test_annotations_json_path",
+    type=str,
+    help="Path to the vizwiz annotations json file.",
+    default=None,
+)
+
+# TextVQA Dataset
+parser.add_argument(
+    "--textvqa_image_dir_path",
+    type=str,
+    help="Path to the textvqa images directory.",
+    default=None,
+)
+parser.add_argument(
+    "--textvqa_train_questions_json_path",
+    type=str,
+    help="Path to the textvqa questions json file.",
+    default=None,
+)
+parser.add_argument(
+    "--textvqa_train_annotations_json_path",
+    type=str,
+    help="Path to the textvqa annotations json file.",
+    default=None,
+)
+parser.add_argument(
+    "--textvqa_test_questions_json_path",
+    type=str,
+    help="Path to the textvqa questions json file.",
+    default=None,
+)
+parser.add_argument(
+    "--textvqa_test_annotations_json_path",
+    type=str,
+    help="Path to the textvqa annotations json file.",
+    default=None,
+)
+
 ## Imagenet dataset
 parser.add_argument("--imagenet_root", type=str, default="/tmp")
 
@@ -306,6 +388,44 @@ def main():
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
 
+    if args.eval_vizwiz:
+        print("Evaluating on VizWiz...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                vizwiz_score = evaluate_vqa(
+                    args=args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    dataset_name="vizwiz",
+                )
+                print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
+                scores.append(vizwiz_score)
+            print(f"Shots {shot} Mean VizWiz score: {np.mean(scores)}")
+            results["vizwiz"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+
+    if args.eval_textvqa:
+        print("Evaluating on TextVQA...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                textvqa_score = evaluate_vqa(
+                    args=args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    dataset_name="textvqa",
+                )
+                print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
+                scores.append(textvqa_score)
+            print(f"Shots {shot} Mean TextVQA score: {np.mean(scores)}")
+            results["textvqa"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+
     if args.eval_imagenet:
         print("Evaluating on ImageNet...")
         for shot in args.shots:
@@ -336,7 +456,7 @@ def main():
 def get_random_indices(num_samples, query_set_size, full_dataset, seed):
     if num_samples + query_set_size > len(full_dataset):
         raise ValueError(
-            f"num_samples + num_shots must be less than {len(full_dataset)}"
+            f"num_samples + query_set_size must be less than {len(full_dataset)}"
         )
 
     # get a random subset of the dataset
@@ -521,7 +641,7 @@ def evaluate_vqa(
     dataset_name: str = "vqav2",
 ):
     """
-    Evaluate a model on VQA datasets. Currently supports VQA v2.0.
+    Evaluate a model on VQA datasets. Currently supports VQA v2.0, OK-VQA, VizWiz and TextVQA.
 
     Args:
         args (argparse.Namespace): arguments
@@ -550,6 +670,20 @@ def evaluate_vqa(
         test_image_dir_path = args.vqav2_test_image_dir_path
         test_questions_json_path = args.vqav2_test_questions_json_path
         test_annotations_json_path = args.vqav2_test_annotations_json_path
+    elif dataset_name == "vizwiz":
+        train_image_dir_path = args.vizwiz_train_image_dir_path
+        train_questions_json_path = args.vizwiz_train_questions_json_path
+        train_annotations_json_path = args.vizwiz_train_annotations_json_path
+        test_image_dir_path = args.vizwiz_test_image_dir_path
+        test_questions_json_path = args.vizwiz_test_questions_json_path
+        test_annotations_json_path = args.vizwiz_test_annotations_json_path
+    elif dataset_name == "textvqa":
+        train_image_dir_path = args.textvqa_image_dir_path
+        train_questions_json_path = args.textvqa_train_questions_json_path
+        train_annotations_json_path = args.textvqa_train_annotations_json_path
+        test_image_dir_path = args.textvqa_image_dir_path
+        test_questions_json_path = args.textvqa_test_questions_json_path
+        test_annotations_json_path = args.textvqa_test_annotations_json_path
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
@@ -558,6 +692,7 @@ def evaluate_vqa(
         question_path=train_questions_json_path,
         annotations_path=train_annotations_json_path,
         is_train=True,
+        dataset_name=dataset_name,
     )
 
     test_dataset = VQADataset(
@@ -565,6 +700,7 @@ def evaluate_vqa(
         question_path=test_questions_json_path,
         annotations_path=test_annotations_json_path,
         is_train=False,
+        dataset_name=dataset_name,
     )
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
@@ -621,9 +757,9 @@ def evaluate_vqa(
         )
 
         process_function = (
-            postprocess_vqa_generation
-            if dataset_name == "vqav2"
-            else postprocess_ok_vqa_generation
+            postprocess_ok_vqa_generation
+            if dataset_name == "ok_vqa"
+            else postprocess_vqa_generation
         )
 
         new_predictions = map(process_function, outputs)
@@ -641,12 +777,8 @@ def evaluate_vqa(
 
     acc = compute_vqa_accuracy(
         f"{dataset_name}results_{random_uuid}.json",
-        args.ok_vqa_test_questions_json_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_test_questions_json_path,
-        args.ok_vqa_test_annotations_json_path
-        if dataset_name == "ok_vqa"
-        else args.vqav2_test_annotations_json_path,
+        test_questions_json_path,
+        test_annotations_json_path,
     )
 
     # delete the temporary file
