@@ -31,7 +31,6 @@ import base64
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
-MAX_NUM_IMAGES = 6
 TINY_IMAGE_SIZE_THRESHOLD = 1
 N_CHANNELS = 3
 INTERLEAVED_IMAGE_SIZE = 224
@@ -286,7 +285,7 @@ def preprocess_text(sample, tokenizer):
     )
     return text["input_ids"], text["attention_mask"]
 
-def preprocess_gpt_interleaved(info, tokenizer, clip_processor):
+def preprocess_gpt_interleaved(info, tokenizer, clip_processor, min_num_images, max_num_images):
     text = info["example"]
     text = re.sub(r"_!_IMAGE\d+_!_", "<|endofchunk|><image>", text)
 
@@ -297,12 +296,12 @@ def preprocess_gpt_interleaved(info, tokenizer, clip_processor):
         images.append(Image.open(io.BytesIO(rawbytes)).convert("RGB"))
 
     images_tensors = preprocess_image(images, clip_processor)
-    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
+    keep_ixs = range(min(len(images_tensors), max_num_images))
     images_tensors = images_tensors[keep_ixs]
 
-    if len(images_tensors) < MAX_NUM_IMAGES:
+    if len(images_tensors) < max_num_images:
         zero_padding = torch.zeros(
-            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+            (max_num_images - len(images_tensors), 3, 224, 224), dtype=torch.float
         )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
@@ -329,16 +328,27 @@ def preprocess_gpt_interleaved(info, tokenizer, clip_processor):
         text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
     )
 
+    # reject sequences with too few images (after truncation)
+    num_images = torch.count_nonzero(
+        text_tensor["input_ids"]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
+    )
+
+    if num_images < min_num_images:
+        raise ValueError(f"Fewer than {min_num_images} images in sample")
+
     return (
         images_tensors,
         (text_tensor["input_ids"], text_tensor["attention_mask"])
     )
 
 MIN_KB = 10
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
+def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation, min_num_images, max_num_images):
     info = json.loads(sample[0])
     if "is_gpt" in info:
-        return preprocess_gpt_interleaved(info, tokenizer, clip_processor)
+        return preprocess_gpt_interleaved(info, tokenizer, clip_processor, min_num_images, max_num_images)
     sentences = info["text_list"]
     sim_matrix = info["similarity_matrix"]
 
@@ -397,14 +407,14 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
 
     # images -> tensors
     images_tensors = preprocess_image(images, clip_processor)
-    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
+    keep_ixs = range(min(len(images_tensors), max_num_images))
     images_tensors = images_tensors[keep_ixs]
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
 
     # pad to 5 images
-    if len(images_tensors) < MAX_NUM_IMAGES:
+    if len(images_tensors) < max_num_images:
         zero_padding = torch.zeros(
-            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+            (max_num_images - len(images_tensors), 3, 224, 224), dtype=torch.float
         )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
@@ -437,6 +447,8 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
 
     if num_images == 0:
         raise ValueError("No images in sample")
+    elif num_images < min_num_images:
+        raise ValueError(f"Fewer than {min_num_images} images in sample")
     elif (
         num_images == 1 and random.random() <= 0.5
     ):  # 50% chance of keeping single image samples
@@ -483,6 +495,8 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         tokenizer=tokenizer,
         sim_threshold=args.mmc4_textsim_threshold,
         use_media_placement_augmentation=args.use_media_placement_augmentation,
+        min_num_images=args.mmc4_min_num_images,
+        max_num_images=args.mmc4_max_num_images,
     )
 
     # at this point we have an iterator over all the shards

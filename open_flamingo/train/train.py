@@ -184,6 +184,18 @@ def main():
         type=float,
         help="threshold for filtering images in mmc4 based on image-text similarity",
     )
+    parser.add_argument(
+        "--mmc4_max_num_images",
+        default=6,
+        type=int,
+        help="max number of images per sequence in mmc4 / chatgpt",
+    )
+    parser.add_argument(
+        "--mmc4_min_num_images",
+        default=1, 
+        type=int,
+        help="min number of images per sequence in mmc4 / chatgpt",
+    )
 
     args = parser.parse_args()
 
