@@ -155,13 +155,6 @@ def pytorch_worker_seed(increment=0):
     # fallback to wds rank based seed
     return wds.utils.pytorch_worker_seed()
 
-
-_SHARD_SHUFFLE_SIZE = 2000
-_SHARD_SHUFFLE_INITIAL = 500
-_SAMPLE_SHUFFLE_SIZE = 5000
-_SAMPLE_SHUFFLE_INITIAL = 1000
-
-
 class detshuffle2(wds.PipelineStage):
     def __init__(
         self,
