@@ -13,9 +13,9 @@ from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from train_utils import (
-    filter_state_dict_to_trainable,
     train_one_epoch,
     get_mp_policy_dtype,
+    save_checkpoint,
 )
 from transformers import (
     get_constant_schedule_with_warmup,
@@ -120,7 +120,7 @@ def main():
     parser.add_argument(
         "--logging_steps", type=int, default=100, help="log loss every n steps"
     )
-    
+
     # data args
     parser.add_argument(
         "--laion_shards",
@@ -154,7 +154,7 @@ def main():
         type=int,
         help="min number of images per sequence in mmc4 / chatgpt",
     )
-    
+
     # distributed training args
     parser.add_argument(
         "--dist-url",
@@ -215,16 +215,12 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate args
     if args.laion_shards.startswith("s3"):
         args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
 
     if args.mmc4_shards.startswith("s3"):
         args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
-    args.mmc4_shards = (
-        "{"
-        + args.mmc4_shards
-        + ",pipe:aws s3 cp s3://s-laion/flamingo/chatgpt-shards/{00000..00418}.tar -}"
-    )  # add in the chatgpt shards
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
@@ -233,16 +229,15 @@ def main():
         args.train_num_samples_mmc4 // args.batch_size_mmc4
     ), "number of samples per epoch must be equal for mmc4 and laion"
 
+    # Set up distributed training
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
     args.local_rank, args.rank, args.world_size = world_info_from_env()
-
     device_id = init_distributed_device(args)
-
     random_seed(args.seed)
 
+    # Initialize model
     model, image_processor, tokenizer = create_model_and_transforms(
         args.vision_encoder_path,
         args.vision_encoder_pretrained,
@@ -253,11 +248,10 @@ def main():
         gradient_checkpointing=args.gradient_checkpointing,
         freeze_lm_embeddings=args.freeze_lm_embeddings,
     )
-
     random_seed(args.seed, args.rank)
 
+    # Initialize logging
     print(f"Start running training on rank {args.rank}.")
-
     if args.rank == 0 and args.report_to_wandb:
         wandb.init(
             project=args.wandb_project,
@@ -266,9 +260,10 @@ def main():
             config=vars(args),
         )
 
-    """Step 1: Load the model checkpoint on CPU"""
-    # check if a checkpoint exists for this run
+    # Load model checkpoint on CPU
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
+        # if args do not specify a checkpoint to resume from, check if checkpoints exist for this run
+        # and automatically resume from the latest checkpoint
         checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
         if len(checkpoint_list) == 0:
             print(f"Found no checkpoints for run {args.run_name}.")
@@ -280,7 +275,6 @@ def main():
                 f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
             )
 
-    # load the model state dict
     resume_from_epoch = 0
     if args.resume_from_checkpoint is not None:
         if args.rank == 0:
@@ -294,17 +288,7 @@ def main():
         if not args.fsdp or args.rank == 0:
             model.load_state_dict(msd, False)
 
-    """
-    Step 2: Init FSDP/DDP, and ensure model is on GPU
-    Model wrapping: In order to minimize the transient GPU memory needs, users need to wrap a model in a nested fashion. 
-    This introduces additional complexity. The auto_wrap utility is useful in annotating existing PyTorch model 
-    code for nested wrapping purposes.
-        Wrapping gotchas: all parameters in a wrapped module must have the same requires_grad setting.
-        model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors (not sure why)
-        See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
-    Model initialization: Unlike DDP, FSDP does not automatically synchronize model weights between GPU workers. 
-    This means model initialization must be done carefully so that all GPU workers have the identical initial weights.
-    """
+    # Initialize FSDP / DDP, and ensure the model is on GPU
     model = model.to(
         device_id
     )  # constraint: params need to fit on single gpu before sharding
@@ -348,6 +332,7 @@ def main():
     else:
         ddp_model = DDP(model, device_ids=[device_id])
 
+    # Initialize gradient checkpointing
     if args.gradient_checkpointing:
         non_reentrant_wrapper = functools.partial(
             checkpoint_wrapper,
@@ -362,19 +347,7 @@ def main():
             and not isinstance(m, CheckpointWrapper),
         )
 
-    # # tiny test case
-    # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
-    # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
-    # loss = ddp_model(
-    #     vision_x.to(device_id, dtype=cast_dtype, non_blocking=True),
-    #     lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
-    #     lang_x["attention_mask"].to(device_id, dtype=cast_dtype, non_blocking=True),
-    #     labels=lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
-    #     clear_conditioned_layers=False,
-    # )[0]
-    # loss.backward()
-    # print(f"Loss: {loss.item()} on rank {args.rank}")
-
+    # Print model and trainable params as a sanity check
     if args.rank == 0:
         print(model)  # to check wrapping
         # print params that are being trained
@@ -382,15 +355,9 @@ def main():
             if param.requires_grad:
                 print(name)
 
-    """
-    Step 3: Init and load optimizer
-    Optimizer settings: Due to sharding and wrapping, only certain types of optimizer and optimizer settings are supported by FSDP. 
-    In particular, if a module is wrapped by FSDP and its parameters are flattened into a single tensor, users cannot use different 
-    hyperparameters for different parameter groups in such a module.
-    """
+    # Initialize optimizer
     if not args.fsdp or args.fsdp_use_orig_params:
-        # apply weight decay only to certain params
-        # specifically, do not apply weight decay to the Perceiver Resampler
+        # apply weight decay only to params in the xattn layers
         def get_grouped_params(model):
             params_with_wd, params_without_wd = [], []
 
@@ -427,7 +394,7 @@ def main():
             osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
         optimizer.load_state_dict(osd)
 
-    """Step 4: Init data"""
+    # Initialize data loaders
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
     mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
     total_training_steps = (
@@ -437,7 +404,7 @@ def main():
     if args.rank == 0:
         print(f"Total training steps: {total_training_steps}")
 
-    """Step 5: Init and load LR Scheduler"""
+    # Initialize lr scheduler
     if args.lr_scheduler == "linear":
         lr_scheduler = get_linear_schedule_with_warmup(
             optimizer,
@@ -457,10 +424,9 @@ def main():
 
     # load lr scheduler checkpoint
     if args.resume_from_checkpoint is not None:
-        # TODO: this hopefully works with fsdp?
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
-    """Step 6: Train"""
+    # Start training!
     ddp_model.train()
 
     for epoch in range(resume_from_epoch, args.num_epochs):
@@ -481,61 +447,10 @@ def main():
             device_id=device_id,
             wandb=wandb,
         )
+        save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
 
-        """
-        Step 7: Saving checkpoints
-        State checkpointing and inference: When the model scale is large, saving and loading 
-        the model state can become challenging. FSDP supports several ways to make that 
-        task possible, but it is by no means trivial.
-        Note: requires enough CPU memory for both model and optimizer state
-        Note: the pytorch fsdp code has a bug where it doesn't handle nested FSDPs well.
-        """
-        if args.fsdp:
-            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            with FSDP.state_dict_type(
-                ddp_model, StateDictType.FULL_STATE_DICT, save_policy
-            ):
-                model_state = ddp_model.state_dict()
-        else:
-            model_state = ddp_model.state_dict()
-
-        if args.fsdp:
-            optim_state = FSDP.full_optim_state_dict(
-                ddp_model, optimizer, rank0_only=True
-            )
-        else:
-            optim_state = optimizer.state_dict()
-
-        if args.rank == 0:
-            if not (args.fsdp and not args.fsdp_use_orig_params):
-                model_state = filter_state_dict_to_trainable(ddp_model, model_state)
-
-            if not os.path.exists(args.run_name):
-                os.makedirs(args.run_name)
-
-            checkpoint_dict = {
-                "epoch": epoch,
-                "model_state_dict": model_state,
-                "optimizer_state_dict": optim_state,
-                "lr_scheduler_state_dict": lr_scheduler.state_dict(),
-            }
-
-            print(f"Saving checkpoint to {args.run_name}/checkpoint_{epoch}.pt")
-            torch.save(checkpoint_dict, f"{args.run_name}/checkpoint_{epoch}.pt")
-            if args.report_to_wandb and args.save_checkpoints_to_wandb:
-                wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
-
-            if args.delete_previous_checkpoint:
-                if epoch > 0:
-                    os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
-
-    # if args.rank == 0:
-    #     if not os.path.exists(args.run_name):
-    #         os.makedirs(args.run_name)
-
-    #     torch.save(get_checkpoint(ddp_model), f"{args.run_name}/final_weights.pt")
-    #     if args.report_to_wandb and args.save_checkpoints_to_wandb:
-    #         wandb.save(f"{args.run_name}/final_weights.pt")
+    # save final checkpoint
+    save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
 
 
 if __name__ == "__main__":
