@@ -15,7 +15,7 @@ import webdataset as wds
 from PIL import Image
 import base64
 
-from dataset_utils import *
+from data_utils import *
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
