@@ -110,7 +110,12 @@ def main():
         action="store_true",
         help="whether to train with gradient/activation checkpointing",
     )
-    parser.add_argument("--num_epochs", type=int, default=1)
+    parser.add_argument(
+        "--num_epochs",
+        type=int,
+        default=1,
+        help="we define an 'epoch' as a fixed number of examples (train_num_samples_mmc4, train_num_samples_laion), not a pass through the entire dataset",
+    )
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
         "--freeze_lm_embeddings",
