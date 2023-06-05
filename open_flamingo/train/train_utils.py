@@ -90,10 +90,6 @@ def train_one_epoch(
         data_time_m.update(time.time() - end)
         global_step = num_steps + epoch * num_batches_per_epoch
 
-        print(
-            f"Step {num_steps}: before LAION forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
-        )
-
         #### LAION FORWARD PASS ####
         images = batch_laion[0].to(device_id, dtype=cast_dtype, non_blocking=True)
         images = rearrange(images, "b c h w -> b t f c h w", t=1, f=1)
@@ -118,16 +114,8 @@ def train_one_epoch(
                 labels=labels,
             )[0]
 
-        print(
-            f"Step {num_steps}: after LAION forward before LAION backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
-        )
-
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
         (divided_loss_laion * args.loss_multiplier_laion).backward()
-
-        print(
-            f"Step {num_steps}: after LAION backward before C4 forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
-        )
 
         #### MMC4 FORWARD PASS ####
         images = batch_mmc4[0].to(device_id, dtype=cast_dtype, non_blocking=True)
@@ -180,10 +168,6 @@ def train_one_epoch(
                 print("images: ", images)
                 optimizer.zero_grad(set_to_none=True)
                 continue
-
-        print(
-            f"Step {num_steps}: after C4 forward before C4 backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
-        )
 
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
         (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
