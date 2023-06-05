@@ -1,11 +1,9 @@
 """ Main training script """
 
 import argparse
-import copy
 import glob
 import os
 import random
-import re
 
 import numpy as np
 import torch
@@ -14,20 +12,30 @@ from data import get_data
 from distributed import init_distributed_device, world_info_from_env
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from train_utils import filter_state_dict_to_trainable, train_one_epoch, get_mp_policy_dtype
+from train_utils import (
+    filter_state_dict_to_trainable,
+    train_one_epoch,
+    get_mp_policy_dtype,
+)
 from transformers import (
     get_constant_schedule_with_warmup,
     get_cosine_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
 
-from torch.distributed.fsdp import CPUOffload, MixedPrecision, FullStateDictConfig, StateDictType, ShardingStrategy
+from torch.distributed.fsdp import (
+    CPUOffload,
+    MixedPrecision,
+    FullStateDictConfig,
+    StateDictType,
+    ShardingStrategy,
+)
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper,
     CheckpointWrapper,
     CheckpointImpl,
-    apply_activation_checkpointing
-) 
+    apply_activation_checkpointing,
+)
 import functools
 
 from open_flamingo import create_model_and_transforms
@@ -41,6 +49,7 @@ def random_seed(seed=42, rank=0):
 
 def main():
     parser = argparse.ArgumentParser()
+    # model configuration args
     parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
     parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
@@ -56,32 +65,18 @@ def main():
         default=1,
         help="how often to add a cross-attention layer after each transformer layer",
     )
-    parser.add_argument(
-        "--freeze_lm_embeddings",
-        action="store_true",
-        help="whether to freeze the LM embeddings. useful for FSDP, since we can't mask gradients.",
-    )
+
+    # training args
     parser.add_argument(
         "--run_name",
         type=str,
         default="openflamingo3B",
         help="used to name saving directory and wandb run",
     )
-    parser.add_argument("--use_media_placement_augmentation", action="store_true")
-    parser.add_argument("--offline", action="store_true")
-    parser.add_argument("--num_epochs", type=int, default=1)
-    parser.add_argument(
-        "--logging_steps", type=int, default=100, help="log loss every n steps"
-    )
-    # Sum of gradient optimization batch size
-    parser.add_argument("--batch_size_mmc4", type=int, default=128)
-    parser.add_argument("--batch_size_laion", type=int, default=128)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--gradient_checkpointing", action="store_true", help="AKA activation checkpointing.")
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
-        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states",
+        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states. if there exists a checkpoint in the dir named run_name, we will resume from that checkpoint by default",
         default=None,
     )
     parser.add_argument(
@@ -89,16 +84,9 @@ def main():
         action="store_true",
         help="delete previous checkpoint when saving new checkpoint",
     )
-    parser.add_argument(
-        "--laion_shards",
-        type=str,
-        help="path to laion shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
-    )
-    parser.add_argument(
-        "--mmc4_shards",
-        type=str,
-        help="path to c4 shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
-    )
+    parser.add_argument("--batch_size_mmc4", type=int, default=128)
+    parser.add_argument("--batch_size_laion", type=int, default=128)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
     parser.add_argument(
@@ -117,11 +105,56 @@ def main():
         default="fp32",
         help="Floating point precision.",
     )
+    parser.add_argument(
+        "--gradient_checkpointing",
+        action="store_true",
+        help="whether to train with gradient/activation checkpointing",
+    )
+    parser.add_argument("--num_epochs", type=int, default=1)
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument(
+        "--freeze_lm_embeddings",
+        action="store_true",
+        help="if True, we freeze the LM embeddings during training. Otherwise, we train the <image> and <|endofchunk|> embeddings.",
+    )
+    parser.add_argument(
+        "--logging_steps", type=int, default=100, help="log loss every n steps"
+    )
+    
     # data args
+    parser.add_argument(
+        "--laion_shards",
+        type=str,
+        help="path to laion shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
+    )
+    parser.add_argument(
+        "--mmc4_shards",
+        type=str,
+        help="path to c4 shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
+    )
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--train_num_samples_mmc4", type=int, default=10000)
     parser.add_argument("--train_num_samples_laion", type=int, default=10000)
     parser.add_argument("--dataset_resampled", action="store_true")
+    parser.add_argument(
+        "--mmc4_textsim_threshold",
+        default=30,
+        type=float,
+        help="threshold for filtering images in mmc4 based on image-text similarity",
+    )
+    parser.add_argument(
+        "--mmc4_max_num_images",
+        default=6,
+        type=int,
+        help="max number of images per sequence in mmc4 / chatgpt",
+    )
+    parser.add_argument(
+        "--mmc4_min_num_images",
+        default=1,
+        type=int,
+        help="min number of images per sequence in mmc4 / chatgpt",
+    )
+    
     # distributed training args
     parser.add_argument(
         "--dist-url",
@@ -148,20 +181,21 @@ def main():
         "--fsdp",
         default=False,
         action="store_true",
-        help="Use FullyShardedDataParallel for distributed training."
+        help="Use FullyShardedDataParallel for distributed training.",
     )
     parser.add_argument(
         "--fsdp_cpu_offload",
         default=False,
         action="store_true",
-        help="CPU offloading for FSDP and checkpoint saving. This does not work with gradient accumulation."
+        help="CPU offloading for FSDP and checkpoint saving. This does not work with gradient accumulation.",
     )
     parser.add_argument(
         "--fsdp_use_orig_params",
         default=False,
         action="store_true",
-        help="Passed into the FSDP constructor. This does not work for OPT models. Enables param_groups for weight_decay."
+        help="Passed into the FSDP constructor. This does not work for OPT models. Enables param_groups for weight_decay.",
     )
+
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
     parser.add_argument(
@@ -178,24 +212,6 @@ def main():
         action="store_true",
         help="save checkpoints to wandb",
     )
-    parser.add_argument(
-        "--mmc4_textsim_threshold",
-        default=30,
-        type=float,
-        help="threshold for filtering images in mmc4 based on image-text similarity",
-    )
-    parser.add_argument(
-        "--mmc4_max_num_images",
-        default=6,
-        type=int,
-        help="max number of images per sequence in mmc4 / chatgpt",
-    )
-    parser.add_argument(
-        "--mmc4_min_num_images",
-        default=1, 
-        type=int,
-        help="min number of images per sequence in mmc4 / chatgpt",
-    )
 
     args = parser.parse_args()
 
@@ -204,7 +220,11 @@ def main():
 
     if args.mmc4_shards.startswith("s3"):
         args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
-    args.mmc4_shards = "{"+args.mmc4_shards + ",pipe:aws s3 cp s3://s-laion/flamingo/chatgpt-shards/{00000..00418}.tar -}" # add in the chatgpt shards
+    args.mmc4_shards = (
+        "{"
+        + args.mmc4_shards
+        + ",pipe:aws s3 cp s3://s-laion/flamingo/chatgpt-shards/{00000..00418}.tar -}"
+    )  # add in the chatgpt shards
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
@@ -246,7 +266,6 @@ def main():
             config=vars(args),
         )
 
-    
     """Step 1: Load the model checkpoint on CPU"""
     # check if a checkpoint exists for this run
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
@@ -272,7 +291,8 @@ def main():
         resume_from_epoch = checkpoint["epoch"] + 1
 
         # for fsdp, only one rank needs to load the state dict
-        if not args.fsdp or args.rank == 0: model.load_state_dict(msd, False)
+        if not args.fsdp or args.rank == 0:
+            model.load_state_dict(msd, False)
 
     """
     Step 2: Init FSDP/DDP, and ensure model is on GPU
@@ -285,18 +305,22 @@ def main():
     Model initialization: Unlike DDP, FSDP does not automatically synchronize model weights between GPU workers. 
     This means model initialization must be done carefully so that all GPU workers have the identical initial weights.
     """
-    model = model.to(device_id) # constraint: params need to fit on single gpu before sharding
+    model = model.to(
+        device_id
+    )  # constraint: params need to fit on single gpu before sharding
 
     if args.fsdp:
         if args.rank == 0:
-            print(f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(
+                f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}"
+            )
             print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
 
         if args.precision != "fp32":
             cast_dtype = get_mp_policy_dtype(args.precision)
             mp_policy = MixedPrecision(
                 param_dtype=torch.float32,
-                reduce_dtype=cast_dtype, # gradient communication
+                reduce_dtype=cast_dtype,  # gradient communication
                 buffer_dtype=cast_dtype,
             )
         else:
@@ -306,7 +330,7 @@ def main():
         wrapper_kwargs = dict(
             cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
             device_id=device_id,
-            sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
+            sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
             sharding_strategy=ShardingStrategy.FULL_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
             mixed_precision=mp_policy,
@@ -314,9 +338,13 @@ def main():
         model.wrap_fsdp(wrapper_kwargs)
         ddp_model = model
 
-        print(f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
-        print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}")
-    
+        print(
+            f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
+        )
+        print(
+            f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
+
     else:
         ddp_model = DDP(model, device_ids=[device_id])
 
@@ -324,19 +352,21 @@ def main():
         non_reentrant_wrapper = functools.partial(
             checkpoint_wrapper,
             offload_to_cpu=False,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
         )
         apply_activation_checkpointing(
-            ddp_model, 
+            ddp_model,
             checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, '_use_gradient_checkpointing', False) and not isinstance(m, FSDP) and not isinstance(m, CheckpointWrapper)
+            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
+            and not isinstance(m, FSDP)
+            and not isinstance(m, CheckpointWrapper),
         )
-    
+
     # # tiny test case
     # vision_x = torch.randn(1, 1, 1, 3, 224, 224).to(device_id)
     # lang_x = tokenizer(["<image> hello world"], return_tensors="pt", padding=True).to(device_id)
     # loss = ddp_model(
-    #     vision_x.to(device_id, dtype=cast_dtype, non_blocking=True), 
+    #     vision_x.to(device_id, dtype=cast_dtype, non_blocking=True),
     #     lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
     #     lang_x["attention_mask"].to(device_id, dtype=cast_dtype, non_blocking=True),
     #     labels=lang_x["input_ids"].to(device_id, dtype=cast_dtype, non_blocking=True).long(),
@@ -345,11 +375,12 @@ def main():
     # loss.backward()
     # print(f"Loss: {loss.item()} on rank {args.rank}")
 
-    if args.rank == 0: 
-        print(model) # to check wrapping
+    if args.rank == 0:
+        print(model)  # to check wrapping
         # print params that are being trained
         for name, param in ddp_model.named_parameters():
-            if param.requires_grad: print(name)
+            if param.requires_grad:
+                print(name)
 
     """
     Step 3: Init and load optimizer
@@ -377,18 +408,26 @@ def main():
                 {"params": params_with_wd, "weight_decay": args.weight_decay},
                 {"params": params_without_wd, "weight_decay": 0.0},
             ]
-        optimizer = torch.optim.AdamW(get_grouped_params(ddp_model), lr=args.learning_rate)
+
+        optimizer = torch.optim.AdamW(
+            get_grouped_params(ddp_model), lr=args.learning_rate
+        )
     else:
         # unclear if we should be using no weight decay or small weight decay for all parameters
-        optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW(
+            ddp_model.parameters(),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+        )
 
     # load optimizer checkpoint
     if args.resume_from_checkpoint is not None:
         osd = checkpoint["optimizer_state_dict"]
-        if args.fsdp: osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
+        if args.fsdp:
+            osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
         optimizer.load_state_dict(osd)
 
-    """Step 4: Init data"""  
+    """Step 4: Init data"""
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
     mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
     total_training_steps = (
@@ -459,9 +498,11 @@ def main():
                 model_state = ddp_model.state_dict()
         else:
             model_state = ddp_model.state_dict()
-        
+
         if args.fsdp:
-            optim_state = FSDP.full_optim_state_dict(ddp_model, optimizer, rank0_only=True)
+            optim_state = FSDP.full_optim_state_dict(
+                ddp_model, optimizer, rank0_only=True
+            )
         else:
             optim_state = optimizer.state_dict()
 
