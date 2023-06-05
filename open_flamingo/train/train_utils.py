@@ -7,6 +7,7 @@ from torch.distributed.fsdp import (
     FullStateDictConfig,
     StateDictType,
 )
+from torch.distributed.fsdp.api import FullOptimStateDictConfig
 import os
 import wandb
 from einops import rearrange
@@ -30,12 +31,14 @@ def get_mp_policy_dtype(precision: str):
         return torch.float32
 
 
-def get_autocast(precision):
+def get_autocast(precision, cache_enabled=True):
     if precision == "amp":
-        return torch.cuda.amp.autocast
+        return torch.cuda.amp.autocast(cache_enabled=cache_enabled)
     elif precision == "amp_bfloat16" or precision == "amp_bf16":
         # amp_bfloat16 is more stable than amp float16 for clip training
-        return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
+        return lambda: torch.cuda.amp.autocast(
+            dtype=torch.bfloat16, cache_enabled=cache_enabled
+        )
     else:
         return suppress
 
@@ -60,8 +63,9 @@ def train_one_epoch(
     num_batches_per_epoch = num_batches_per_epoch_mmc4
     total_training_steps = num_batches_per_epoch * args.num_epochs
 
-    # setup autocast
-    autocast = get_autocast(args.precision)
+    autocast = get_autocast(
+        args.precision, cache_enabled=(not args.fsdp)
+    )  # if fsdp, disable cache to save memory
     cast_dtype = get_cast_dtype(args.precision)
 
     # setup model
@@ -86,6 +90,10 @@ def train_one_epoch(
         data_time_m.update(time.time() - end)
         global_step = num_steps + epoch * num_batches_per_epoch
 
+        print(
+            f"Step {num_steps}: before LAION forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
+
         #### LAION FORWARD PASS ####
         images = batch_laion[0].to(device_id, dtype=cast_dtype, non_blocking=True)
         images = rearrange(images, "b c h w -> b t f c h w", t=1, f=1)
@@ -101,15 +109,25 @@ def train_one_epoch(
         labels[labels == media_token_id] = -100
         labels = labels.to(device_id)
 
+        # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
         with autocast():
             loss_laion = model(
                 vision_x=images,
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
+
+        print(
+            f"Step {num_steps}: after LAION forward before LAION backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
+
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
+        (divided_loss_laion * args.loss_multiplier_laion).backward()
+
+        print(
+            f"Step {num_steps}: after LAION backward before C4 forward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
 
         #### MMC4 FORWARD PASS ####
         images = batch_mmc4[0].to(device_id, dtype=cast_dtype, non_blocking=True)
@@ -144,13 +162,13 @@ def train_one_epoch(
         labels[labels == media_token_id] = -100
         labels = labels.to(device_id)
 
+        # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
         with autocast():
             loss_mmc4 = model(
                 vision_x=images,
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                clear_conditioned_layers=(not args.gradient_checkpointing),
             )[0]
 
             # if loss is nan, skip this batch
@@ -160,28 +178,20 @@ def train_one_epoch(
                 print("input_ids: ", tokenizer.batch_decode(input_ids))
                 print("labels: ", labels)
                 print("images: ", images)
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 continue
 
-        divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
-
-        #### BACKWARD PASS ####
-        loss = (
-            divided_loss_laion * args.loss_multiplier_laion
-            + divided_loss_mmc4 * args.loss_multiplier_mmc4
+        print(
+            f"Step {num_steps}: after C4 forward before C4 backward {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
         )
-        loss.backward()
 
-        if args.gradient_checkpointing:
-            if args.fsdp:
-                model.lang_encoder.clear_conditioned_layers()
-            else:
-                model.module.lang_encoder.clear_conditioned_layers()
+        divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
+        (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
 
         if (not args.freeze_lm_embeddings) and (
             not args.fsdp or args.fsdp_use_orig_params
         ):
-            # Mask gradients for input embeddings s.t. we only update the <image> and <|endofchunk|> tokens
+            # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
             if args.fsdp:
                 embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
             else:
@@ -201,6 +211,14 @@ def train_one_epoch(
                 model.module.lang_encoder.get_input_embeddings().weight.grad = (
                     embed_grad * zero_mask
                 )
+            print(
+                "Before gradient masking, num nonzero elements in embedding grad: ",
+                torch.nonzero(embed_grad).shape[0],
+            )
+            print(
+                "After gradient masking, num nonzero elements in embedding grad: ",
+                torch.nonzero(embed_grad * zero_mask).shape[0],
+            )
 
         # clip gradient norm
         if args.fsdp:
@@ -220,7 +238,7 @@ def train_one_epoch(
         ):
             optimizer.step()
             lr_scheduler.step()
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             # step time and reset end outside of rank 0
             step_time_m.update(time.time() - end)
@@ -283,7 +301,6 @@ def train_one_epoch(
                 f"Step {num_steps+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f}"
             )
 
-
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -320,7 +337,10 @@ def filter_state_dict_to_trainable(model, state_dict):
             continue
         if not p.requires_grad:
             name = name.replace("._checkpoint_wrapped_module", "")
-            del state_dict[name]
+            if name in state_dict:
+                del state_dict[name]
+            else:
+                print(f"WARNING: filtering but {name} not in state_dict")
 
     # also remove the keys in state_dict generated from
     # lang_encoder.old_decoder_blocks and lang_encoder.gated_cross_attn_layers
@@ -342,15 +362,17 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
     Save training checkpoint with model, optimizer, and lr_scheduler state.
     """
     if args.fsdp:
-        save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
-            model_state = model.state_dict()
+        FSDP.set_state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
+            FullOptimStateDictConfig(rank0_only=True),
+        )
+        model_state = model.state_dict()
+        optim_state = FSDP.optim_state_dict(model, optimizer, group=args.my_group)
+
     else:
         model_state = model.state_dict()
-
-    if args.fsdp:
-        optim_state = FSDP.full_optim_state_dict(model, optimizer, rank0_only=True)
-    else:
         optim_state = optimizer.state_dict()
 
     if args.rank == 0:
@@ -373,7 +395,5 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
             wandb.save(f"{args.run_name}/checkpoint_{epoch}.pt")
 
         if args.delete_previous_checkpoint:
-            try:
+            if epoch > 0:
                 os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
-            except:
-                pass

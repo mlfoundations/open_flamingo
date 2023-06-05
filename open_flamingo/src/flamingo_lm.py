@@ -1,14 +1,12 @@
-import random
-
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint
-
-
 from .helpers import GatedCrossAttentionBlock
 from .utils import getattr_recursive, setattr_recursive
 
 
 class FlamingoLayer(nn.Module):
+    """
+    FlamingoLayer is a wrapper around the GatedCrossAttentionBlock and DecoderLayer.
+    """
     def __init__(self, gated_cross_attn_layer, decoder_layer, gradient_checkpointing=False):
         super().__init__()
         self.gated_cross_attn_layer = gated_cross_attn_layer
@@ -130,9 +128,9 @@ class FlamingoLMMixin(nn.Module):
         
         # if there are media already cached and we're generating and there are no media tokens in the input, 
         # we'll assume that ALL input tokens should attend to the last previous media that is cached. 
-        # this is especially important for HF generate() compatibility,
-        # which calls forward() repeatedly one token at a time (with no media tokens)
-        # TODO: refactor this out of flamingo_lm and into flamingo? so that it mirrors vis_x
+        # this is especially important for HF generate() compatibility, since generate() calls forward()
+        # repeatedly one token at a time (with no media tokens). 
+        # without this check, the model would not attend to any images when generating (after the first token)
         use_cached_media_locations = self._generating and self.is_conditioned() and not media_locations.any()
 
         for layer in self._get_decoder_layers():

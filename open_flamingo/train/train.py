@@ -23,19 +23,15 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from torch.distributed.fsdp import (
-    CPUOffload,
-    MixedPrecision,
-    FullStateDictConfig,
-    StateDictType,
-    ShardingStrategy,
-)
+from torch.distributed.fsdp import CPUOffload, MixedPrecision, ShardingStrategy, BackwardPrefetch
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper,
     CheckpointWrapper,
     CheckpointImpl,
-    apply_activation_checkpointing,
-)
+    apply_activation_checkpointing
+) 
+from torch.distributed.fsdp._init_utils import _init_intra_and_inter_node_groups
+from torch.distributed.distributed_c10d import _get_default_group
 import functools
 
 from open_flamingo import create_model_and_transforms
@@ -189,16 +185,16 @@ def main():
         help="Use FullyShardedDataParallel for distributed training.",
     )
     parser.add_argument(
-        "--fsdp_cpu_offload",
-        default=False,
-        action="store_true",
-        help="CPU offloading for FSDP and checkpoint saving. This does not work with gradient accumulation.",
-    )
-    parser.add_argument(
         "--fsdp_use_orig_params",
         default=False,
         action="store_true",
-        help="Passed into the FSDP constructor. This does not work for OPT models. Enables param_groups for weight_decay.",
+        help="Passed into the FSDP constructor. Enables param_groups and gradient masking for weight_decay. Still does not work with OPT."
+    )
+    parser.add_argument(
+        "--fsdp_sharding_strategy",
+        default="full",
+        type=str,
+        choices=["full", "hybrid"]
     )
 
     # wandb args
@@ -229,6 +225,21 @@ def main():
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
+
+    if args.fsdp and not args.fsdp_use_orig_params:
+        print(
+            "Warning: FSDP is running without fsdp_use_orig_params flag. " \
+            + "This is not recommended because it means we will use uniform weight decay" \
+            + " and train all embeddings, not just the newly added ones. " \
+            + "Note: OPT models are not compatible with fsdp_use_orig_params flag.")
+
+    if args.fsdp and args.fsdp_sharding_strategy == "hybrid":
+        print(
+            "Warning: As of torch=2.0.1, the FSDP logic for optim_state_dict() is broken for hybrid sharding." \
+            + "To make this method work, we need to modify torch.distributed.fsdp._optim_utils.py" \
+            + "Copy and paste the code from the _optim_utils.py in this repo into the torch file." \
+            + "The main issue was the missing group kwarg on line 1596 in _all_gather_optim_state." \
+        )
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
         args.train_num_samples_mmc4 // args.batch_size_mmc4
@@ -290,21 +301,14 @@ def main():
         resume_from_epoch = checkpoint["epoch"] + 1
 
         # for fsdp, only one rank needs to load the state dict
-        if not args.fsdp or args.rank == 0:
-            model.load_state_dict(msd, False)
+        if not args.fsdp or args.rank == 0: model.load_state_dict(msd, False)
 
     # Initialize FSDP / DDP, and ensure the model is on GPU
-    model = model.to(
-        device_id
-    )  # constraint: params need to fit on single gpu before sharding
-
+    print(f"Initializing distributed training with {args.world_size} GPUs.")
     if args.fsdp:
-        if args.rank == 0:
-            print(
-                f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())}"
-            )
-            print(f"Before FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
+        print(f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}")
 
+        # init MixedPrecision
         if args.precision != "fp32":
             cast_dtype = get_mp_policy_dtype(args.precision)
             mp_policy = MixedPrecision(
@@ -315,16 +319,29 @@ def main():
         else:
             mp_policy = None
 
+        # init process groups
+        if args.fsdp_sharding_strategy == "hybrid":
+            intra_node_group, inter_node_group = _init_intra_and_inter_node_groups(_get_default_group())
+            args.my_group = intra_node_group # for optimizer saving
+            process_group = (intra_node_group, inter_node_group) # for FSDP init
+        else:
+            args.my_group = None # for optimizer saving
+            process_group = None # for FSDP init
+        
         # init FSDP
         wrapper_kwargs = dict(
-            cpu_offload=CPUOffload(offload_params=args.fsdp_cpu_offload),
+            process_group=process_group,
+            cpu_offload=CPUOffload(offload_params=False),
             device_id=device_id,
-            sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
-            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            sync_module_states=True, # broadcast loaded ckpt from rank 0 -> all ranks
+            sharding_strategy=ShardingStrategy.FULL_SHARD if args.fsdp_sharding_strategy == "full" else ShardingStrategy.HYBRID_SHARD,
             use_orig_params=args.fsdp_use_orig_params,
             mixed_precision=mp_policy,
+            forward_prefetch=True,
+            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+            limit_all_gathers=True,
         )
-        model.wrap_fsdp(wrapper_kwargs)
+        model.wrap_fsdp(wrapper_kwargs, device_id)
         ddp_model = model
 
         print(
@@ -335,14 +352,15 @@ def main():
         )
 
     else:
+        model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
 
     # Initialize gradient checkpointing
     if args.gradient_checkpointing:
         non_reentrant_wrapper = functools.partial(
             checkpoint_wrapper,
-            offload_to_cpu=False,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+            offload_to_cpu=True,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT
         )
         apply_activation_checkpointing(
             ddp_model,
@@ -352,45 +370,26 @@ def main():
             and not isinstance(m, CheckpointWrapper),
         )
 
-    # Print model and trainable params as a sanity check
-    if args.rank == 0:
-        print(model)  # to check wrapping
-        # print params that are being trained
-        for name, param in ddp_model.named_parameters():
-            if param.requires_grad:
-                print(name)
-
     # Initialize optimizer
+    params_to_optimize = ddp_model.named_parameters()
+    params_to_optimize = list(filter(lambda x: x[1].requires_grad and not getattr(x[1], "exclude_from_optimizer", False), params_to_optimize))
     if not args.fsdp or args.fsdp_use_orig_params:
         # apply weight decay only to params in the xattn layers
         def get_grouped_params(model):
             params_with_wd, params_without_wd = [], []
-
-            def apply_decay(x):
-                return "gated_cross_attn" in x
-
-            for n, p in model.named_parameters():
-                if p.requires_grad:
-                    if apply_decay(n):
-                        params_with_wd.append(p)
-                    else:
-                        params_without_wd.append(p)
-
+            for n, p in params_to_optimize:
+                if "gated_cross_attn" in n:
+                    params_with_wd.append(p)
+                else:
+                    params_without_wd.append(p)
             return [
                 {"params": params_with_wd, "weight_decay": args.weight_decay},
                 {"params": params_without_wd, "weight_decay": 0.0},
             ]
-
-        optimizer = torch.optim.AdamW(
-            get_grouped_params(ddp_model), lr=args.learning_rate
-        )
+        optimizer = torch.optim.AdamW(get_grouped_params(params_to_optimize), lr=args.learning_rate)
     else:
         # unclear if we should be using no weight decay or small weight decay for all parameters
-        optimizer = torch.optim.AdamW(
-            ddp_model.parameters(),
-            lr=args.learning_rate,
-            weight_decay=args.weight_decay,
-        )
+        optimizer = torch.optim.AdamW((p for _, p in params_to_optimize), lr=args.learning_rate, weight_decay=args.weight_decay)
 
     # load optimizer checkpoint
     if args.resume_from_checkpoint is not None:
@@ -398,6 +397,12 @@ def main():
         if args.fsdp:
             osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
         optimizer.load_state_dict(osd)
+
+    # Print model and trainable params as a sanity check
+    if args.rank == 0:
+        print(model)  # to check wrapping
+        # print params that are being trained
+        for n, _ in params_to_optimize: print(n)
 
     # Initialize data loaders
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
