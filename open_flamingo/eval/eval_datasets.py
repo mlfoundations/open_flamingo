@@ -13,12 +13,12 @@ from open_flamingo.eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
 
 class CaptionDataset(Dataset):
     def __init__(
-            self,
-            image_train_dir_path,
-            annotations_path,
-            is_train,
-            dataset_name,
-            image_val_dir_path=None,
+        self,
+        image_train_dir_path,
+        annotations_path,
+        is_train,
+        dataset_name,
+        image_val_dir_path=None,
     ):
         self.image_train_dir_path = image_train_dir_path
         self.image_val_dir_path = image_val_dir_path
@@ -123,25 +123,31 @@ class ClassificationDataset:
         following keys: image, class_id, class_name. See
         ImageNetDataset for an example.
     """
+
     train_dataset: Dataset
     prompts: Sequence[str] = field(
-        metadata={"help": "A sequence of prompts to be used during evaluation;"
-                          "e.g. 'A photo of a'. It is recommended to 'strip' the prompt (remove leading/trailing "
-                          "spaces) for best performance."}
+        metadata={
+            "help": "A sequence of prompts to be used during evaluation;"
+            "e.g. 'A photo of a'. It is recommended to 'strip' the prompt (remove leading/trailing "
+            "spaces) for best performance."
+        }
     )
     class_id_to_label: Mapping[int, str] = field(
-        metadata={"help": "mapping of numeric class IDs to string class names/labels."
-                          "Downstream metrics will be evaluated against the mapped strings."})
+        metadata={
+            "help": "mapping of numeric class IDs to string class names/labels."
+            "Downstream metrics will be evaluated against the mapped strings."
+        }
+    )
     val_dataset: Optional[Dataset] = None
     test_dataset: Optional[Dataset] = None
 
     def get_in_context_samples(self, num: int, **kwargs) -> Sequence[int]:
         """Fetch a set of `num` in-context sample indices."""
-        return np.random.choice(
-            len(self.train_dataset), num, replace=False
-        )
+        return np.random.choice(len(self.train_dataset), num, replace=False)
 
-    def metric_fn(self, labels: Sequence[int], outputs: Sequence[float]) -> Mapping[str, float]:
+    def metric_fn(
+        self, labels: Sequence[int], outputs: Sequence[float]
+    ) -> Mapping[str, float]:
         """
         Compute metrics for a set of labels and predictions.
 
@@ -158,23 +164,17 @@ class ClassificationDataset:
         # Sanity check that outputs has same dimension as class mapping.
         assert outputs.shape[1] == len(self.class_id_to_label)
 
-        acc5 = 0.
-        acc1 = 0.
+        acc5 = 0.0
+        acc1 = 0.0
 
         for i in range(batch_size):
-            top5 = [
-                self.class_id_to_label[pred]
-                for pred in topk(outputs[i], 5)
-            ]
+            top5 = [self.class_id_to_label[pred] for pred in topk(outputs[i], 5)]
 
             y_i = labels[i]["class_name"]
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
 
-            print(
-                f"[DEBUG]: elem {i} of {batch_size}:"
-                f"label {y_i} // top5 {top5}"
-            )
+            print(f"[DEBUG]: elem {i} of {batch_size}:" f"label {y_i} // top5 {top5}")
         return {"acc1": acc1, "acc5": acc5}
 
 

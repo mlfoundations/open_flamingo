@@ -430,10 +430,16 @@ def main():
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
                 imagenet_dataset = ClassificationDataset(
-                    train_dataset=ImageNetDataset(os.path.join(args.imagenet_root, "train")),
-                    val_dataset=ImageNetDataset(os.path.join(args.imagenet_root, "val")),
+                    train_dataset=ImageNetDataset(
+                        os.path.join(args.imagenet_root, "train")
+                    ),
+                    val_dataset=ImageNetDataset(
+                        os.path.join(args.imagenet_root, "val")
+                    ),
                     class_id_to_label=IMAGENET_1K_CLASS_ID_TO_LABEL,
-                    prompts=["A photo of a", ]
+                    prompts=[
+                        "A photo of a",
+                    ],
                 )
                 imagenet_score = evaluate_classification(
                     eval_model=eval_model,
@@ -441,7 +447,7 @@ def main():
                     num_samples=args.num_samples,
                     num_shots=shot,
                     seed=seed,
-                    classification_dataset=imagenet_dataset
+                    classification_dataset=imagenet_dataset,
                 )
                 print(
                     f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
@@ -561,8 +567,8 @@ def evaluate_captioning(
     predictions = defaultdict()
 
     for batch in more_itertools.chunked(
-            tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-            args.batch_size,
+        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+        args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
@@ -719,8 +725,8 @@ def evaluate_vqa(
     predictions = []
 
     for batch in more_itertools.chunked(
-            tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-            args.batch_size,
+        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+        args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
@@ -792,12 +798,12 @@ def evaluate_vqa(
 
 
 def evaluate_classification(
-        eval_model,
-        batch_size: int,
-        classification_dataset: ClassificationDataset,
-        seed: int = 42,
-        num_samples: int = 5000,
-        num_shots: int = 8,
+    eval_model,
+    batch_size: int,
+    classification_dataset: ClassificationDataset,
+    seed: int = 42,
+    num_samples: int = 5000,
+    num_shots: int = 8,
 ):
     """
     Evaluate a model on a classification dataset.
@@ -829,7 +835,9 @@ def evaluate_classification(
         "left"  # For generation padding tokens should be on the left
     )
 
-    _metrics = defaultdict(float)  # accumulates metric values over each batch, to be averaged at end.
+    _metrics = defaultdict(
+        float
+    )  # accumulates metric values over each batch, to be averaged at end.
     # TODO(jpgard): iterate over prompts here.
     prompt_text = f"<image>{classification_dataset.prompts[0]}"
 
@@ -842,14 +850,15 @@ def evaluate_classification(
             # Choose a different set of random context samples for each sample
             # from the training set
             context_indices = classification_dataset.get_in_context_samples(
-                effective_num_shots)
+                effective_num_shots
+            )
 
             in_context_samples = [train_dataset[i] for i in context_indices]
 
             vision_x = [
-                           eval_model.image_processor(data["image"]).unsqueeze(0)
-                           for data in in_context_samples
-                       ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
+                eval_model.image_processor(data["image"]).unsqueeze(0)
+                for data in in_context_samples
+            ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
 
             context_class_names = [
@@ -961,7 +970,9 @@ def evaluate_classification(
         examples_seen = (batch_idx + 1) * batch_size
         print(
             f"eval {examples_seen}/{num_samples}: "
-            + '\n\t'.join([f'{k}: {v / examples_seen:.4f}' for k, v in _metrics.items()])
+            + "\n\t".join(
+                [f"{k}: {v / examples_seen:.4f}" for k, v in _metrics.items()]
+            )
         )
         if batch_idx * batch_size >= num_samples - 1:
             break
