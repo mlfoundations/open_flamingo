@@ -1,44 +1,35 @@
 import argparse
+import importlib
 import json
-from math import ceil
 import os
 import random
 import uuid
 from collections import defaultdict
-from typing import Callable
 
+from einops import repeat
 import more_itertools
 import numpy as np
 import torch
-from open_flamingo.eval.coco_metric import compute_cider, postprocess_captioning_generation
-from open_flamingo.eval.eval_datasets import COCOFlickrDataset, VQADataset, ImageNetDataset
+
+
+from coco_metric import compute_cider, postprocess_captioning_generation
+from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
-from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
-from open_flamingo.eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-from open_flamingo.eval.classification import (
-    compute_per_sample_probs,
-    compute_per_sample_loss,
-)
+
+from eval_datasets import VQADataset, ImageNetDataset
 from open_flamingo.eval.imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
 )
 
-from open_flamingo.src.factory import create_model_and_transforms
+from eval_model import BaseEvalModel
+
+from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
+from open_flamingo.src.flamingo import Flamingo
+from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--lm_path", type=str, default="facebook/opt-1.3b")
-parser.add_argument("--lm_tokenizer_path", type=str, default="facebook/opt-30b")
-parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
-parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
-parser.add_argument("--checkpoint_path", type=str, required=True)
-parser.add_argument(
-    "--cross_attn_every_n_layers",
-    type=int,
-    default=1,
-    help="how often to add a cross-attention layer after each transformer layer",
-)
 parser.add_argument(
     "--results_file", type=str, default=None, help="JSON file to save results"
 )
@@ -54,16 +45,17 @@ parser.add_argument(
 parser.add_argument(
     "--trial_seeds",
     nargs="+",
-    type=int,
-    default=[0],
+    default=[42],
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
     "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
 )
+parser.add_argument(
+    "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
+)
 
-parser.add_argument("--batch_size", type=int, default=2)
-parser.add_argument("--device", type=int, default=0)
+parser.add_argument("--batch_size", type=int, default=8)
 
 # Per-dataset evaluation flags
 parser.add_argument(
@@ -108,17 +100,30 @@ parser.add_argument(
     default=None,
 )
 parser.add_argument(
+    "--flickr_karpathy_json_path",
+    type=str,
+    help="Path to the dataset_flickr30k.json file.",
+    default=None,
+)
+parser.add_argument(
     "--flickr_annotations_json_path",
     type=str,
     help="Path to the dataset_flickr30k_coco_style.json file.",
-    default=None,
 )
-
 ## COCO Dataset
 parser.add_argument(
-    "--coco_image_dir_path",
+    "--coco_train_image_dir_path",
     type=str,
-    help="Path to the flickr30/flickr30k_images directory.",
+    default=None,
+)
+parser.add_argument(
+    "--coco_val_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--coco_karpathy_json_path",
+    type=str,
     default=None,
 )
 parser.add_argument(
@@ -129,83 +134,113 @@ parser.add_argument(
 
 ## VQAV2 Dataset
 parser.add_argument(
-    "--vqav2_image_dir_path",
+    "--vqav2_train_image_dir_path",
     type=str,
     default=None,
 )
 parser.add_argument(
-    "--vqav2_questions_json_path",
+    "--vqav2_train_questions_json_path",
     type=str,
     default=None,
 )
 parser.add_argument(
-    "--vqav2_annotations_json_path",
+    "--vqav2_train_annotations_json_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--vqav2_test_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--vqav2_test_questions_json_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--vqav2_test_annotations_json_path",
     type=str,
     default=None,
 )
 
 ## OK-VQA Dataset
 parser.add_argument(
-    "--ok_vqa_image_dir_path",
+    "--ok_vqa_train_image_dir_path",
     type=str,
     help="Path to the vqav2/train2014 directory.",
     default=None,
 )
 parser.add_argument(
-    "--ok_vqa_questions_json_path",
+    "--ok_vqa_train_questions_json_path",
     type=str,
     help="Path to the v2_OpenEnded_mscoco_train2014_questions.json file.",
     default=None,
 )
 parser.add_argument(
-    "--ok_vqa_annotations_json_path",
+    "--ok_vqa_train_annotations_json_path",
     type=str,
     help="Path to the v2_mscoco_train2014_annotations.json file.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_test_image_dir_path",
+    type=str,
+    help="Path to the vqav2/val2014 directory.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_test_questions_json_path",
+    type=str,
+    help="Path to the v2_OpenEnded_mscoco_val2014_questions.json file.",
+    default=None,
+)
+parser.add_argument(
+    "--ok_vqa_test_annotations_json_path",
+    type=str,
+    help="Path to the v2_mscoco_val2014_annotations.json file.",
     default=None,
 )
 
 ## Imagenet dataset
 parser.add_argument("--imagenet_root", type=str, default="/tmp")
 
+parser.add_argument(
+    "--model",
+    type=str,
+    help="Model name. Currently only `OpenFlamingo` is supported.",
+    default="open_flamingo",
+)
+
 
 def main():
-    args = parser.parse_args()
+    args, leftovers = parser.parse_known_args()
+    module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
 
-    # load model
-    flamingo, image_processor, tokenizer = create_model_and_transforms(
-        args.vision_encoder_path,
-        args.vision_encoder_pretrained,
-        args.lm_path,
-        args.lm_tokenizer_path,
-        cross_attn_every_n_layers=args.cross_attn_every_n_layers,
-    )
+    model_args = {
+        leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
+    }
+    eval_model = module.EvalModel(model_args)
 
-    checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
-    if 'model_state_dict' in checkpoint:
-        checkpoint = checkpoint['model_state_dict']
-        checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
-    flamingo.load_state_dict(checkpoint, strict=False)
-    flamingo.to(args.device if args.device >= 0 else "cpu")
+    if args.model != "open_flamingo" and args.shots != [0]:
+        raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
+
+    if len(args.trial_seeds) != args.num_trials:
+        raise ValueError("Number of trial seeds must be == number of trials.")
 
     results = defaultdict(list)
 
     if args.eval_flickr30:
-        print("Evaluating on Flickr30...")
+        print("Evaluating on Flickr30k...")
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_coco_flickr(
-                    model=flamingo,
-                    tokenizer=tokenizer,
-                    image_processor=image_processor,
-                    batch_size=args.batch_size,
-                    image_dir_path=args.flickr_image_dir_path,
-                    annotations_json_path=args.flickr_annotations_json_path,
-                    num_samples=args.num_samples,
+                cider_score = evaluate_captioning(
+                    args,
+                    eval_model=eval_model,
                     num_shots=shot,
-                    device=args.device,
                     seed=seed,
-                    is_flickr=True,
+                    dataset_name="flickr",
                 )
                 print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
                 scores.append(cider_score)
@@ -213,24 +248,18 @@ def main():
             results["flickr30"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
-    results = defaultdict(list)
 
     if args.eval_coco:
         print("Evaluating on COCO...")
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_coco_flickr(
-                    model=flamingo,
-                    tokenizer=tokenizer,
-                    image_processor=image_processor,
-                    batch_size=args.batch_size,
-                    image_dir_path=args.coco_image_dir_path,
-                    annotations_json_path=args.coco_annotations_json_path,
-                    num_samples=args.num_samples,
+                cider_score = evaluate_captioning(
+                    args,
+                    eval_model=eval_model,
                     num_shots=shot,
-                    device=args.device,
                     seed=seed,
+                    dataset_name="coco",
                 )
                 print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
                 scores.append(cider_score)
@@ -245,18 +274,11 @@ def main():
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
                 ok_vqa_score = evaluate_vqa(
-                    model=flamingo,
-                    tokenizer=tokenizer,
-                    image_processor=image_processor,
-                    batch_size=args.batch_size,
-                    num_samples=args.num_samples,
+                    args=args,
+                    eval_model=eval_model,
                     num_shots=shot,
-                    device=args.device,
                     seed=seed,
-                    image_dir_path=args.ok_vqa_image_dir_path,
-                    questions_json_path=args.ok_vqa_questions_json_path,
-                    annotations_json_path=args.ok_vqa_annotations_json_path,
-                    vqa_dataset="ok_vqa",
+                    dataset_name="ok_vqa",
                 )
                 print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
                 scores.append(ok_vqa_score)
@@ -271,18 +293,11 @@ def main():
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
                 vqa_score = evaluate_vqa(
-                    model=flamingo,
-                    tokenizer=tokenizer,
-                    image_processor=image_processor,
-                    batch_size=args.batch_size,
-                    num_samples=args.num_samples,
+                    args=args,
+                    eval_model=eval_model,
                     num_shots=shot,
-                    device=args.device,
                     seed=seed,
-                    image_dir_path=args.vqav2_image_dir_path,
-                    questions_json_path=args.vqav2_questions_json_path,
-                    annotations_json_path=args.vqav2_annotations_json_path,
-                    vqa_dataset="vqa",
+                    dataset_name="vqav2",
                 )
                 print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
                 scores.append(vqa_score)
@@ -297,13 +312,10 @@ def main():
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
                 imagenet_score = evaluate_imagenet(
-                    model=flamingo,
-                    tokenizer=tokenizer,
-                    image_processor=image_processor,
+                    eval_model=eval_model,
                     batch_size=args.batch_size,
                     num_samples=args.num_samples,
                     num_shots=shot,
-                    device=args.device,
                     seed=seed,
                     imagenet_root=args.imagenet_root,
                 )
@@ -335,207 +347,135 @@ def get_random_indices(num_samples, query_set_size, full_dataset, seed):
     return random_indices
 
 
-def prepare_eval_samples_and_dataset(full_dataset, random_indices, query_set_size):
-    # get in context samples
-    in_context_samples = [full_dataset[i] for i in random_indices[:query_set_size]]
-    eval_dataset = torch.utils.data.Subset(
-        full_dataset, random_indices[query_set_size:]
-    )
-    return in_context_samples, eval_dataset
+def get_query_set(train_dataset, query_set_size, seed):
+    np.random.seed(seed)
+    query_set = np.random.choice(len(train_dataset), query_set_size, replace=False)
+    return [train_dataset[i] for i in query_set]
 
 
-def get_context_images(image_processor, in_context_samples, num_shots):
-    if num_shots > 0:
-        context_images = [
-            image_processor(s["image"]).unsqueeze(0) for s in in_context_samples
-        ]
-        context_images = torch.cat(context_images, dim=0)
-        context_images = context_images.unsqueeze(1).unsqueeze(0)
-    else:
-        context_images = None
-    return context_images
-
-
-def get_context_text(
-    get_prompt: Callable[[dict], str],
-    in_context_samples,
-    effective_num_shots,
-    num_shots,
-) -> str:
-    context_text = (
-        "".join([get_prompt(s) for s in in_context_samples])
-        if effective_num_shots > 0
-        else ""
-    )
-
-    if num_shots == 0:
-        context_text = context_text.replace("<image>", "")
-    return context_text
-
-
-def prepare_batch_images(batch, image_processor, context_images, num_shots):
-    batch_images = None
-    for b, sample_imgs in zip(batch, context_images):
-        b_image = image_processor(b["image"]).unsqueeze(0).unsqueeze(1).unsqueeze(0)
-        b_image = torch.cat([sample_imgs, b_image], dim=1) if num_shots > 0 else b_image
-
-        if batch_images is None:
-            batch_images = b_image
-        else:
-            batch_images = torch.cat([batch_images, b_image], dim=0)
-    return batch_images
+def prepare_eval_samples(test_dataset, num_samples, seed):
+    np.random.seed(seed)
+    random_indices = np.random.choice(len(test_dataset), num_samples, replace=False)
+    return torch.utils.data.Subset(test_dataset, random_indices)
 
 
 def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
     return [random.sample(query_set, num_samples) for _ in range(batch_size)]
 
 
-def get_outputs(
-    model,
-    batch_images,
-    device,
-    attention_mask,
-    max_generation_length,
-    num_beams,
-    length_penalty,
-    input_ids,
-):
-    with torch.inference_mode():
-        outputs = model.generate(
-            batch_images.to(device if device >= 0 else "cpu"),
-            input_ids.to(device if device >= 0 else "cpu"),
-            attention_mask=attention_mask.to(device if device >= 0 else "cpu"),
-            max_new_tokens=max_generation_length,
-            num_beams=num_beams,
-            length_penalty=length_penalty,
-        )
-
-    outputs = outputs[:, len(input_ids[0]) :]
-    return outputs
+def compute_effective_num_shots(num_shots, model_type):
+    if model_type == "open_flamingo":
+        return num_shots if num_shots > 0 else 2
+    return num_shots
 
 
-def evaluate_coco_flickr(
-    model,
-    tokenizer,
-    image_processor,
-    batch_size,
-    image_dir_path,
-    annotations_json_path,
-    seed=42,
-    max_generation_length=20,
-    num_beams=3,
-    length_penalty=-2.0,
-    num_samples=5000,
-    query_set_size=2048,
-    num_shots=8,
-    device=-1,
-    is_flickr=False,
+def evaluate_captioning(
+    args: argparse.Namespace,
+    eval_model: BaseEvalModel,
+    seed: int = 42,
+    max_generation_length: int = 20,
+    num_beams: int = 3,
+    length_penalty: float = -2.0,
+    num_shots: int = 8,
+    dataset_name: str = "coco",
 ):
     """Evaluate a model on COCO dataset.
 
     Args:
-        model (nn.Module): model to evaluate
-        tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
-        image_processor : image processor for the model
-        batch_size (int): batch size
-        image_dir_path (str, optional): path to the directory containing the images.
-        annotations_json_path (str, optional): path to the json file containing the annotations.
+        args (argparse.Namespace): arguments
+        eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): seed for random number generator. Defaults to 42.
-        max_generation_length (int, optional): maximum length of the generated caption. Defaults to 10.
+        max_generation_length (int, optional): maximum length of the generated caption. Defaults to 20.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
-        num_samples (int, optional): number of samples to evaluate on. Defaults to 5000.
-        query_set_size (int, optional): number of samples to use for query set. Defaults to 2048.
         num_shots (int, optional): number of in-context samples to use. Defaults to 8.
-        device (int, optional): device to use. Defaults to -1.
-        num_workers (int, optional): number of workers to use for dataloader. Defaults to 4.
-        is_flickr (bool): defines if that data is COCO or Flickr. Defaults to False (COCO).
-
+        dataset_name (str, optional): dataset to evaluate on. Can be "coco" or "flickr". Defaults to "coco".
     Returns:
         float: CIDEr score
 
     """
 
-    full_dataset = COCOFlickrDataset(
-        image_dir_path=image_dir_path,
-        annotations_path=annotations_json_path,
-        is_flickr=is_flickr,
+    if dataset_name == "coco":
+        image_train_dir_path = args.coco_train_image_dir_path
+        image_val_dir_path = args.coco_val_image_dir_path
+        annotations_path = args.coco_karpathy_json_path
+    elif dataset_name == "flickr":
+        image_train_dir_path = (
+            args.flickr_image_dir_path
+        )  # Note: calling this "train" for consistency with COCO but Flickr only has one split for images
+        image_val_dir_path = None
+        annotations_path = args.flickr_karpathy_json_path
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+    train_dataset = CaptionDataset(
+        image_train_dir_path=image_train_dir_path,
+        image_val_dir_path=image_val_dir_path,
+        annotations_path=annotations_path,
+        is_train=True,
+        dataset_name=dataset_name,
     )
-    effective_num_shots = num_shots if num_shots > 0 else 2
-    random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
 
-    in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
-        full_dataset=full_dataset,
-        random_indices=random_indices,
-        query_set_size=query_set_size,
+    test_dataset = CaptionDataset(
+        image_train_dir_path=image_train_dir_path,
+        image_val_dir_path=image_val_dir_path,
+        annotations_path=annotations_path,
+        is_train=False,
+        dataset_name=dataset_name,
     )
 
-    model.eval()
+    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
-    def get_prompt(sample):
-        return f"<image>Output:{sample['caption'].strip()}<|endofchunk|>"
+    test_dataset = prepare_eval_samples(
+        test_dataset,
+        args.num_samples if args.num_samples > 0 else len(test_dataset),
+        seed,
+    )
+
+    in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
 
     predictions = defaultdict()
 
-    desc = "Running inference Flickr30" if is_flickr else "Running inference COCO"
-
-    for batch in more_itertools.chunked(tqdm(eval_dataset, desc=desc), batch_size):
+    for batch in more_itertools.chunked(
+        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+        args.batch_size,
+    ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
         )
 
-        context_images = [
-            get_context_images(
-                image_processor=image_processor,
-                in_context_samples=batch_demo_samples[i],
-                num_shots=num_shots,
+        batch_images = []
+        batch_text = []
+        for i in range(len(batch)):
+            if num_shots > 0:
+                context_images = [x["image"] for x in batch_demo_samples[i]]
+            else:
+                context_images = []
+            batch_images.append(context_images + [batch[i]["image"]])
+
+            context_text = "".join(
+                [
+                    eval_model.get_caption_prompt(caption=x["caption"].strip())
+                    for x in batch_demo_samples[i]
+                ]
             )
-            for i in range(len(batch))
-        ]
 
-        context_text = [
-            get_context_text(
-                get_prompt,
-                in_context_samples=batch_demo_samples[i],
-                effective_num_shots=effective_num_shots,
-                num_shots=num_shots,
-            )
-            for i in range(len(batch))
-        ]
+            # Keep the text but remove the image tags for the zero-shot case
+            if num_shots == 0:
+                context_text = context_text.replace("<image>", "")
 
-        batch_images = prepare_batch_images(
-            batch=batch,
-            image_processor=image_processor,
-            context_images=context_images,
-            num_shots=num_shots,
-        )
+            batch_text.append(context_text + eval_model.get_caption_prompt())
 
-        batch_text = [f"{context_text[i]}<image>Output:" for i in range(len(batch))]
-
-        tokenizer.padding_side = "left"
-        encodings = tokenizer(
-            batch_text,
-            padding="longest",
-            truncation=True,
-            return_tensors="pt",
-            max_length=2000,
-        )
-        input_ids = encodings["input_ids"]
-        attention_mask = encodings["attention_mask"]
-
-        outputs = get_outputs(
-            model=model,
+        outputs = eval_model.get_outputs(
             batch_images=batch_images,
-            device=device,
-            attention_mask=attention_mask,
+            batch_text=batch_text,
             max_generation_length=max_generation_length,
             num_beams=num_beams,
             length_penalty=length_penalty,
-            input_ids=input_ids,
         )
+
         new_predictions = [
-            postprocess_captioning_generation(out).replace('"', "")
-            for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
+            postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
 
         for i, sample in enumerate(batch):
@@ -544,12 +484,8 @@ def evaluate_coco_flickr(
             }
 
     # save the predictions to a temporary file
-    random_uuid = str(uuid.uuid4())
-    results_path = (
-        f"flickrresults_{random_uuid}.json"
-        if is_flickr
-        else f"cocoresults_{random_uuid}.json"
-    )
+    results_path = f"{dataset_name}results_{uuid.uuid4()}.json"
+
     with open(results_path, "w") as f:
         f.write(
             json.dumps(
@@ -563,157 +499,134 @@ def evaluate_coco_flickr(
 
     metrics = compute_cider(
         result_path=results_path,
-        annotations_path=annotations_json_path,
+        annotations_path=args.coco_annotations_json_path
+        if dataset_name == "coco"
+        else args.flickr_annotations_json_path,
     )
 
     # delete the temporary file
-    # os.remove(results_path)
+    os.remove(results_path)
 
     return metrics["CIDEr"] * 100.0
 
 
 def evaluate_vqa(
-    model,
-    tokenizer,
-    image_processor,
-    batch_size,
-    image_dir_path,
-    questions_json_path,
-    annotations_json_path,
-    seed=42,
-    max_generation_length=5,
-    num_beams=3,
-    length_penalty=-2.0,
-    num_samples=5000,
-    query_set_size=2048,
-    num_shots=8,
-    device=-1,
-    vqa_dataset="vqa",
+    args: argparse.Namespace,
+    eval_model: BaseEvalModel,
+    seed: int = 42,
+    max_generation_length: int = 5,
+    num_beams: int = 3,
+    length_penalty: float = -2.0,
+    num_shots: int = 8,
+    dataset_name: str = "vqav2",
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0.
 
     Args:
-        model (nn.Module): model to evaluate
-        tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
-        image_processor : image processor for the model
-        batch_size (int): batch size
-        image_dir_path (str): path to image directory
-        questions_json_path (str): path to questions json file
-        annotations_json_path (str): path to annotations json file
+        args (argparse.Namespace): arguments
+        eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): random seed. Defaults to 42.
         max_generation_length (int, optional): max generation length. Defaults to 5.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
-        num_samples (int, optional): number of samples to evaluate on. Defaults to 5000 samples.
-        query_set_size (int, optional): size of the query set. Defaults to 2048.
         num_shots (int, optional): number of shots to use. Defaults to 8.
-        device (int, optional): device to use. Defaults to -1 (cpu).
-        num_workers (int, optional): number of workers to use. Defaults to 4.
-        vqa_dataset (string): type of vqa dataset: currently supports vqa, ok_vqa. Defaults to vqa.
+        dataset_name (string): type of vqa dataset: currently supports vqav2, ok_vqa. Defaults to vqav2.
     Returns:
         float: accuracy score
     """
 
-    full_dataset = VQADataset(
-        image_dir_path=image_dir_path,
-        question_path=questions_json_path,
-        annotations_path=annotations_json_path,
-        vqa_dataset=vqa_dataset,
+    if dataset_name == "ok_vqa":
+        train_image_dir_path = args.ok_vqa_train_image_dir_path
+        train_questions_json_path = args.ok_vqa_train_questions_json_path
+        train_annotations_json_path = args.ok_vqa_train_annotations_json_path
+        test_image_dir_path = args.ok_vqa_test_image_dir_path
+        test_questions_json_path = args.ok_vqa_test_questions_json_path
+        test_annotations_json_path = args.ok_vqa_test_annotations_json_path
+    elif dataset_name == "vqav2":
+        train_image_dir_path = args.vqav2_train_image_dir_path
+        train_questions_json_path = args.vqav2_train_questions_json_path
+        train_annotations_json_path = args.vqav2_train_annotations_json_path
+        test_image_dir_path = args.vqav2_test_image_dir_path
+        test_questions_json_path = args.vqav2_test_questions_json_path
+        test_annotations_json_path = args.vqav2_test_annotations_json_path
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+    train_dataset = VQADataset(
+        image_dir_path=train_image_dir_path,
+        question_path=train_questions_json_path,
+        annotations_path=train_annotations_json_path,
+        is_train=True,
     )
 
-    effective_num_shots = num_shots if num_shots > 0 else 2
-
-    if num_samples + effective_num_shots > len(full_dataset):
-        raise ValueError(
-            f"num_samples + num_shots must be less than or equal to {len(full_dataset)}"
-        )
-
-    random_indices = get_random_indices(num_samples, query_set_size, full_dataset, seed)
-
-    def get_prompt(sample, train=True):
-        return f"<image>Question:{sample['question'].strip()} Short answer:{sample['answers'][0].strip() if train else ''}{'<|endofchunk|>' if train else ''}"
-
-    in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
-        full_dataset=full_dataset,
-        random_indices=random_indices,
-        query_set_size=query_set_size,
+    test_dataset = VQADataset(
+        image_dir_path=test_image_dir_path,
+        question_path=test_questions_json_path,
+        annotations_path=test_annotations_json_path,
+        is_train=False,
     )
 
-    model.eval()
+    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
+
+    test_dataset = prepare_eval_samples(
+        test_dataset,
+        args.num_samples if args.num_samples > 0 else len(test_dataset),
+        seed,
+    )
+
+    in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
     predictions = []
 
     for batch in more_itertools.chunked(
-        tqdm(eval_dataset, desc="Running inference"), batch_size
+        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
+        args.batch_size,
     ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
         )
 
-        context_images = [
-            get_context_images(
-                image_processor=image_processor,
-                in_context_samples=batch_demo_samples[i],
-                num_shots=num_shots,
+        batch_images = []
+        batch_text = []
+        for i in range(len(batch)):
+            if num_shots > 0:
+                context_images = [x["image"] for x in batch_demo_samples[i]]
+            else:
+                context_images = []
+            batch_images.append(context_images + [batch[i]["image"]])
+
+            context_text = "".join(
+                [
+                    eval_model.get_vqa_prompt(
+                        question=x["question"], answer=x["answers"][0]
+                    )
+                    for x in batch_demo_samples[i]
+                ]
             )
-            for i in range(len(batch))
-        ]
 
-        context_text = [
-            get_context_text(
-                get_prompt,
-                in_context_samples=batch_demo_samples[i],
-                effective_num_shots=effective_num_shots,
-                num_shots=num_shots,
+            # Keep the text but remove the image tags for the zero-shot case
+            if num_shots == 0:
+                context_text = context_text.replace("<image>", "")
+
+            batch_text.append(
+                context_text + eval_model.get_vqa_prompt(question=batch[i]["question"])
             )
-            for i in range(len(batch))
-        ]
 
-        batch_images = prepare_batch_images(
-            batch=batch,
-            image_processor=image_processor,
-            context_images=context_images,
-            num_shots=num_shots,
-        )
-
-        batch_text = [
-            context_text[i] + get_prompt(s, train=False) for i, s in enumerate(batch)
-        ]
-
-        tokenizer.padding_side = "left"
-        encodings = tokenizer(
-            batch_text,
-            return_tensors="pt",
-            padding="longest",
-            truncation=True,
-            max_length=2000,
-        )
-        input_ids = encodings["input_ids"].to(device if device >= 0 else "cpu")
-        attention_mask = encodings["attention_mask"].to(
-            device if device >= 0 else "cpu"
-        )
-
-        outputs = get_outputs(
-            model=model,
+        outputs = eval_model.get_outputs(
             batch_images=batch_images,
-            device=device,
-            attention_mask=attention_mask,
+            batch_text=batch_text,
             max_generation_length=max_generation_length,
             num_beams=num_beams,
             length_penalty=length_penalty,
-            input_ids=input_ids,
         )
 
         process_function = (
             postprocess_vqa_generation
-            if vqa_dataset == "vqa"
+            if dataset_name == "vqav2"
             else postprocess_ok_vqa_generation
         )
 
-        new_predictions = [
-            process_function(out)
-            for out in tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        ]
+        new_predictions = map(process_function, outputs)
 
         predictions.extend(
             [
@@ -723,242 +636,216 @@ def evaluate_vqa(
         )
     # save the predictions to a temporary file
     random_uuid = str(uuid.uuid4())
-    with open(f"{vqa_dataset}results_{random_uuid}.json", "w") as f:
+    with open(f"{dataset_name}results_{random_uuid}.json", "w") as f:
         f.write(json.dumps(predictions, indent=4))
 
     acc = compute_vqa_accuracy(
-        f"{vqa_dataset}results_{random_uuid}.json",
-        questions_json_path,
-        annotations_json_path,
+        f"{dataset_name}results_{random_uuid}.json",
+        args.ok_vqa_test_questions_json_path
+        if dataset_name == "ok_vqa"
+        else args.vqav2_test_questions_json_path,
+        args.ok_vqa_test_annotations_json_path
+        if dataset_name == "ok_vqa"
+        else args.vqav2_test_annotations_json_path,
     )
 
     # delete the temporary file
-    # os.remove(f"{vqa_dataset}results_{random_uuid}.json")
+    os.remove(f"{dataset_name}results_{random_uuid}.json")
 
     return acc
 
 
 def evaluate_imagenet(
-    model,
-    tokenizer,
-    image_processor,
+    eval_model,
     batch_size: int,
     imagenet_root: str,
     seed: int = 42,
     num_samples: int = 5000,
     num_shots: int = 8,
-    device: int = -1,
 ):
     """
     Evaluate a model on ImageNet dataset.
 
     Args:
-        model: model to evaluate
-        tokenizer (transformers.PreTrainedTokenizer): tokenizer for the model
-        image_processor : image processor for the model
+        eval_model (BaseEvalModel): model to evaluate
         batch_size (int): batch size
         imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
         num_samples (int, optional): number of samples to evaluate on. Defaults to 5000 samples.
         num_shots (int, optional): number of shots to use. Defaults to 8.
-        device (int, optional): device to use. Defaults to -1 (cpu).
 
     Returns:
         float: accuracy score
     """
-
-    full_dataset = ImageNetDataset(root=imagenet_root)
-
-    effective_num_shots = num_shots if num_shots > 0 else 2
-
-    if num_samples + effective_num_shots > len(full_dataset):
-        raise ValueError(
-            f"num_samples + num_shots must be less than or equal to "
-            f"{len(full_dataset)} "
+    if not hasattr(eval_model, "model") or not hasattr(eval_model, "tokenizer"):
+        raise NotImplementedError(
+            "evaluate_imagenet is currently only supported for OpenFlamingo " "models"
         )
+    np.random.seed(seed)
+    model, tokenizer = eval_model.model, eval_model.tokenizer
+    assert isinstance(model, Flamingo)
 
-    random_indices = get_random_indices(
-        num_samples, effective_num_shots, full_dataset, seed
+    train_dataset = ImageNetDataset(os.path.join(imagenet_root, "train"))
+    val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
+
+    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
+    tokenizer.padding_side = (
+        "left"  # For generation padding tokens should be on the left
     )
 
-    eoc_token = "<|endofchunk|>"
-    eoc_token_id = tokenizer.additional_special_tokens_ids[
-        tokenizer.additional_special_tokens.index(eoc_token)
-    ]
+    acc1 = 0
+    acc5 = 0
+    prompt_text = "<image>A photo of a"
 
-    # Padding from right allows efficient precomputing of context activations.
-    tokenizer.padding_side = "right"
+    val_iterator = more_itertools.chunked(val_dataset, batch_size)
+    for batch_idx, batch in enumerate(val_iterator):
+        batch_images = []
+        batch_text = []
 
-    def _imagenet_prompt(class_name, is_context: bool = True):
-        """Construct an imagenet prompt for a given label."""
-        prefix = "<image>A photo of a "
-        if is_context:
-            return prefix + class_name.strip()
-        else:
-            # Not a context example; insert EOS token before the class name
-            # so that we can compute the loss on the class name tokens only.
-            return prefix + tokenizer.eos_token + class_name.strip()
-
-    def get_imagenet_prompt(x: dict, is_context: bool = True) -> str:
-        """Construct an ImageNet prompt for an example, using its label."""
-        return _imagenet_prompt(x["class_name"], is_context=is_context)
-
-    in_context_samples, eval_dataset = prepare_eval_samples_and_dataset(
-        full_dataset=full_dataset,
-        random_indices=random_indices,
-        query_set_size=effective_num_shots,  # NOTE: here we replace query_set_size with effective_num_shots but this is not the ideal evaluation setting.
-        # TODO: We should add a query_set_size argument to the function and use it to randomly sample the context for each example.
-        # This will be more consistent with the evaluation setting in the paper but will require some reworking of the caching.
-    )
-
-    device = device if device >= 0 else "cpu"
-
-    model.eval()
-    # Predictions based on the class target sequence with the maximal
-    # predicted probability
-    predictions_max_prob = []
-    # Predictions based on the class target sequence with the minimal loss on
-    # the model logits
-    predictions_min_loss = []
-    labels = []
-
-    context_images = [
-        get_context_images(
-            image_processor=image_processor,
-            in_context_samples=in_context_samples,
-            num_shots=num_shots,
-        )
-        for _ in range(batch_size)
-    ]
-
-    context_text = get_context_text(
-        get_imagenet_prompt,
-        in_context_samples=in_context_samples,
-        effective_num_shots=effective_num_shots,
-        num_shots=num_shots,
-    )
-
-    # kwargs to use when calling tokenizer
-    tokenizer_kwargs = {
-        "return_tensors": "pt",
-        "padding": True,
-        "truncation": True,
-        "max_length": 256,
-    }
-
-    for i, batch in enumerate(more_itertools.chunked(eval_dataset, batch_size)):
-        print(f"processing batch {i} of {ceil(len(eval_dataset) / batch_size)}")
-        batch_per_class_probs = []
-        batch_per_class_losses = []
-        batch_images = prepare_batch_images(
-            batch=batch,
-            image_processor=image_processor,
-            context_images=context_images,
-            num_shots=num_shots,
-        )
-
-        # Process the images only once.
-        batch_images = batch_images.to(device)
-        model._encode_vision_x(vision_x=batch_images)
-
-        # Process the context text only once.
-        context_encodings = tokenizer([context_text] * batch_size, **tokenizer_kwargs)
-        context_ids = context_encodings["input_ids"].to(device)
-        context_len = context_ids.shape[-1]
-        context_precomputed = model(
-            None,
-            context_ids,
-            use_cached_vision_x=True,
-            clear_conditioned_layers=False,
-            use_cache=True,
-        )
-
-        # For each ImageNet class, construct the output prompt, compute a
-        # forward pass, and store the results.
-        for imagenet_class_name in tqdm(openai_imagenet_classnames):
-            batch_text = [
-                context_text + _imagenet_prompt(imagenet_class_name, False) + eoc_token
-            ] * batch_size
-
-            full_batch_encodings = tokenizer(batch_text, **tokenizer_kwargs)
-
-            # full_batch_input_ids has shape [batch_size, seq_len], but we
-            # only need to run inference on the [batch_size,
-            # context_len:] inputs that have not been precomputed and
-            # vary per class.
-            full_batch_input_ids = full_batch_encodings["input_ids"].to(device)
-            full_batch_attention_mask = full_batch_encodings["attention_mask"].to(
-                device
+        for idx in range(len(batch)):
+            # Choose a different set of random context samples for each sample
+            # from the training set
+            context_indices = np.random.choice(
+                len(train_dataset), effective_num_shots, replace=False
             )
 
-            # Sanity check that the encoded inputs with context are the same
-            # as the encoded context alone, for every example in the batch
-            assert torch.all(
-                context_ids[0, :] == full_batch_input_ids[:, :context_len]
-            ).item()
+            in_context_samples = [train_dataset[i] for i in context_indices]
 
-            # Clone the nested structure of the past key values
-            past_key_values = tuple(
-                [
-                    tuple([x.clone() for x in inner])
-                    for inner in context_precomputed.past_key_values
-                ]
+            vision_x = [
+                eval_model.image_processor(data["image"]).unsqueeze(0)
+                for data in in_context_samples
+            ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
+            batch_images.append(torch.cat(vision_x, dim=0))
+
+            context_class_names = [
+                in_context_samples[i]["class_name"] for i in range(effective_num_shots)
+            ]
+            context_text = "".join(
+                f"{prompt_text} {classname}<|endofchunk|>"
+                for classname in context_class_names
             )
+            batch_text.append(context_text)
 
-            # Compute the outputs without recomputing context representations.
-            outputs = model(
+        # shape [B, T_img, C, h, w]
+        vision_x = torch.stack(batch_images, dim=0)
+        # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
+        vision_x = vision_x.unsqueeze(2)
+        model._encode_vision_x(vision_x.cuda())
+
+        # Cache the context text: tokenize context and prompt,
+        # e.g. '<context> a picture of a '
+        ctx_and_prompt_tokenized = tokenizer(
+            [context_text + prompt_text + " " for context_text in batch_text],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048,
+        )
+
+        with torch.no_grad():
+            precomputed = model(
                 vision_x=None,
-                lang_x=full_batch_input_ids[:, context_len:],
-                attention_mask=full_batch_attention_mask,
-                use_cached_vision_x=True,
+                lang_x=ctx_and_prompt_tokenized["input_ids"].cuda(),
+                attention_mask=ctx_and_prompt_tokenized["attention_mask"].cuda(),
                 clear_conditioned_layers=False,
-                past_key_values=past_key_values,
+                use_cached_vision_x=True,
                 use_cache=True,
             )
 
-            logits = torch.concat((context_precomputed.logits, outputs.logits), 1)
+        def _detach_pkvs(pkvs):
+            """Detach a set of past key values."""
+            return tuple([tuple([x.detach() for x in inner]) for inner in pkvs])
 
-            per_sample_probs = compute_per_sample_probs(
-                encodings=full_batch_encodings,
-                tokenizer=tokenizer,
-                logits=logits,
-                eoc_token_id=eoc_token_id,
+        precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
+
+        precomputed_logits = precomputed.logits.detach()
+
+        overall_probs = []
+        for imagenet_class_name in tqdm(openai_imagenet_classnames):
+            past_key_values = None
+            # Tokenize only the class name and iteratively decode the model's
+            # predictions for this class.
+            classname_tokens = tokenizer(
+                imagenet_class_name, add_special_tokens=False, return_tensors="pt"
+            )["input_ids"].cuda()
+
+            if classname_tokens.ndim == 1:  # Case: classname is only 1 token
+                classname_tokens = torch.unsqueeze(classname_tokens, 1)
+
+            classname_tokens = repeat(
+                classname_tokens, "b s -> (repeat b) s", repeat=batch_size
             )
-            per_sample_loss = compute_per_sample_loss(
-                encodings=full_batch_encodings,
-                tokenizer=tokenizer,
-                logits=logits,
-                eoc_token_id=eoc_token_id,
+
+            # Compute the outputs one token at a time, using cached
+            # activations.
+
+            # Initialize the elementwise predictions with the last set of
+            # logits from precomputed; this will correspond to the predicted
+            # probability of the first position/token in the imagenet
+            # classname. We will append the logits for each token to this
+            # list (each element has shape [B, 1, vocab_size]).
+            elementwise_logits = [precomputed_logits[:, -2:-1, :]]
+
+            for token_idx in range(classname_tokens.shape[1]):
+                _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
+                with torch.no_grad():
+                    outputs = model(
+                        vision_x=None,
+                        lang_x=_lang_x,
+                        clear_conditioned_layers=False,
+                        use_cached_vision_x=True,
+                        past_key_values=(
+                            past_key_values if token_idx > 0 else precomputed_pkvs
+                        ),
+                        use_cache=True,
+                    )
+                past_key_values = _detach_pkvs(outputs.past_key_values)
+                elementwise_logits.append(outputs.logits.detach())
+
+            # logits/probs has shape [B, classname_tokens + 1, vocab_size]
+            logits = torch.concat(elementwise_logits, 1)
+            probs = torch.softmax(logits, dim=-1).detach()
+
+            # collect the probability of the generated token -- probability
+            # at index 0 corresponds to the token at index 1.
+            probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
+
+            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1)
+
+            class_prob = torch.prod(gen_probs, 1).detach().cpu().numpy()
+            overall_probs.append(class_prob)
+
+        overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
+
+        def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
+            """Return the indices of the top k elements in probs_ary."""
+            return np.argsort(probs_ary)[::-1][:k]
+
+        for i in range(batch_size):
+            top5 = [
+                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                for pred in topk(overall_probs[i], 5)
+            ]
+
+            y_i = batch[i]["class_name"]
+            acc5 += int(y_i in set(top5))
+            acc1 += int(y_i == top5[0])
+
+            print(
+                f"DEBUG: batch {idx} elem {i} of {batch_size}:"
+                f"label {y_i} // top5 {top5}"
             )
-            batch_per_class_probs.append(per_sample_probs.detach())
-            batch_per_class_losses.append(per_sample_loss.detach())
 
-        # Tensor of shape [batch_size, 1000] where the [i,j]th element is
-        # the (probability or loss) for batch element i on imagenet class j.
-        batch_probs = torch.stack(batch_per_class_probs, 1)
-        batch_losses = torch.stack(batch_per_class_losses, 1)
-
-        predictions_max_prob.extend(torch.argmax(batch_probs, 1).detach().tolist())
-        predictions_min_loss.extend(torch.argmin(batch_losses, 1).detach().tolist())
-        labels.extend(x["class_id"] for x in batch)
-
-    acc_max_prob = (np.array(predictions_max_prob) == np.array(labels)).mean()
-    acc_min_loss = (np.array(predictions_min_loss) == np.array(labels)).mean()
-    print(f"[DEBUG] ImageNet accuracy with max prob method is {acc_max_prob}")
-    print(f"[DEBUG] ImageNet accuracy with min loss method is {acc_min_loss}")
-    print(f"[DEBUG] printing ImageNet predictions and labels:")
-    for yhat_prob, yhat_loss, y in zip(
-        predictions_max_prob, predictions_min_loss, labels
-    ):
+        examples_seen = (batch_idx + 1) * batch_size
         print(
-            " " * 30 + f"label: {IMAGENET_1K_CLASS_ID_TO_LABEL[y]}"
-            f"\nprediction (max prob method): "
-            f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_prob]}"
-            f"\nprediction (min loss method): "
-            f"{IMAGENET_1K_CLASS_ID_TO_LABEL[yhat_loss]}\n"
-            "#" * 25
+            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
+                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
+            )
         )
-    return acc_max_prob
+        if batch_idx * batch_size >= num_samples - 1:
+            break
+
+    return float(acc1) / num_samples
 
 
 if __name__ == "__main__":
