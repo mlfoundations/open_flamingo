@@ -11,23 +11,19 @@ import more_itertools
 import numpy as np
 import torch
 
-
-from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
 
-
-from eval_datasets import VQADataset, ImageNetDataset
+from open_flamingo.eval.eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
+from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.eval.imagenet_utils import (
     openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
 )
-
-from eval_model import BaseEvalModel
-
+from open_flamingo.eval.coco_metric import compute_cider, postprocess_captioning_generation
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
+from open_flamingo.eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 from open_flamingo.src.flamingo import Flamingo
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
+from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -212,6 +208,28 @@ parser.add_argument(
     default="open_flamingo",
 )
 
+# Distributed evaluation
+parser.add_argument(
+    "--dist-url",
+    default="env://",
+    type=str,
+    help="url used to set up distributed training",
+)
+parser.add_argument(
+    "--dist-backend", default="nccl", type=str, help="distributed backend"
+)
+parser.add_argument(
+    "--horovod",
+    default=False,
+    action="store_true",
+    help="Use horovod for distributed training.",
+)
+parser.add_argument(
+    "--no-set-device-rank",
+    default=False,
+    action="store_true",
+    help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
+)
 
 def main():
     args, leftovers = parser.parse_known_args()
@@ -221,6 +239,12 @@ def main():
         leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
     }
     eval_model = module.EvalModel(model_args)
+
+    # set up distributed evaluation
+    args.local_rank, args.rank, args.world_size = world_info_from_env()
+    device_id = init_distributed_device(args)
+    eval_model.set_device(device_id)
+    eval_model.init_distributed()
 
     if args.model != "open_flamingo" and args.shots != [0]:
         raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
@@ -242,12 +266,15 @@ def main():
                     seed=seed,
                     dataset_name="flickr",
                 )
-                print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
-                scores.append(cider_score)
-            print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
-            results["flickr30"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
+                if args.rank == 0:
+                    print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
+                    scores.append(cider_score)
+
+            if args.rank == 0:
+                print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+                results["flickr30"].append(
+                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                )
 
     if args.eval_coco:
         print("Evaluating on COCO...")
@@ -261,12 +288,15 @@ def main():
                     seed=seed,
                     dataset_name="coco",
                 )
-                print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
-                scores.append(cider_score)
-            print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
-            results["coco"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
+                if args.rank == 0:
+                    print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
+                    scores.append(cider_score)
+
+            if args.rank == 0:
+                print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+                results["coco"].append(
+                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                )
 
     if args.eval_ok_vqa:
         print("Evaluating on OK-VQA...")
@@ -280,12 +310,15 @@ def main():
                     seed=seed,
                     dataset_name="ok_vqa",
                 )
-                print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
-                scores.append(ok_vqa_score)
-            print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
-            results["ok_vqa"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
+                if args.rank == 0:
+                    print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
+                    scores.append(ok_vqa_score)
+
+            if args.rank == 0:
+                print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
+                results["ok_vqa"].append(
+                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                )
 
     if args.eval_vqav2:
         print("Evaluating on VQAv2...")
@@ -299,12 +332,15 @@ def main():
                     seed=seed,
                     dataset_name="vqav2",
                 )
-                print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
-                scores.append(vqa_score)
-            print(f"Shots {shot} Mean VQA score: {np.mean(scores)}")
-            results["vqav2"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
+                if args.rank == 0:
+                    print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
+                    scores.append(vqa_score)
+
+            if args.rank == 0:
+                print(f"Shots {shot} Mean VQA score: {np.mean(scores)}")
+                results["vqav2"].append(
+                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                )
 
     if args.eval_imagenet:
         print("Evaluating on ImageNet...")
@@ -319,16 +355,19 @@ def main():
                     seed=seed,
                     imagenet_root=args.imagenet_root,
                 )
-                print(
-                    f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
-                )
-                scores.append(imagenet_score)
-            print(f"Shots {shot} Mean ImageNet score: {np.mean(scores)}")
-            results["imagenet"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
+                if args.rank == 0:
+                    print(
+                        f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
+                    )
+                    scores.append(imagenet_score)
 
-    if args.results_file is not None:
+            if args.rank == 0:
+                print(f"Shots {shot} Mean ImageNet score: {np.mean(scores)}")
+                results["imagenet"].append(
+                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                )
+
+    if args.rank == 0 and args.results_file is not None:
         with open(args.results_file, "w") as f:
             json.dump(results, f)
 
@@ -353,10 +392,15 @@ def get_query_set(train_dataset, query_set_size, seed):
     return [train_dataset[i] for i in query_set]
 
 
-def prepare_eval_samples(test_dataset, num_samples, seed):
+def prepare_eval_samples(test_dataset, num_samples, batch_size, seed):
     np.random.seed(seed)
     random_indices = np.random.choice(len(test_dataset), num_samples, replace=False)
-    return torch.utils.data.Subset(test_dataset, random_indices)
+    dataset = torch.utils.data.Subset(test_dataset, random_indices)
+    sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+    loader = torch.utils.data.DataLoader(
+        dataset, batch_size=batch_size, sampler=sampler
+    )
+    return loader
 
 
 def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
@@ -429,6 +473,7 @@ def evaluate_captioning(
     test_dataset = prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
+        args.batch_size,
         seed,
     )
 
@@ -436,10 +481,7 @@ def evaluate_captioning(
 
     predictions = defaultdict()
 
-    for batch in more_itertools.chunked(
-        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-        args.batch_size,
-    ):
+    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
         )
@@ -482,6 +524,12 @@ def evaluate_captioning(
             predictions[sample["image_id"]] = {
                 "caption": new_predictions[i],
             }
+
+    # all gather 
+    all_predictions = [None] * (args.num_samples if args.num_samples > 0 else len(test_dataset))
+    torch.distributed.all_gather_object(all_predictions, predictions)
+
+    if args.rank != 0: return
 
     # save the predictions to a temporary file
     results_path = f"{dataset_name}results_{uuid.uuid4()}.json"
@@ -572,16 +620,14 @@ def evaluate_vqa(
     test_dataset = prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
+        args.batch_size,
         seed,
     )
 
     in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
     predictions = []
 
-    for batch in more_itertools.chunked(
-        tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
-        args.batch_size,
-    ):
+    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch)
         )
@@ -634,6 +680,13 @@ def evaluate_vqa(
                 for p, sample in zip(new_predictions, batch)
             ]
         )
+
+    # all gather 
+    all_predictions = [None] * (args.num_samples if args.num_samples > 0 else len(test_dataset))
+    torch.distributed.all_gather_object(all_predictions, predictions)
+
+    if args.rank != 0: return
+
     # save the predictions to a temporary file
     random_uuid = str(uuid.uuid4())
     with open(f"{dataset_name}results_{random_uuid}.json", "w") as f:
@@ -730,7 +783,7 @@ def evaluate_imagenet(
         vision_x = torch.stack(batch_images, dim=0)
         # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
         vision_x = vision_x.unsqueeze(2)
-        model._encode_vision_x(vision_x.cuda())
+        model._encode_vision_x(vision_x.to(device_id))
 
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
@@ -745,8 +798,8 @@ def evaluate_imagenet(
         with torch.no_grad():
             precomputed = model(
                 vision_x=None,
-                lang_x=ctx_and_prompt_tokenized["input_ids"].cuda(),
-                attention_mask=ctx_and_prompt_tokenized["attention_mask"].cuda(),
+                lang_x=ctx_and_prompt_tokenized["input_ids"].to(device_id),
+                attention_mask=ctx_and_prompt_tokenized["attention_mask"].to(device_id),
                 clear_conditioned_layers=False,
                 use_cached_vision_x=True,
                 use_cache=True,
@@ -767,7 +820,7 @@ def evaluate_imagenet(
             # predictions for this class.
             classname_tokens = tokenizer(
                 imagenet_class_name, add_special_tokens=False, return_tensors="pt"
-            )["input_ids"].cuda()
+            )["input_ids"].to(device_id)
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)

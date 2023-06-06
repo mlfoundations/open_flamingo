@@ -1,7 +1,7 @@
 import abc
 import argparse
 from typing import List
-
+from torch.nn.parallel import DistributedDataParallel as DDP
 from PIL import Image
 
 
@@ -16,6 +16,15 @@ class BaseEvalModel(abc.ABC):
                 has no applicable arguments, an error should be thrown if `args`
                 is non-empty.
         """
+
+    def init_distributed(self):
+        """Wrap model as DDP."""
+        self.model = DDP(self.model, device_ids=[self.model.device_id])
+
+    def set_device(self, device):
+        """Set device for model."""
+        self.device = device
+        self.model = self.model.to(device)
 
     def get_outputs(
         self,
