@@ -5,6 +5,7 @@ Credit: https://github.com/mlfoundations/open_clip/blob/main/src/training/distri
 
 import os
 import torch
+
 try:
     import horovod.torch as hvd
 except ImportError:
@@ -14,11 +15,14 @@ except ImportError:
 def is_global_master(args):
     return args.rank == 0
 
+
 def is_local_master(args):
     return args.local_rank == 0
 
+
 def is_master(args, local=False):
     return is_local_master(args) if local else is_global_master(args)
+
 
 def is_using_horovod():
     # NOTE w/ horovod run, OMPI vars should be set, but w/ SLURM PMI vars will be set

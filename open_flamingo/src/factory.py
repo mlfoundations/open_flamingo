@@ -41,7 +41,9 @@ def create_model_and_transforms(
     vision_encoder.visual.output_tokens = True
 
     text_tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path, local_files_only=use_local_files, trust_remote_code=True,
+        tokenizer_path,
+        local_files_only=use_local_files,
+        trust_remote_code=True,
     )
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens(
@@ -53,15 +55,20 @@ def create_model_and_transforms(
         text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
 
     lang_encoder = AutoModelForCausalLM.from_pretrained(
-        lang_encoder_path, local_files_only=use_local_files, trust_remote_code=True,
+        lang_encoder_path,
+        local_files_only=use_local_files,
+        trust_remote_code=True,
     )
     # hacks for mosaicml/mpt-1b-redpajama-200b-dolly
-    if "mosaicml/mpt-1b-redpajama-200b-dolly" in lang_encoder_path:
-        class EmbeddingFnMixin():
+    if "mpt-1b-redpajama-200b" in lang_encoder_path:
+
+        class EmbeddingFnMixin:
             def get_input_embeddings(self):
                 return self.transformer.wte
+
             def set_input_embeddings(self, new_embeddings):
                 self.transformer.wte = new_embeddings
+
         extend_instance(lang_encoder, EmbeddingFnMixin)
         lang_encoder.is_mpt_1b = True
     else:

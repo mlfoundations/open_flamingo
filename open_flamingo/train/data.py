@@ -32,6 +32,7 @@ try:
 except ImportError:
     hvd = None
 
+
 def preprocess_image(sample, image_processor):
     """
     Convert images to tensors for training.
@@ -43,6 +44,7 @@ def preprocess_image(sample, image_processor):
     image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
     return image
 
+
 def filter_no_caption_or_no_image(sample):
     """
     Filter out LAION samples with no caption or no image.
@@ -50,6 +52,7 @@ def filter_no_caption_or_no_image(sample):
     return ("txt" in sample) and (
         "png" in sample or "jpg" in sample or "jpeg" in sample
     )
+
 
 def preprocess_laion_text(sample, tokenizer, max_tokens=32):
     """
@@ -69,7 +72,10 @@ def preprocess_laion_text(sample, tokenizer, max_tokens=32):
     )
     return text["input_ids"], text["attention_mask"]
 
-def preprocess_gpt_interleaved(info, tokenizer, clip_processor, min_num_images, max_num_images, max_tokens=256):
+
+def preprocess_gpt_interleaved(
+    info, tokenizer, clip_processor, min_num_images, max_num_images, max_tokens=256
+):
     """
     Preprocess a ChatGPT-generated image-text sequence.
     """
@@ -78,7 +84,7 @@ def preprocess_gpt_interleaved(info, tokenizer, clip_processor, min_num_images, 
 
     # convert images from base64 to PIL
     images = []
-    for image_key in range(1, len(info["image_map"])+1):
+    for image_key in range(1, len(info["image_map"]) + 1):
         image_base64 = info["image_map"][f"_!_IMAGE{image_key}_!_"]["base64_image"]
         rawbytes = base64.b64decode(image_base64)
         images.append(Image.open(io.BytesIO(rawbytes)).convert("RGB"))
@@ -102,15 +108,19 @@ def preprocess_gpt_interleaved(info, tokenizer, clip_processor, min_num_images, 
         .replace(" <image>", "<image>")
     )
 
-    indices = [m.start() for m in re.finditer('<image>', text)]
+    indices = [m.start() for m in re.finditer("<image>", text)]
     if len(indices) > max_num_images:
-        start_index = indices[max_num_images-1]
+        start_index = indices[max_num_images - 1]
         text = text[:start_index]
-    
+
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=max_tokens, truncation=True, padding="max_length", return_tensors="pt"
+        text,
+        max_length=max_tokens,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
     )
 
     # reject sequences with too few images after truncation
@@ -123,20 +133,28 @@ def preprocess_gpt_interleaved(info, tokenizer, clip_processor, min_num_images, 
     if num_images < min_num_images:
         raise ValueError(f"Fewer than {min_num_images} images in sample")
 
-    return (
-        images_tensors,
-        (text_tensor["input_ids"], text_tensor["attention_mask"])
-    )
+    return (images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]))
 
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, min_num_images, max_num_images, max_tokens=256):
+
+def preprocess_interleaved(
+    sample,
+    tokenizer,
+    clip_processor,
+    sim_threshold,
+    min_num_images,
+    max_num_images,
+    max_tokens=256,
+):
     """
     Preprocess an interleaved image-text sequence, either by calling preprocess_gpt_interleaved (if the sequence
     is ChatGPT-generated) or by preprocessing in this function (if the sequences is from MMC4).
     """
     info = json.loads(sample[0])
     if "is_gpt" in info:
-        return preprocess_gpt_interleaved(info, tokenizer, clip_processor, min_num_images, max_num_images, max_tokens)
-    
+        return preprocess_gpt_interleaved(
+            info, tokenizer, clip_processor, min_num_images, max_num_images, max_tokens
+        )
+
     sentences = info["text_list"]
     sim_matrix = info["similarity_matrix"]
 
@@ -148,7 +166,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, min
 
         sim_ix = np.argmax(sim_vec)
         sim_score = sim_vec[sim_ix]
-        
+
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
@@ -169,7 +187,13 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, min
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
     if len(images_tensors) < max_num_images:
         zero_padding = torch.zeros(
-            (max_num_images - len(images_tensors), N_CHANNELS, INTERLEAVED_IMAGE_SIZE, INTERLEAVED_IMAGE_SIZE), dtype=torch.float
+            (
+                max_num_images - len(images_tensors),
+                N_CHANNELS,
+                INTERLEAVED_IMAGE_SIZE,
+                INTERLEAVED_IMAGE_SIZE,
+            ),
+            dtype=torch.float,
         )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
@@ -188,7 +212,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, min
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=max_tokens, truncation=True, padding="max_length", return_tensors="pt"
+        text,
+        max_length=max_tokens,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
     )
 
     # reject sequences with too few images (after truncation)
@@ -206,15 +234,22 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, min
         raise ValueError("Only one image in sample")
 
     # avoid the situation where there's one <image> token and it's at the end
-    if num_images == 1 and text_tensor["input_ids"][:, -1] == tokenizer.additional_special_tokens_ids[
-        tokenizer.additional_special_tokens.index("<image>")
-    ]:
-        raise ValueError("Only one image at the end of sample, so labels will all be -100")
+    if (
+        num_images == 1
+        and text_tensor["input_ids"][:, -1]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
+    ):
+        raise ValueError(
+            "Only one image at the end of sample, so labels will all be -100"
+        )
 
     return (
         images_tensors,
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
     )
+
 
 def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     """
@@ -242,13 +277,12 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         ]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
- 
+
     preprocess_fn = functools.partial(
         preprocess_interleaved,
         clip_processor=image_processor,
         tokenizer=tokenizer,
         sim_threshold=args.mmc4_textsim_threshold,
-        use_media_placement_augmentation=args.use_media_placement_augmentation,
         min_num_images=args.mmc4_min_num_images,
         max_num_images=args.mmc4_max_num_images,
     )

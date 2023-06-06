@@ -53,6 +53,7 @@ def train_one_epoch(
     optimizer,
     lr_scheduler,
     device_id,
+    wandb,
 ):
     # setup loaders
     num_batches_per_epoch_laion = laion_loader.num_batches
@@ -92,7 +93,7 @@ def train_one_epoch(
 
         #### LAION FORWARD PASS ####
         images = batch_laion[0].to(device_id, dtype=cast_dtype, non_blocking=True)
-        images = rearrange(images, "b c h w -> b t f c h w", t=1, f=1)
+        images = rearrange(images, "(b t f) c h w -> b t f c h w", t=1, f=1)
         input_ids = batch_laion[1][0].to(device_id, dtype=cast_dtype, non_blocking=True)
         attention_mask = batch_laion[1][1].to(
             device_id, dtype=cast_dtype, non_blocking=True
@@ -119,7 +120,7 @@ def train_one_epoch(
 
         #### MMC4 FORWARD PASS ####
         images = batch_mmc4[0].to(device_id, dtype=cast_dtype, non_blocking=True)
-        images = rearrange(images, "b t c h w -> b t f c h w", f=1)
+        images = rearrange(images, "b (t f) c h w -> b t f c h w", f=1)
         input_ids = torch.stack([x[0] for x in batch_mmc4[1]]).squeeze(1)
         attention_mask = torch.stack([x[1] for x in batch_mmc4[1]]).squeeze(1)
 
@@ -284,6 +285,7 @@ def train_one_epoch(
             print(
                 f"Step {num_steps+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f}"
             )
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

@@ -84,6 +84,7 @@ def get_dataset_size(shards):
     num_shards = len(shards_list)
     return total_size, num_shards
 
+
 def count_samples(dataloader):
     os.environ["WDS_EPOCH"] = "0"
     n_elements, n_batches = 0, 0
@@ -154,6 +155,7 @@ def pytorch_worker_seed(increment=0):
         return seed
     # fallback to wds rank based seed
     return wds.utils.pytorch_worker_seed()
+
 
 class detshuffle2(wds.PipelineStage):
     def __init__(

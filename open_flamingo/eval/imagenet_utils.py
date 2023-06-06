@@ -1005,3 +1005,12 @@ openai_imagenet_classnames = [
 IMAGENET_1K_CLASS_ID_TO_LABEL = dict(
     zip(range(len(openai_imagenet_classnames)), openai_imagenet_classnames)
 )
+
+
+def find_sub_list(sl, l):
+    results = []
+    sll = len(sl)
+    for ind in (i for i, e in enumerate(l) if e == sl[0]):
+        if l[ind : ind + sll] == sl:
+            results.append(ind + sll - 1)
+    return results
