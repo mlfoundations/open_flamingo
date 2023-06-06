@@ -167,13 +167,15 @@ class MaskedCrossAttention(nn.Module):
             media_locations: boolean mask identifying the media tokens in x
                 shape (B, T_txt)
             use_cached_media: bool
-                If true, treat all of x as if they occur after the last media 
-                registered in media_locations. T_txt does not need to exactly 
+                If true, treat all of x as if they occur after the last media
+                registered in media_locations. T_txt does not need to exactly
                 equal media_locations.shape[1] in this case
         """
 
-        if not use_cached_media: 
-            assert media_locations.shape[1] == x.shape[1], f"media_location.shape is {media_locations.shape} but x.shape is {x.shape}"
+        if not use_cached_media:
+            assert (
+                media_locations.shape[1] == x.shape[1]
+            ), f"media_location.shape is {media_locations.shape} but x.shape is {x.shape}"
 
         T_txt = x.shape[1]
         _, T_img, n = media.shape[:3]
@@ -192,19 +194,18 @@ class MaskedCrossAttention(nn.Module):
         sim = einsum("... i d, ... j d -> ... i j", q, k)
 
         if exists(media_locations):
-
             media_time = torch.arange(T_img, device=x.device) + 1
 
             if use_cached_media:
                 # text time is set to the last cached media location
                 text_time = repeat(
                     torch.count_nonzero(media_locations, dim=1),
-                    "b -> b i", i=T_txt,
+                    "b -> b i",
+                    i=T_txt,
                 )
             else:
                 # at each boolean of True, increment the time counter (relative to media time)
                 text_time = media_locations.cumsum(dim=-1)
-                
 
             # text time must equal media time if only attending to most immediate image
             # otherwise, as long as text time is greater than media time (if attending to all previous images / media)

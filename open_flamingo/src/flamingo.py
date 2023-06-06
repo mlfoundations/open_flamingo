@@ -130,7 +130,10 @@ class Flamingo(nn.Module):
                 # Flatten the tokens
                 loss_fct = torch.nn.CrossEntropyLoss()
                 loss = loss_fct(
-                    shift_logits.view(-1, self.lang_encoder.get_input_embeddings().num_embeddings), shift_labels.view(-1)
+                    shift_logits.view(
+                        -1, self.lang_encoder.get_input_embeddings().num_embeddings
+                    ),
+                    shift_labels.view(-1),
                 )
                 output = CausalLMOutputWithPast(
                     loss=loss,
@@ -261,11 +264,11 @@ class Flamingo(nn.Module):
                 - FSDP(FSDP(output_embeddings))
                 - other parameters
 
-        Known issues: 
+        Known issues:
         - Our FSDP strategy is not compatible with tied embeddings. If the LM embeddings are tied,
             train with DDP or set the --freeze_lm_embeddings flag to true.
         - With FSDP + gradient ckpting, one can increase the batch size with seemingly no upper bound.
-            Although the training curves look okay, we found that downstream performance dramatically 
+            Although the training curves look okay, we found that downstream performance dramatically
             degrades if the batch size is unreasonably large (e.g., 100 MMC4 batch size for OPT-125M).
 
         FAQs about our FSDP wrapping strategy:

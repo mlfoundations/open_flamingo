@@ -1453,11 +1453,7 @@ def _optim_state_dict(
                 )
                 unflat_state = [
                     _gather_orig_param_state(
-                        fsdp_param_info,
-                        fqn,
-                        state,
-                        shard_state,
-                        group
+                        fsdp_param_info, fqn, state, shard_state, group
                     )
                 ]
             else:
@@ -1569,7 +1565,9 @@ class AllGatherInfo:
 
 
 def _all_gather_optim_state(
-    fsdp_state: _FSDPState, optim_state: Dict[str, Any], group = None,
+    fsdp_state: _FSDPState,
+    optim_state: Dict[str, Any],
+    group=None,
 ) -> Dict[str, Any]:
     """
     All-gathering state from all the ranks. This API is slow as it uses
@@ -1671,7 +1669,7 @@ def _gather_orig_param_state(
     fqn: str,
     optim_state: Dict[str, Any],
     shard_state: bool,
-    group = None,
+    group=None,
 ) -> Dict[str, Any]:
     """
     Gather the optimizer state for the original parameter with the name ``fqn``.
