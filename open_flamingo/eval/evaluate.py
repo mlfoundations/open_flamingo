@@ -540,9 +540,11 @@ def evaluate_captioning(
     # all gather 
     all_predictions = [None] * args.world_size
     torch.distributed.all_gather_object(all_predictions, predictions) # list of dicts
-    all_predictions = {k: v for d in all_predictions for k, v in d.items()} # merge dicts
 
     if args.rank != 0: return
+
+    all_predictions = {k: v for d in all_predictions for k, v in d.items()} # merge dicts
+    print("After allgather:", len(all_predictions))
 
     # save the predictions to a temporary file
     results_path = f"{dataset_name}results_{uuid.uuid4()}.json"
@@ -551,7 +553,7 @@ def evaluate_captioning(
         f.write(
             json.dumps(
                 [
-                    {"image_id": k, "caption": predictions[k]["caption"]}
+                    {"image_id": k, "caption": all_predictions[k]["caption"]}
                     for k in all_predictions
                 ],
                 indent=4,
@@ -698,15 +700,15 @@ def evaluate_vqa(
     # all gather 
     all_predictions = [None] * args.world_size
     torch.distributed.all_gather_object(all_predictions, predictions) # list of lists
-    all_predictions = [item for sublist in all_predictions for item in sublist] # flatten
-    print(all_predictions)
-
     if args.rank != 0: return
+
+    all_predictions = [item for sublist in all_predictions for item in sublist] # flatten
+    print("After allgather:", len(all_predictions))
 
     # save the predictions to a temporary file
     random_uuid = str(uuid.uuid4())
     with open(f"{dataset_name}results_{random_uuid}.json", "w") as f:
-        f.write(json.dumps(predictions, indent=4))
+        f.write(json.dumps(all_predictions, indent=4))
 
     acc = compute_vqa_accuracy(
         f"{dataset_name}results_{random_uuid}.json",
