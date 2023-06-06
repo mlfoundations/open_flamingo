@@ -402,7 +402,7 @@ def prepare_eval_samples(test_dataset, num_samples, batch_size, seed):
     dataset = torch.utils.data.Subset(test_dataset, random_indices)
     sampler = torch.utils.data.distributed.DistributedSampler(dataset)
     loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, sampler=sampler
+        dataset, batch_size=batch_size, sampler=sampler, collate_fn=custom_collate_fn,
     )
     return loader
 
@@ -416,10 +416,15 @@ def compute_effective_num_shots(num_shots, model_type):
         return num_shots if num_shots > 0 else 2
     return num_shots
 
+def custom_collate_fn(batch):
+    collated_batch = {}
+    for key in batch[0].keys():
+        collated_batch[key] = [item[key] for item in batch]
+    return collated_batch
 
 def evaluate_captioning(
     args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
+    eval_model: BaseEvalModel,
     seed: int = 42,
     min_generation_length: int = 0,
     max_generation_length: int = 20,
@@ -432,7 +437,7 @@ def evaluate_captioning(
 
     Args:
         args (argparse.Namespace): arguments
-        eval_model (eval_model.BaseEvalModel): model to evaluate
+        eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): seed for random number generator. Defaults to 42.
         min_generation_length (int, optional): minimum length of the generated caption. Defaults to 0.
         max_generation_length (int, optional): maximum length of the generated caption. Defaults to 20.
@@ -489,17 +494,17 @@ def evaluate_captioning(
 
     for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"):
         batch_demo_samples = sample_batch_demos_from_query_set(
-            in_context_samples, effective_num_shots, len(batch)
+            in_context_samples, effective_num_shots, len(batch["image"])
         )
 
         batch_images = []
         batch_text = []
-        for i in range(len(batch)):
+        for i in range(len(batch["image"])):
             if num_shots > 0:
                 context_images = [x["image"] for x in batch_demo_samples[i]]
             else:
                 context_images = []
-            batch_images.append(context_images + [batch[i]["image"]])
+            batch_images.append(context_images + [batch["image"][i]])
 
             context_text = "".join(
                 [
@@ -527,14 +532,15 @@ def evaluate_captioning(
             postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
 
-        for i, sample in enumerate(batch):
-            predictions[sample["image_id"]] = {
+        for i, sample_id in enumerate(batch["image_id"]):
+            predictions[sample_id] = {
                 "caption": new_predictions[i],
             }
 
     # all gather 
-    all_predictions = [None] * (args.num_samples if args.num_samples > 0 else len(test_dataset))
-    torch.distributed.all_gather_object(all_predictions, predictions)
+    all_predictions = [None] * args.world_size
+    torch.distributed.all_gather_object(all_predictions, predictions) # list of dicts
+    all_predictions = {k: v for d in all_predictions for k, v in d.items()} # merge dicts
 
     if args.rank != 0: return
 
@@ -546,7 +552,7 @@ def evaluate_captioning(
             json.dumps(
                 [
                     {"image_id": k, "caption": predictions[k]["caption"]}
-                    for k in predictions
+                    for k in all_predictions
                 ],
                 indent=4,
             )
@@ -567,7 +573,7 @@ def evaluate_captioning(
 
 def evaluate_vqa(
     args: argparse.Namespace,
-    eval_model: eval_model.BaseEvalModel,
+    eval_model: BaseEvalModel,
     seed: int = 42,
     min_generation_length: int = 0,
     max_generation_length: int = 5,
@@ -638,17 +644,17 @@ def evaluate_vqa(
 
     for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"):
         batch_demo_samples = sample_batch_demos_from_query_set(
-            in_context_samples, effective_num_shots, len(batch)
+            in_context_samples, effective_num_shots, len(batch["image"])
         )
 
         batch_images = []
         batch_text = []
-        for i in range(len(batch)):
+        for i in range(len(batch["image"])):
             if num_shots > 0:
                 context_images = [x["image"] for x in batch_demo_samples[i]]
             else:
                 context_images = []
-            batch_images.append(context_images + [batch[i]["image"]])
+            batch_images.append(context_images + [batch["image"][i]])
 
             context_text = "".join(
                 [
@@ -664,7 +670,7 @@ def evaluate_vqa(
                 context_text = context_text.replace("<image>", "")
 
             batch_text.append(
-                context_text + eval_model.get_vqa_prompt(question=batch[i]["question"])
+                context_text + eval_model.get_vqa_prompt(question=batch["question"][i])
             )
 
         outputs = eval_model.get_outputs(
@@ -684,16 +690,16 @@ def evaluate_vqa(
 
         new_predictions = map(process_function, outputs)
 
-        predictions.extend(
-            [
-                {"answer": p, "question_id": sample["question_id"]}
-                for p, sample in zip(new_predictions, batch)
-            ]
-        )
+        for new_prediction, sample_id in zip(new_predictions, batch["question_id"]):
+            predictions.append({
+                "answer": new_prediction, "question_id": sample_id
+            })
 
     # all gather 
-    all_predictions = [None] * (args.num_samples if args.num_samples > 0 else len(test_dataset))
-    torch.distributed.all_gather_object(all_predictions, predictions)
+    all_predictions = [None] * args.world_size
+    torch.distributed.all_gather_object(all_predictions, predictions) # list of lists
+    all_predictions = [item for sublist in all_predictions for item in sublist] # flatten
+    print(all_predictions)
 
     if args.rank != 0: return
 

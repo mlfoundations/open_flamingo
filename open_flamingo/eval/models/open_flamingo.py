@@ -2,6 +2,7 @@ from typing import List
 
 from PIL import Image
 import torch
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
@@ -26,7 +27,8 @@ class EvalModel(BaseEvalModel):
             and "lm_tokenizer_path" in model_args
             and "cross_attn_every_n_layers" in model_args
             and "vision_encoder_pretrained" in model_args
-        ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, and vision_encoder_pretrained arguments to be specified"
+            and "precision" in model_args
+        ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained, and precision arguments to be specified"
 
         model_args["device"] = int(model_args["device"])
         self.device = model_args["device"] if model_args["device"] >= 0 else "cpu"
@@ -41,7 +43,7 @@ class EvalModel(BaseEvalModel):
             model_args["lm_tokenizer_path"],
             cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
-        checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
+        checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
         if 'model_state_dict' in checkpoint:
             checkpoint = checkpoint['model_state_dict']
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
@@ -51,8 +53,8 @@ class EvalModel(BaseEvalModel):
         self.tokenizer.padding_side = "left"
         
         # autocast
-        self.autocast =  get_autocast(args.precision)
-        self.cast_dtype = get_cast_dtype(args.precision)
+        self.autocast = get_autocast(model_args["precision"])
+        self.cast_dtype = get_cast_dtype(model_args["precision"])
 
     def _prepare_images(self, batch: List[List[torch.Tensor]]) -> torch.Tensor:
         """Preprocess images and stack them.
@@ -99,7 +101,8 @@ class EvalModel(BaseEvalModel):
 
         with torch.inference_mode():
             with self.autocast():
-                outputs = self.model.generate(
+                handle = self.model.module if isinstance(self.model, DDP) else self.model
+                outputs = handle.generate(
                     self._prepare_images(batch_images).to(self.device, dtype=self.cast_dtype, non_blocking=True),
                     input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True),
                     attention_mask=attention_mask.to(self.device, dtype=self.cast_dtype, non_blocking=True),

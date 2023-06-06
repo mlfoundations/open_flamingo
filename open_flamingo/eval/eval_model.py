@@ -19,7 +19,7 @@ class BaseEvalModel(abc.ABC):
 
     def init_distributed(self):
         """Wrap model as DDP."""
-        self.model = DDP(self.model, device_ids=[self.model.device_id])
+        self.model = DDP(self.model, device_ids=[self.device])
 
     def set_device(self, device):
         """Set device for model."""

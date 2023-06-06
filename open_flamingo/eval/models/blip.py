@@ -3,6 +3,8 @@ from typing import List
 from PIL import Image
 import torch
 
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 from open_flamingo.eval.eval_model import BaseEvalModel
 
@@ -87,6 +89,7 @@ class EvalModel(BaseEvalModel):
         attention_mask = encodings["attention_mask"]
 
         with torch.inference_mode():
+            handle = self.model.module if isinstance(self.model, DDP) else self.model
             outputs = self.model.generate(
                 self._prepare_images(batch_images).to(self.device),
                 input_ids.to(self.device),
