@@ -53,6 +53,7 @@ def train_one_epoch(
     optimizer,
     lr_scheduler,
     device_id,
+    wandb,
 ):
     # setup loaders
     num_batches_per_epoch_laion = laion_loader.num_batches
