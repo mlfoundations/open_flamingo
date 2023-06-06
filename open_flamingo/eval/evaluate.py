@@ -801,7 +801,7 @@ def evaluate_imagenet(
         vision_x = torch.stack(batch_images, dim=0)
         # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
         vision_x = vision_x.unsqueeze(2)
-        model._encode_vision_x(vision_x.to(device_id))
+        model._encode_vision_x(vision_x.to(model.device))
 
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
@@ -816,8 +816,8 @@ def evaluate_imagenet(
         with torch.no_grad():
             precomputed = model(
                 vision_x=None,
-                lang_x=ctx_and_prompt_tokenized["input_ids"].to(device_id),
-                attention_mask=ctx_and_prompt_tokenized["attention_mask"].to(device_id),
+                lang_x=ctx_and_prompt_tokenized["input_ids"].to(model.device),
+                attention_mask=ctx_and_prompt_tokenized["attention_mask"].to(model.device),
                 clear_conditioned_layers=False,
                 use_cached_vision_x=True,
                 use_cache=True,
@@ -853,7 +853,7 @@ def evaluate_imagenet(
             # predictions for this class.
             classname_tokens = tokenizer(
                 imagenet_class_name, add_special_tokens=False, return_tensors="pt"
-            )["input_ids"].to(device_id)
+            )["input_ids"].to(model.device)
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
