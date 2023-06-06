@@ -6,6 +6,7 @@ import torch
 
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
+from contextlib import suppress
 
 
 class EvalModel(BaseEvalModel):
@@ -23,7 +24,13 @@ class EvalModel(BaseEvalModel):
         parser.add_argument("--lm_tokenizer_path", type=str, default="facebook/opt-30b")
         parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
         parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
-        parser.add_argument("--checkpoint_path", type=str, required=True)
+        parser.add_argument("--checkpoint_path", type=str)
+        parser.add_argument(
+            "--precision",
+            choices=["amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
+            default="fp32",
+            help="Floating point precision.",
+        )        
         parser.add_argument(
             "--cross_attn_every_n_layers",
             type=int,
@@ -47,8 +54,16 @@ class EvalModel(BaseEvalModel):
             cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         )
         checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
+        if 'model_state_dict' in checkpoint:
+            checkpoint = checkpoint['model_state_dict']
+            checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
         self.model.load_state_dict(checkpoint, strict=False)
         self.model.to(self.device)
+
+        # autocast
+        self.autocast =  get_autocast(args.precision)
+        self.cast_dtype = get_cast_dtype(args.precision)
+
 
     def _prepare_images(self, batch: List[List[torch.Tensor]]) -> torch.Tensor:
         """Preprocess images and stack them.
@@ -78,6 +93,7 @@ class EvalModel(BaseEvalModel):
         self,
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
+        min_generation_length: int,
         max_generation_length: int,
         num_beams: int,
         length_penalty: float,
@@ -96,14 +112,16 @@ class EvalModel(BaseEvalModel):
         attention_mask = encodings["attention_mask"]
 
         with torch.inference_mode():
-            outputs = self.model.generate(
-                self._prepare_images(batch_images).to(self.device),
-                input_ids.to(self.device),
-                attention_mask=attention_mask.to(self.device),
-                max_new_tokens=max_generation_length,
-                num_beams=num_beams,
-                length_penalty=length_penalty,
-            )
+            with self.autocast():
+                outputs = self.model.generate(
+                    self._prepare_images(batch_images).to(self.device, dtype=self.cast_dtype, non_blocking=True),
+                    input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True),
+                    attention_mask=attention_mask.to(self.device, dtype=self.cast_dtype, non_blocking=True),
+                    min_new_tokens=min_generation_length,
+                    max_new_tokens=max_generation_length,
+                    num_beams=num_beams,
+                    length_penalty=length_penalty,
+                )
 
         outputs = outputs[:, len(input_ids[0]) :]
 
@@ -117,3 +135,21 @@ class EvalModel(BaseEvalModel):
 
     def classification_prompt(self, class_str=None) -> str:
         return f"<image>A photo of a {class_str if class_str is not None else ''}{'<|endofchunk|>' if class_str is not None else ''}"
+
+
+def get_cast_dtype(precision: str):
+    cast_dtype = None
+    if precision == "bf16":
+        cast_dtype = torch.bfloat16
+    elif precision == "fp16":
+        cast_dtype = torch.float16
+    return cast_dtype
+
+def get_autocast(precision):
+    if precision == "amp":
+        return torch.cuda.amp.autocast
+    elif precision == "amp_bfloat16" or precision == "amp_bf16":
+        # amp_bfloat16 is more stable than amp float16 for clip training
+        return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
+    else:
+        return suppress

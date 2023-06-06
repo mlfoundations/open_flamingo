@@ -21,6 +21,7 @@ class BaseEvalModel(abc.ABC):
         self,
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
+        min_generation_length: int,
         max_generation_length: int,
         num_beams: int,
         length_penalty: float,

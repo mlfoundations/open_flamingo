@@ -228,6 +228,9 @@ def main():
                     num_shots=shot,
                     seed=seed,
                     dataset_name="flickr",
+                    min_generation_length=12,
+                    max_generation_length=30,
+                    num_beams=5,
                 )
                 print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
                 scores.append(cider_score)
@@ -354,6 +357,7 @@ def evaluate_captioning(
     args: argparse.Namespace,
     eval_model: eval_model.BaseEvalModel,
     seed: int = 42,
+    min_generation_length: int = 0,
     max_generation_length: int = 20,
     num_beams: int = 3,
     length_penalty: float = -2.0,
@@ -366,6 +370,7 @@ def evaluate_captioning(
         args (argparse.Namespace): arguments
         eval_model (eval_model.BaseEvalModel): model to evaluate
         seed (int, optional): seed for random number generator. Defaults to 42.
+        min_generation_length (int, optional): minimum length of the generated caption. Defaults to 0.
         max_generation_length (int, optional): maximum length of the generated caption. Defaults to 20.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
@@ -450,6 +455,7 @@ def evaluate_captioning(
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
             batch_text=batch_text,
+            min_generation_length=min_generation_length,
             max_generation_length=max_generation_length,
             num_beams=num_beams,
             length_penalty=length_penalty,
@@ -495,6 +501,7 @@ def evaluate_vqa(
     args: argparse.Namespace,
     eval_model: eval_model.BaseEvalModel,
     seed: int = 42,
+    min_generation_length: int = 0,
     max_generation_length: int = 5,
     num_beams: int = 3,
     length_penalty: float = -2.0,
@@ -508,6 +515,7 @@ def evaluate_vqa(
         args (argparse.Namespace): arguments
         eval_model (eval_model.BaseEvalModel): model to evaluate
         seed (int, optional): random seed. Defaults to 42.
+        min_generation_length (int, optional): min generation length. Defaults to 0.
         max_generation_length (int, optional): max generation length. Defaults to 5.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
@@ -596,6 +604,7 @@ def evaluate_vqa(
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
             batch_text=batch_text,
+            min_generation_length=min_generation_length,
             max_generation_length=max_generation_length,
             num_beams=num_beams,
             length_penalty=length_penalty,
@@ -631,7 +640,7 @@ def evaluate_vqa(
     )
 
     # delete the temporary file
-    os.remove(f"{dataset_name}results_{random_uuid}.json")
+#    os.remove(f"{dataset_name}results_{random_uuid}.json")
 
     return acc
 
