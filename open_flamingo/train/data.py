@@ -1,40 +1,31 @@
-import ast
+"""
+Preprocess and load datasets for training.
+"""
+
 import functools
 import io
 import json
-import logging
 import math
 import re
-import os
 import random
-import sys
-import tarfile
-from dataclasses import dataclass
-from multiprocessing import Value
-
-import braceexpand
 import numpy as np
 import torch
 import torchvision
 import webdataset as wds
 from PIL import Image
-from torch.utils.data import DataLoader, IterableDataset, get_worker_info
-from torch.utils.data.distributed import DistributedSampler
-from webdataset.filters import _shuffle
-from webdataset.tariterators import (
-    base_plus_ext,
-    tar_file_expander,
-    url_opener,
-    valid_sample,
-)
 import base64
+
+from data_utils import *
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
-MAX_NUM_IMAGES = 6
-TINY_IMAGE_SIZE_THRESHOLD = 1
 N_CHANNELS = 3
 INTERLEAVED_IMAGE_SIZE = 224
+MIN_KB = 10
+_SHARD_SHUFFLE_SIZE = 2000
+_SHARD_SHUFFLE_INITIAL = 500
+_SAMPLE_SHUFFLE_SIZE = 5000
+_SAMPLE_SHUFFLE_INITIAL = 1000
 
 try:
     import horovod.torch as hvd
@@ -42,270 +33,73 @@ except ImportError:
     hvd = None
 
 
-class SharedEpoch:
-    def __init__(self, epoch: int = 0):
-        self.shared_epoch = Value("i", epoch)
-
-    def set_value(self, epoch):
-        self.shared_epoch.value = epoch
-
-    def get_value(self):
-        return self.shared_epoch.value
-
-
-@dataclass
-class DataInfo:
-    dataloader: DataLoader
-    sampler: DistributedSampler = None
-    shared_epoch: SharedEpoch = None
-
-    def set_epoch(self, epoch):
-        if self.shared_epoch is not None:
-            self.shared_epoch.set_value(epoch)
-        if self.sampler is not None and isinstance(self.sampler, DistributedSampler):
-            self.sampler.set_epoch(epoch)
-
-
-def get_dataset_size(shards):
-    shards_list = list(braceexpand.braceexpand(shards))
-    shards_list = shards
-    dir_path = os.path.dirname(shards[0])
-    sizes_filename = os.path.join(dir_path, "sizes.json")
-    len_filename = os.path.join(dir_path, "__len__")
-    if os.path.exists(sizes_filename):
-        sizes = json.load(open(sizes_filename, "r"))
-        total_size = sum(
-            [
-                int(sizes[os.path.basename(shard)])
-                if os.path.basename(shard) in sizes
-                else 0
-                for shard in shards_list
-            ]
-        )
-    elif os.path.exists(len_filename):
-        # FIXME this used to be eval(open(...)) but that seemed rather unsafe
-        total_size = ast.literal_eval(open(len_filename, "r").read())
-    else:
-        total_size = None  # num samples undefined
-        # some common dataset sizes (at time of authors last download)
-        # CC3M (train): 2905954
-        # CC12M: 10968539
-        # LAION-400M: 407332084
-        # LAION-2B (english): 2170337258
-    num_shards = len(shards_list)
-    return total_size, num_shards
-
-
-def count_samples(dataloader):
-    os.environ["WDS_EPOCH"] = "0"
-    n_elements, n_batches = 0, 0
-    for images, texts in dataloader:
-        n_batches += 1
-        n_elements += len(images)
-        assert len(images) == len(texts)
-    return n_elements, n_batches
+def preprocess_image(sample, image_processor):
+    """
+    Convert images to tensors for training.
+    Augmentations: random horizontal flip.
+    Normalization handled by wds.
+    """
+    image = [image_processor(s).unsqueeze(0) for s in sample]
+    image = torch.cat(image, dim=0)
+    image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
+    return image
 
 
 def filter_no_caption_or_no_image(sample):
+    """
+    Filter out LAION samples with no caption or no image.
+    """
     return ("txt" in sample) and (
         "png" in sample or "jpg" in sample or "jpeg" in sample
     )
 
 
-def log_and_continue(exn):
-    """Call in an exception handler to ignore any exception, issue a warning, and continue."""
-    if "No images in sample" in str(exn) or "Only one image in sample" in str(
-        exn
-    ):  # Avoid spamming logs with these
-        return True
-    logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
-    return True
-
-
-def group_by_keys_nothrow(
-    data, keys=base_plus_ext, lcase=True, suffixes=None, handler=None
-):
-    """Return function over iterator that groups key, value pairs into samples.
-
-    :param keys: function that splits the key into key and extension (base_plus_ext)
-    :param lcase: convert suffixes to lower case (Default value = True)
+def preprocess_laion_text(sample, tokenizer, max_tokens=32):
     """
-    current_sample = None
-    for filesample in data:
-        assert isinstance(filesample, dict)
-        fname, value = filesample["fname"], filesample["data"]
-        prefix, suffix = keys(fname)
-        if prefix is None:
-            continue
-        if lcase:
-            suffix = suffix.lower()
-        # FIXME webdataset version throws if suffix in current_sample, but we have a potential for
-        #  this happening in the current LAION400m dataset if a tar ends with same prefix as the next
-        #  begins, rare, but can happen since prefix aren't unique across tar files in that dataset
-        if (
-            current_sample is None
-            or prefix != current_sample["__key__"]
-            or suffix in current_sample
-        ):
-            if valid_sample(current_sample):
-                yield current_sample
-            current_sample = dict(__key__=prefix, __url__=filesample["__url__"])
-        if suffixes is None or suffix in suffixes:
-            current_sample[suffix] = value
-    if valid_sample(current_sample):
-        yield current_sample
-
-
-def tarfile_to_samples_nothrow(src, handler=log_and_continue):
-    # NOTE this is a re-impl of the webdataset impl with group_by_keys that doesn't throw
-    streams = url_opener(src, handler=handler)
-    files = tar_file_expander(streams, handler=handler)
-    samples = group_by_keys_nothrow(files, handler=handler)
-    return samples
-
-
-def pytorch_worker_seed(increment=0):
-    """get dataloader worker seed from pytorch"""
-    worker_info = get_worker_info()
-    if worker_info is not None:
-        # favour using the seed already created for pytorch dataloader workers if it exists
-        seed = worker_info.seed
-        if increment:
-            # space out seed increments so they can't overlap across workers in different iterations
-            seed += increment * max(1, worker_info.num_workers)
-        return seed
-    # fallback to wds rank based seed
-    return wds.utils.pytorch_worker_seed()
-
-
-_SHARD_SHUFFLE_SIZE = 2000
-_SHARD_SHUFFLE_INITIAL = 500
-_SAMPLE_SHUFFLE_SIZE = 5000
-_SAMPLE_SHUFFLE_INITIAL = 1000
-
-
-class detshuffle2(wds.PipelineStage):
-    def __init__(
-        self,
-        bufsize=1000,
-        initial=100,
-        seed=0,
-        epoch=-1,
-    ):
-        self.bufsize = bufsize
-        self.initial = initial
-        self.seed = seed
-        self.epoch = epoch
-
-    def run(self, src):
-        if isinstance(self.epoch, SharedEpoch):
-            epoch = self.epoch.get_value()
-        else:
-            # NOTE: this is epoch tracking is problematic in a multiprocess (dataloader workers or train)
-            # situation as different workers may wrap at different times (or not at all).
-            self.epoch += 1
-            epoch = self.epoch
-        rng = random.Random()
-        if self.seed < 0:
-            # If seed is negative, we use the worker's seed, this will be different across all nodes/workers
-            seed = pytorch_worker_seed(epoch)
-        else:
-            # This seed to be deterministic AND the same across all nodes/workers in each epoch
-            seed = self.seed + epoch
-        rng.seed(seed)
-        return _shuffle(src, self.bufsize, self.initial, rng)
-
-
-class ResampledShards2(IterableDataset):
-    """An iterable dataset yielding a list of urls."""
-
-    def __init__(
-        self,
-        urls,
-        nshards=sys.maxsize,
-        worker_seed=None,
-        deterministic=False,
-        epoch=-1,
-    ):
-        """Sample shards from the shard list with replacement.
-        :param urls: a list of URLs as a Python list or brace notation string
-        """
-        super().__init__()
-        urls = wds.shardlists.expand_urls(urls)
-        self.urls = urls
-        assert isinstance(self.urls[0], str)
-        self.nshards = nshards
-        self.rng = random.Random()
-        self.worker_seed = worker_seed
-        self.deterministic = deterministic
-        self.epoch = epoch
-
-    def __iter__(self):
-        """Return an iterator over the shards."""
-        if isinstance(self.epoch, SharedEpoch):
-            epoch = self.epoch.get_value()
-        else:
-            # NOTE: this is epoch tracking is problematic in a multiprocess (dataloader workers or train)
-            # situation as different workers may wrap at different times (or not at all).
-            self.epoch += 1
-            epoch = self.epoch
-
-        if self.deterministic:
-            # reset seed w/ epoch if deterministic
-            if self.worker_seed is None:
-                # pytorch worker seed should be deterministic due to being init by arg.seed + rank + worker id
-                seed = pytorch_worker_seed(epoch)
-            else:
-                seed = self.worker_seed() + epoch
-            self.rng.seed(seed)
-        for _ in range(self.nshards):
-            yield dict(url=self.rng.choice(self.urls))
-
-
-def preprocess_image(sample, image_processor):
-    image = [image_processor(s).unsqueeze(0) for s in sample]
-    image = torch.cat(image, dim=0)
-    # apply random horizontal flip
-    image = torchvision.transforms.RandomHorizontalFlip(p=0.5)(image)
-    # NOTE: potentially move jitter into the image_preprocessor before normalization
-    # image = torchvision.transforms.ColorJitter(brightness=0.5, hue=0.3)(image)
-    return image
-
-
-def preprocess_text(sample, tokenizer):
+    Preprocess text for LAION.
+    Captions are truncated to 32 tokens by default.
+    """
     tokenizer.padding_side = "right"
     sample = [
         (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample
     ]
     text = tokenizer(
         sample,
-        max_length=32,
+        max_length=max_tokens,
         padding="longest",
         truncation="only_first",
         return_tensors="pt",
     )
     return text["input_ids"], text["attention_mask"]
 
-def preprocess_gpt_interleaved(info, tokenizer, clip_processor):
+
+def preprocess_gpt_interleaved(
+    info, tokenizer, clip_processor, min_num_images, max_num_images, max_tokens=256
+):
+    """
+    Preprocess a ChatGPT-generated image-text sequence.
+    """
     text = info["example"]
     text = re.sub(r"_!_IMAGE\d+_!_", "<|endofchunk|><image>", text)
 
+    # convert images from base64 to PIL
     images = []
-    for image_key in range(1, len(info["image_map"])+1):
+    for image_key in range(1, len(info["image_map"]) + 1):
         image_base64 = info["image_map"][f"_!_IMAGE{image_key}_!_"]["base64_image"]
         rawbytes = base64.b64decode(image_base64)
         images.append(Image.open(io.BytesIO(rawbytes)).convert("RGB"))
 
+    # preprocess and pad images
     images_tensors = preprocess_image(images, clip_processor)
-    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
+    keep_ixs = range(min(len(images_tensors), max_num_images))
     images_tensors = images_tensors[keep_ixs]
-
-    if len(images_tensors) < MAX_NUM_IMAGES:
+    if len(images_tensors) < max_num_images:
         zero_padding = torch.zeros(
-            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+            (max_num_images - len(images_tensors), 3, 224, 224), dtype=torch.float
         )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
+    # preprocess and tokenize text
     text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
     # whitespace cleanup
     text = (
@@ -314,34 +108,57 @@ def preprocess_gpt_interleaved(info, tokenizer, clip_processor):
         .replace(" <image>", "<image>")
     )
 
-    # print(text)
-
-    # find the indices of the 10th occurrence of "<image>"
-    indices = [m.start() for m in re.finditer('<image>', text)]
-    if len(indices) > 10:
-        start_index = indices[9]
-        # print(f"Truncating text to {start_index} characters")
+    indices = [m.start() for m in re.finditer("<image>", text)]
+    if len(indices) > max_num_images:
+        start_index = indices[max_num_images - 1]
         text = text[:start_index]
 
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+        text,
+        max_length=max_tokens,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
     )
 
-    return (
-        images_tensors,
-        (text_tensor["input_ids"], text_tensor["attention_mask"])
+    # reject sequences with too few images after truncation
+    num_images = torch.count_nonzero(
+        text_tensor["input_ids"]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
     )
+    if num_images < min_num_images:
+        raise ValueError(f"Fewer than {min_num_images} images in sample")
 
-MIN_KB = 10
-def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use_media_placement_augmentation):
+    return (images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]))
+
+
+def preprocess_interleaved(
+    sample,
+    tokenizer,
+    clip_processor,
+    sim_threshold,
+    min_num_images,
+    max_num_images,
+    max_tokens=256,
+):
+    """
+    Preprocess an interleaved image-text sequence, either by calling preprocess_gpt_interleaved (if the sequence
+    is ChatGPT-generated) or by preprocessing in this function (if the sequences is from MMC4).
+    """
     info = json.loads(sample[0])
     if "is_gpt" in info:
-        return preprocess_gpt_interleaved(info, tokenizer, clip_processor)
+        return preprocess_gpt_interleaved(
+            info, tokenizer, clip_processor, min_num_images, max_num_images, max_tokens
+        )
+
     sentences = info["text_list"]
     sim_matrix = info["similarity_matrix"]
 
+    # convert images from base64 to PIL and filter based on image-text similarity
     images, sentence_ixs = [], []
     for sample_image, sim_vec in zip(info["image_info"], sim_matrix):
         image_base64 = sample_image["image_base64"]
@@ -349,7 +166,7 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
 
         sim_ix = np.argmax(sim_vec)
         sim_score = sim_vec[sim_ix]
-        
+
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
@@ -363,56 +180,27 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     if len(images) == 0:
         raise ValueError("No images in sample")
 
-    """
-    Augmentation
-    W.p. 1/2, shift which images the texts attend to.
-    Example:
-    - unaugmented: sentence0 | sentence0.5 | <image1> sentence1 | <image2> sentence2 | <image3> sentence3
-    - augmented: <image1> sentence0 | sentence0.5 | <image2> sentence1 | <image3> sentence2 | sentence3
-    Note that all following sentences attend to the same preceding image. So here, sentence3
-    also attends to image3.
-    Example:
-    - unaugmented: <image1> sentence1 | sentence1.5 | <image2> sentence2
-    - augmented: <image2> sentence1 | sentence1.5 | sentence2 (<image1> is discarded)
-
-    This tries to match Flamingo & our previous augmentation.
-        One difference is that previously in the above example, sentence2 would just not attend to anything
-    Note that our data setup is a little different than what Flamingo does.
-    We already place images right before the texts that are most semantically relevant.
-    However, we find that using some form of augmentation is very helpful.
-    """
-    do_shift = random.random() < 0.5 if use_media_placement_augmentation else False
-    if do_shift:
-        # minimum ix -> 0; everyone else -> previous
-        current = list(sorted(sentence_ixs))
-        if current[0] == 0:
-            # drop first sample
-            current = current[1:]
-            sentence_ixs = sentence_ixs[1:]
-            images = images[1:]
-            if len(images) == 0: raise ValueError("No images in sample after augmenting")
-        shifted = [0] + current
-        shiftmap = dict(zip(current, shifted))
-        sentence_ixs = [shiftmap[ix] for ix in sentence_ixs]
-
-    # images -> tensors
+    # preprocess and pad images
     images_tensors = preprocess_image(images, clip_processor)
-    keep_ixs = range(min(len(images_tensors), MAX_NUM_IMAGES))
+    keep_ixs = range(min(len(images_tensors), max_num_images))
     images_tensors = images_tensors[keep_ixs]
     sentence_ixs = [sentence_ixs[ix] for ix in keep_ixs]
-
-    # pad to 5 images
-    if len(images_tensors) < MAX_NUM_IMAGES:
+    if len(images_tensors) < max_num_images:
         zero_padding = torch.zeros(
-            (MAX_NUM_IMAGES - len(images_tensors), 3, 224, 224), dtype=torch.float
+            (
+                max_num_images - len(images_tensors),
+                N_CHANNELS,
+                INTERLEAVED_IMAGE_SIZE,
+                INTERLEAVED_IMAGE_SIZE,
+            ),
+            dtype=torch.float,
         )
         images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
 
+    # preprocess and tokenize text
     # add in <image> and <eoc> tokens
-    # eoc after sentence = "sentence loss"
     for ix in sentence_ixs:
         sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
-
     text = " ".join(sentences)
     text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
     # whitespace cleanup
@@ -424,7 +212,11 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
     text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     text_tensor = tokenizer(
-        text, max_length=256, truncation=True, padding="max_length", return_tensors="pt"
+        text,
+        max_length=max_tokens,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
     )
 
     # reject sequences with too few images (after truncation)
@@ -434,26 +226,35 @@ def preprocess_interleaved(sample, tokenizer, clip_processor, sim_threshold, use
             tokenizer.additional_special_tokens.index("<image>")
         ]
     )
-
-    if num_images == 0:
-        raise ValueError("No images in sample")
+    if num_images < min_num_images:
+        raise ValueError(f"Fewer than {min_num_images} images in sample")
     elif (
         num_images == 1 and random.random() <= 0.5
     ):  # 50% chance of keeping single image samples
         raise ValueError("Only one image in sample")
 
-    # avoid the situation where there's one <image> and it's at the end
-    if num_images == 1 and text_tensor["input_ids"][:, -1] == tokenizer.additional_special_tokens_ids[
-        tokenizer.additional_special_tokens.index("<image>")
-    ]:
-        raise ValueError("Only one image at the end of sample, so labels will all be -100")
+    # avoid the situation where there's one <image> token and it's at the end
+    if (
+        num_images == 1
+        and text_tensor["input_ids"][:, -1]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
+    ):
+        raise ValueError(
+            "Only one image at the end of sample, so labels will all be -100"
+        )
 
     return (
         images_tensors,
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
     )
 
+
 def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
+    """
+    Initialize webdataset for MMC4 / ChatGPT sequences
+    """
     input_shards = args.mmc4_shards
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False)
@@ -476,13 +277,14 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         ]
     else:
         pipeline = [wds.SimpleShardList(input_shards)]
- 
+
     preprocess_fn = functools.partial(
         preprocess_interleaved,
         clip_processor=image_processor,
         tokenizer=tokenizer,
         sim_threshold=args.mmc4_textsim_threshold,
-        use_media_placement_augmentation=args.use_media_placement_augmentation,
+        min_num_images=args.mmc4_min_num_images,
+        max_num_images=args.mmc4_max_num_images,
     )
 
     # at this point we have an iterator over all the shards
@@ -551,6 +353,9 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
 
 def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
+    """
+    Initialize webdataset for LAION data
+    """
     input_shards = args.laion_shards
     assert input_shards is not None
     resampled = getattr(args, "dataset_resampled", False)
@@ -578,7 +383,7 @@ def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     preprocess_image_fn = functools.partial(
         preprocess_image, image_processor=image_processor
     )
-    preprocess_text_fn = functools.partial(preprocess_text, tokenizer=tokenizer)
+    preprocess_text_fn = functools.partial(preprocess_laion_text, tokenizer=tokenizer)
 
     # at this point we have an iterator over all the shards
     if not resampled:
@@ -650,6 +455,9 @@ def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
 
 
 def get_dataset_fn(dataset_type):
+    """
+    Helper function to get the dataset function based on the dataset type
+    """
     if dataset_type == "image_text":
         return get_laion_dataset
     elif dataset_type == "mmc4":
@@ -659,6 +467,9 @@ def get_dataset_fn(dataset_type):
 
 
 def get_data(args, image_processor, tokenizer, dataset_type, epoch=0):
+    """
+    Interface for getting the webdatasets
+    """
     return get_dataset_fn(dataset_type)(
         args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
     )

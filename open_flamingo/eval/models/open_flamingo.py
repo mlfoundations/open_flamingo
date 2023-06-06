@@ -1,4 +1,3 @@
-import argparse
 from typing import List
 
 from PIL import Image
@@ -18,40 +17,29 @@ class EvalModel(BaseEvalModel):
       device: Index of GPU to use, or the string "CPU"
     """
 
-    def __init__(self, args: List[str]):
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--lm_path", type=str, default="facebook/opt-1.3b")
-        parser.add_argument("--lm_tokenizer_path", type=str, default="facebook/opt-30b")
-        parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
-        parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
-        parser.add_argument("--checkpoint_path", type=str)
-        parser.add_argument(
-            "--precision",
-            choices=["amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
-            default="fp32",
-            help="Floating point precision.",
-        )        
-        parser.add_argument(
-            "--cross_attn_every_n_layers",
-            type=int,
-            default=1,
-            help="how often to add a cross-attention layer after each transformer layer",
-        )
-        parser.add_argument("--device", type=int, default=0)
-        args = parser.parse_args(args)
+    def __init__(self, model_args):
+        assert (
+            "vision_encoder_path" in model_args
+            and "lm_path" in model_args
+            and "device" in model_args
+            and "checkpoint_path" in model_args
+            and "lm_tokenizer_path" in model_args
+            and "cross_attn_every_n_layers" in model_args
+            and "vision_encoder_pretrained" in model_args
+        ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, and vision_encoder_pretrained arguments to be specified"
 
-        # load model
-        self.device = args.device if args.device >= 0 else "cpu"
+        model_args["device"] = int(model_args["device"])
+        self.device = model_args["device"] if model_args["device"] >= 0 else "cpu"
         (
             self.model,
             self.image_processor,
             self.tokenizer,
         ) = create_model_and_transforms(
-            args.vision_encoder_path,
-            args.vision_encoder_pretrained,
-            args.lm_path,
-            args.lm_tokenizer_path,
-            cross_attn_every_n_layers=args.cross_attn_every_n_layers,
+            model_args["vision_encoder_path"],
+            model_args["vision_encoder_pretrained"],
+            model_args["lm_path"],
+            model_args["lm_tokenizer_path"],
+            cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
         checkpoint = torch.load(args.checkpoint_path, map_location="cpu")
         if 'model_state_dict' in checkpoint:
@@ -59,11 +47,12 @@ class EvalModel(BaseEvalModel):
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
         self.model.load_state_dict(checkpoint, strict=False)
         self.model.to(self.device)
-
+        self.model.eval()
+        self.tokenizer.padding_side = "left"
+        
         # autocast
         self.autocast =  get_autocast(args.precision)
         self.cast_dtype = get_cast_dtype(args.precision)
-
 
     def _prepare_images(self, batch: List[List[torch.Tensor]]) -> torch.Tensor:
         """Preprocess images and stack them.
@@ -98,9 +87,6 @@ class EvalModel(BaseEvalModel):
         num_beams: int,
         length_penalty: float,
     ) -> List[str]:
-        self.model.eval()
-
-        self.tokenizer.padding_side = "left"
         encodings = self.tokenizer(
             batch_text,
             padding="longest",
@@ -127,15 +113,14 @@ class EvalModel(BaseEvalModel):
 
         return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
-    def vqa_prompt(self, question, answer=None) -> str:
+    def get_vqa_prompt(self, question, answer=None) -> str:
         return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
 
-    def caption_prompt(self, caption=None) -> str:
+    def get_caption_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
 
-    def classification_prompt(self, class_str=None) -> str:
+    def get_classification_prompt(self, class_str=None) -> str:
         return f"<image>A photo of a {class_str if class_str is not None else ''}{'<|endofchunk|>' if class_str is not None else ''}"
-
 
 def get_cast_dtype(precision: str):
     cast_dtype = None
