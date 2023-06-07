@@ -22,7 +22,28 @@ We provide scripts to convert MMC4 to this format:
 We also train some models on custom ChatGPT-generated (image, text) sequences. These sequences will be released soon.
 
 ## Distributed training
-We provide a sample Slurm training script in `scripts/`. 
+We provide a sample Slurm training script in `scripts/`. You can also modify the following command:
+
+```
+torchrun --nnodes=1 --nproc_per_node=4 train.py \
+  --lm_path mosaicml/mpt-1b-redpajama-200b-dolly \
+  --tokenizer_path mosaicml/mpt-1b-redpajama-200b-dolly \
+  --cross_attn_every_n_layers 1 \
+  --dataset_resampled \
+  --batch_size_mmc4 32 \
+  --batch_size_laion 64 \
+  --train_num_samples_mmc4 125000\
+  --train_num_samples_laion 250000 \
+  --loss_multiplier_laion 0.2 \
+  --workers=4 \
+  --run_name openflamingo-3B \
+  --num_epochs 480 \
+  --warmup_steps  1875 \
+  --mmc4_textsim_threshold 0.24 \
+  --laion_shards "/path/to/shards/shard-{0000..0999}.tar" \
+  --mmc4_shards "/path/to/shards/shard-{0000..0999}.tar" \
+  --report_to_wandb
+```
 
 By default, `train.py` uses Pytorch's [DistributedDataParallel](https://pytorch.org/docs/stable/torch.nn.parallel.DistributedDataParallel.html) for training. 
 To use [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html), use the `--fsdp` flag. 
