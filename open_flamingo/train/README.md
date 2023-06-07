@@ -11,14 +11,15 @@ We use [img2dataset](https://github.com/rom1504/img2dataset) to download this da
 ### Multimodal C4 Dataset
 We train on the full version of [Multimodal C4 (MMC4)](https://github.com/allenai/mmc4), which includes 103M documents of web-scraped, interleaved image-text sequences. During training, we truncate sequences to 256 text tokens and six images per sequence.
 
-Our codebase expects `.tar` files containing `.json` files. We train with a version of MMC4 which encodes raw images in base64 within these jsons. Our perceiver resampler takes in these images as CLIP *patch* embeddings.
+Our codebase expects `.tar` files containing `.json` files, which include raw images encoded in base64.
+We provide scripts to convert MMC4 to this format: 
 
-Unfortunately, the public relase of MMC4 does not include raw images in this format; instead the MMC4 team has released CLIP ViT-L/14 *projection features* for the images.
-We include scripts in the `scripts/` directory to download MMC4 Core, the CLIP ViT-L/14 projection features, and package these into tarfile format.
-You can switch our codebase to train using these projection embeddings via the `--use_mmc4_projection_features` flag.
+1. Download the MMC4 shards into `.zip` files using [the MMC4-provided scripts](https://github.com/allenai/mmc4/tree/main/scripts) (e.g., `fewer_facesv2.sh`).
+2. Download the MMC4 raw images into an image directory using [the MMC4-provided scripts](https://github.com/allenai/mmc4/tree/main/scripts) (e.g., `download_images.py`).
+2. Run `scripts/convert_mmc4_to_wds.py` to convert the downloaded items into the expected tar files.
 
 ### ChatGPT-generated sequences
-We also train on custom ChatGPT-generated (image, text) sequences with images drawn from LAION. These sequences will be released soon.
+We also train some models on custom ChatGPT-generated (image, text) sequences. These sequences will be released soon.
 
 ## Distributed training
 We provide a sample Slurm training script in `scripts/`. 
