@@ -21,7 +21,7 @@ from eval_datasets import (
     ScienceQADataset,
     IconQADataset,
     VSRDataset,
-    NoCapsDataset
+    NoCapsDataset,
 )
 from tqdm import tqdm
 
@@ -406,6 +406,7 @@ parser.add_argument(
     default="open_flamingo",
 )
 
+
 def main():
     args, leftovers = parser.parse_known_args()
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
@@ -460,7 +461,7 @@ def main():
             results["coco"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
-    
+
     if args.eval_nocaps:
         print("Evaluating on NoCaps...")
         for shot in args.shots:
@@ -598,7 +599,7 @@ def main():
             results["hateful_memes"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
-            
+
     if args.eval_scienceqa:
         print("Evaluating on ScienceQA...")
         for shot in args.shots:
@@ -612,15 +613,14 @@ def main():
                     dataset_name="scienceqa",
                 )
                 print(
-                    f"Shots {shot} Trial {trial} "
-                    f"ScienceQA score: {scienceqa_score}"
+                    f"Shots {shot} Trial {trial} " f"ScienceQA score: {scienceqa_score}"
                 )
                 scores.append(scienceqa_score)
             print(f"Shots {shot} Mean ScienceQA score: {np.mean(scores)}")
             results["scienceqa"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
-    
+
     if args.eval_iconqa:
         print("Evaluating on IconQA...")
         for shot in args.shots:
@@ -633,16 +633,13 @@ def main():
                     seed=seed,
                     dataset_name="iconqa",
                 )
-                print(
-                    f"Shots {shot} Trial {trial} "
-                    f"IconQA score: {iconqa_score}"
-                )
+                print(f"Shots {shot} Trial {trial} " f"IconQA score: {iconqa_score}")
                 scores.append(iconqa_score)
             print(f"Shots {shot} Mean IconQA score: {np.mean(scores)}")
             results["iconqa"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
-            
+
     if args.eval_vsr:
         print("Evaluating on VSR...")
         for shot in args.shots:
@@ -655,15 +652,12 @@ def main():
                     seed=seed,
                     dataset_name="vsr",
                 )
-                print(
-                    f"Shots {shot} Trial {trial} "
-                    f"VSR score: {vsr_score}"
-                )
+                print(f"Shots {shot} Trial {trial} " f"VSR score: {vsr_score}")
                 scores.append(vsr_score)
             print(f"Shots {shot} Mean VSR score: {np.mean(scores)}")
             results["vsr"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )        
+            )
 
     if args.results_file is not None:
         with open(args.results_file, "w") as f:
@@ -850,7 +844,9 @@ def evaluate_captioning(
         result_path=results_path,
         annotations_path=args.coco_annotations_json_path
         if dataset_name == "coco"
-        else args.flickr_annotations_json_path if dataset_name == "flickr" else args.nocaps_annotations_json_path,
+        else args.flickr_annotations_json_path
+        if dataset_name == "flickr"
+        else args.nocaps_annotations_json_path,
     )
 
     # delete the temporary file
@@ -1042,10 +1038,10 @@ def evaluate_classification(
             "models"
         )
     batch_size = args.batch_size
-    
+
     if dataset_name == "scienceqa" or dataset_name == "iconqa":
         assert batch_size == 1, "ScienceQA only supports batch_size=1"
-    
+
     num_samples = args.num_samples
     np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
@@ -1082,12 +1078,8 @@ def evaluate_classification(
             args.iconqa_test_dir_path,
         )
     elif dataset_name == "vsr":
-        train_dataset = VSRDataset(
-            args.vsr_train_annotations_json_path
-        )
-        test_dataset = VSRDataset(
-            args.vsr_test_annotations_json_path
-        )
+        train_dataset = VSRDataset(args.vsr_train_annotations_json_path)
+        test_dataset = VSRDataset(args.vsr_test_annotations_json_path)
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
 
@@ -1098,7 +1090,7 @@ def evaluate_classification(
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         seed,
     )
-    
+
     tokenizer.padding_side = (
         "left"  # For generation padding tokens should be on the left
     )
@@ -1122,7 +1114,11 @@ def evaluate_classification(
     pred_scores = []
 
     test_iterator = more_itertools.chunked(test_dataset, args.batch_size)
-    for batch_idx, batch in tqdm(enumerate(test_iterator), total=len(test_dataset), desc=f"Running inference {dataset_name}"):
+    for batch_idx, batch in tqdm(
+        enumerate(test_iterator),
+        total=len(test_dataset),
+        desc=f"Running inference {dataset_name}",
+    ):
         batch_images = []
         batch_text = []
 
@@ -1140,12 +1136,14 @@ def evaluate_classification(
                 for data in in_context_samples
             ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
-            
+
             def sample_to_prompt(sample):
                 if dataset_name == "hateful_memes":
                     return prompt_text.replace("{meme_text}", sample["ocr"])
                 elif dataset_name == "scienceqa":
-                    return prompt_text.replace("{context}", sample["context"]).replace("{question}", sample["question"])
+                    return prompt_text.replace("{context}", sample["context"]).replace(
+                        "{question}", sample["question"]
+                    )
                 elif dataset_name == "iconqa":
                     return prompt_text.replace("{question}", sample["question"])
                 elif dataset_name == "vsr":
@@ -1167,9 +1165,12 @@ def evaluate_classification(
 
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
-        text_x = [context_text + sample_to_prompt(batch[idx]) + " " for idx, context_text in enumerate(batch_text)]
+        text_x = [
+            context_text + sample_to_prompt(batch[idx]) + " "
+            for idx, context_text in enumerate(batch_text)
+        ]
         # print(text_x)
-        
+
         ctx_and_prompt_tokenized = tokenizer(
             text_x,
             return_tensors="pt",
@@ -1199,7 +1200,9 @@ def evaluate_classification(
         if dataset_name == "imagenet":
             all_class_names = IMAGENET_CLASSNAMES
         elif dataset_name == "scienceqa" or dataset_name == "iconqa":
-            all_class_names = batch[0]["choices"] # MEGA HACK: ScienceQA has different classes for each sample 
+            all_class_names = batch[0][
+                "choices"
+            ]  # MEGA HACK: ScienceQA has different classes for each sample
         elif dataset_name == "vsr":
             all_class_names = VSR_CLASSNAMES
         else:
@@ -1264,8 +1267,13 @@ def evaluate_classification(
             # at index 0 corresponds to the token at index 1.
             probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
             # print(f"DEBUG: probs.shape = {probs.shape}")
-            
-            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1).detach().cpu()
+
+            gen_probs = (
+                torch.gather(probs, 2, classname_tokens[:, :, None])
+                .squeeze(-1)
+                .detach()
+                .cpu()
+            )
 
             # print(f"DEBUG: gen_probs.shape = {gen_probs.shape}")
             # print(f"DEBUG: gen_probs = {gen_probs}")
@@ -1310,7 +1318,6 @@ def evaluate_classification(
     else:
         # return top-1 accuracy
         return float(acc1) / len(test_dataset)
-
 
 
 if __name__ == "__main__":
