@@ -92,6 +92,7 @@ class EvalModel(BaseEvalModel):
                 input_ids.to(self.device),
                 attention_mask=attention_mask.to(self.device),
                 max_new_tokens=max_generation_length,
+                min_new_tokens=8,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
             )

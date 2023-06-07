@@ -5,7 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
-from open_flamingo.eval.imagenet_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
+from open_flamingo.eval.classification_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
 
 
 class CaptionDataset(Dataset):
@@ -105,6 +105,30 @@ class VQADataset(Dataset):
             "question_id": question["question_id"],
         }
 
+class NoCapsDataset(Dataset):
+    def __init__(self, image_dir_path, annotations_path):
+        self.image_dir_path = image_dir_path
+        with open(annotations_path, "r") as f:
+            annotations = json.load(f)
+        
+        self.images = annotations["images"]
+        self.annotations = annotations["annotations"]
+        
+        # assert annotations is 10x the size of images
+        assert len(self.annotations) == 10*len(self.images)
+            
+    def __len__(self):
+        return len(self.annotations)//10 # 10 captions per image listed sequentially
+    
+    def __getitem__(self, idx):
+        annotation = self.annotations[idx*10]
+        image = Image.open(os.path.join(self.image_dir_path, self.images[idx]["file_name"]))
+        image.load()
+        return {
+            "image": image,
+            "caption": annotation["caption"],
+            "image_id": annotation["image_id"]
+        }
 
 class ImageNetDataset(ImageFolder):
     """Class to represent the ImageNet1k dataset."""
@@ -140,5 +164,82 @@ class HatefulMemesDataset(Dataset):
             "image": image,
             "ocr": annotation["text"],
             "class_name": "yes" if annotation["label"] == 1 else "no",
+            "class_id": annotation["label"],
+        }
+
+class ScienceQADataset(Dataset):
+    def __init__(self, image_dir_path, annotations_path, is_train):
+        self.image_dir_path = image_dir_path
+        with open(annotations_path, "r") as f:
+            self.annotations = json.load(f)
+            
+        # remove entries with no image or split is wrong
+        self.q_ids = [key for key in self.annotations if (self.annotations[key]["image"] != None) and (self.annotations[key]["split"] == "train" if is_train else self.annotations[key]["split"] == "test")]
+
+    def __len__(self):
+        return len(self.q_ids)
+
+    def __getitem__(self, idx):
+        annotation = self.annotations[self.q_ids[idx]]
+        img_path = os.path.join(self.image_dir_path, self.q_ids[idx], "image.png")
+        image = Image.open(img_path)
+        image.load()
+        return {
+            "image": image,
+            "context": annotation["lecture"],
+            "question": annotation["question"],
+            "choices": annotation["choices"],
+            "class_name": annotation["choices"][annotation["answer"]],
+            "class_id": annotation["answer"],
+        }
+
+class IconQADataset(Dataset):
+    def __init__(self, image_dir_path):
+        self.image_dir_paths = [os.path.join(image_dir_path, d) for d in os.listdir(image_dir_path)]
+        
+    def __len__(self):
+        return len(self.image_dir_paths)
+
+    def __getitem__(self, idx):
+        
+        img_path = os.path.join(self.image_dir_paths[idx], "image.png")
+        image = Image.open(img_path)
+        image.load()
+        
+        with open(os.path.join(self.image_dir_paths[idx], "data.json"), "r") as f:
+            annotation = json.load(f)
+        
+        return {
+            "image": image,
+            "question": annotation["question"],
+            "choices": annotation["choices"],
+            "class_name": annotation["choices"][annotation["answer"]],
+            "class_id": annotation["answer"],
+        }
+        
+import requests
+from io import BytesIO
+class VSRDataset(Dataset):
+    def __init__(self, annotations_path):
+        with open(annotations_path, "r") as f:
+            self.annotations = [json.loads(line) for line in f]
+            
+    def __len__(self):
+        return len(self.annotations)
+
+    def __getitem__(self, idx):
+        annotation = self.annotations[idx]
+        url = annotation["image_link"]
+        # load image from url
+        response = requests.get(url)
+        image = Image.open(BytesIO(response.content))
+        image.load()
+        
+        # image = Image.open()
+        # image.load()
+        return {
+            "image": image,
+            "caption": annotation["caption"],
+            "class_name": "(True)" if annotation["label"] == 1 else "(False)",
             "class_id": annotation["label"],
         }

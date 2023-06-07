@@ -34,7 +34,9 @@ def create_model_and_transforms(
         Tokenizer: A tokenizer for the language model
     """
     vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
-        clip_vision_encoder_path, pretrained=clip_vision_encoder_pretrained
+        clip_vision_encoder_path,
+        pretrained=clip_vision_encoder_pretrained,
+        cache_dir="/mmfs1/gscratch/efml/anasa2/clip_cache",
     )
     # set the vision encoder to output the visual features
     vision_encoder.visual.output_tokens = True

@@ -1010,3 +1010,10 @@ HM_CLASSNAMES = [
     "no",
 ]
 HM_CLASS_ID_TO_LABEL = dict(zip(range(len(HM_CLASSNAMES)), HM_CLASSNAMES))
+
+VSR_CLASSNAMES = [
+    "(True)",
+    "(False)",
+]
+
+VSR_CLASS_ID_TO_LABEL = dict(zip(range(len(VSR_CLASSNAMES)), VSR_CLASSNAMES))

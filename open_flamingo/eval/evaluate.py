@@ -18,16 +18,22 @@ from eval_datasets import (
     VQADataset,
     ImageNetDataset,
     HatefulMemesDataset,
+    ScienceQADataset,
+    IconQADataset,
+    VSRDataset,
+    NoCapsDataset
 )
 from tqdm import tqdm
 
 
 from eval_datasets import VQADataset, ImageNetDataset
-from open_flamingo.eval.imagenet_utils import (
+from open_flamingo.eval.classification_utils import (
     IMAGENET_CLASSNAMES,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
     HM_CLASSNAMES,
     HM_CLASS_ID_TO_LABEL,
+    VSR_CLASSNAMES,
+    VSR_CLASS_ID_TO_LABEL,
 )
 
 from eval_model import BaseEvalModel
@@ -112,6 +118,30 @@ parser.add_argument(
     action="store_true",
     default=False,
     help="Whether to evaluate on Hateful Memes.",
+)
+parser.add_argument(
+    "--eval_scienceqa",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on ScienceQA.",
+)
+parser.add_argument(
+    "--eval_iconqa",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on IconQA.",
+)
+parser.add_argument(
+    "--eval_vsr",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on VSR.",
+)
+parser.add_argument(
+    "--eval_nocaps",
+    action="store_true",
+    default=False,
+    help="Whether to evaluate on nocaps.",
 )
 
 # Dataset arguments
@@ -301,7 +331,7 @@ parser.add_argument("--imagenet_root", type=str, default="/tmp")
 
 ## Hateful Memes dataset
 parser.add_argument(
-    "--hateful_memes_image_dir_path",
+    "--hateful_memes_train_image_dir_path",
     type=str,
     default=None,
 )
@@ -316,6 +346,58 @@ parser.add_argument(
     default=None,
 )
 
+# ScienceQA dataset
+parser.add_argument(
+    "--scienceqa_train_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--scienceqa_test_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--scienceqa_annotations_json_path",
+    type=str,
+    default=None,
+)
+
+# IconQA dataset
+parser.add_argument(
+    "--iconqa_train_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--iconqa_test_dir_path",
+    type=str,
+    default=None,
+)
+
+# VSR dataset
+parser.add_argument(
+    "--vsr_train_annotations_json_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--vsr_test_annotations_json_path",
+    type=str,
+    default=None,
+)
+
+# NoCaps dataset
+parser.add_argument(
+    "--nocaps_image_dir_path",
+    type=str,
+    default=None,
+)
+parser.add_argument(
+    "--nocaps_annotations_json_path",
+    type=str,
+    default=None,
+)
 
 parser.add_argument(
     "--model",
@@ -323,7 +405,6 @@ parser.add_argument(
     help="Model name. Currently only `OpenFlamingo` is supported.",
     default="open_flamingo",
 )
-
 
 def main():
     args, leftovers = parser.parse_known_args()
@@ -377,6 +458,25 @@ def main():
                 scores.append(cider_score)
             print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
             results["coco"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+    
+    if args.eval_nocaps:
+        print("Evaluating on NoCaps...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                cider_score = evaluate_captioning(
+                    args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    dataset_name="nocaps",
+                )
+                print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
+                scores.append(cider_score)
+            print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+            results["nocaps"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
 
@@ -498,6 +598,72 @@ def main():
             results["hateful_memes"].append(
                 {"shots": shot, "trials": scores, "mean": np.mean(scores)}
             )
+            
+    if args.eval_scienceqa:
+        print("Evaluating on ScienceQA...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                scienceqa_score = evaluate_classification(
+                    args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    dataset_name="scienceqa",
+                )
+                print(
+                    f"Shots {shot} Trial {trial} "
+                    f"ScienceQA score: {scienceqa_score}"
+                )
+                scores.append(scienceqa_score)
+            print(f"Shots {shot} Mean ScienceQA score: {np.mean(scores)}")
+            results["scienceqa"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+    
+    if args.eval_iconqa:
+        print("Evaluating on IconQA...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                iconqa_score = evaluate_classification(
+                    args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    dataset_name="iconqa",
+                )
+                print(
+                    f"Shots {shot} Trial {trial} "
+                    f"IconQA score: {iconqa_score}"
+                )
+                scores.append(iconqa_score)
+            print(f"Shots {shot} Mean IconQA score: {np.mean(scores)}")
+            results["iconqa"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )
+            
+    if args.eval_vsr:
+        print("Evaluating on VSR...")
+        for shot in args.shots:
+            scores = []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                vsr_score = evaluate_classification(
+                    args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    dataset_name="vsr",
+                )
+                print(
+                    f"Shots {shot} Trial {trial} "
+                    f"VSR score: {vsr_score}"
+                )
+                scores.append(vsr_score)
+            print(f"Shots {shot} Mean VSR score: {np.mean(scores)}")
+            results["vsr"].append(
+                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+            )        
 
     if args.results_file is not None:
         with open(args.results_file, "w") as f:
@@ -544,9 +710,9 @@ def evaluate_captioning(
     args: argparse.Namespace,
     eval_model: BaseEvalModel,
     seed: int = 42,
-    max_generation_length: int = 20,
+    max_generation_length: int = 30,
     num_beams: int = 3,
-    length_penalty: float = -2.0,
+    length_penalty: float = 0.0,
     num_shots: int = 8,
     dataset_name: str = "coco",
 ):
@@ -576,6 +742,12 @@ def evaluate_captioning(
         )  # Note: calling this "train" for consistency with COCO but Flickr only has one split for images
         image_val_dir_path = None
         annotations_path = args.flickr_karpathy_json_path
+    elif dataset_name == "nocaps":
+        image_train_dir_path = args.coco_train_image_dir_path
+        image_val_dir_path = args.coco_val_image_dir_path
+        annotations_path = args.coco_karpathy_json_path
+        nocaps_annotations_path = args.nocaps_annotations_json_path
+        nocaps_image_dir_path = args.nocaps_image_dir_path
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
@@ -584,16 +756,22 @@ def evaluate_captioning(
         image_val_dir_path=image_val_dir_path,
         annotations_path=annotations_path,
         is_train=True,
-        dataset_name=dataset_name,
+        dataset_name=dataset_name if dataset_name != "nocaps" else "coco",
     )
 
-    test_dataset = CaptionDataset(
-        image_train_dir_path=image_train_dir_path,
-        image_val_dir_path=image_val_dir_path,
-        annotations_path=annotations_path,
-        is_train=False,
-        dataset_name=dataset_name,
-    )
+    if dataset_name == "nocaps":
+        test_dataset = NoCapsDataset(
+            image_dir_path=nocaps_image_dir_path,
+            annotations_path=nocaps_annotations_path,
+        )
+    else:
+        test_dataset = CaptionDataset(
+            image_train_dir_path=image_train_dir_path,
+            image_val_dir_path=image_val_dir_path,
+            annotations_path=annotations_path,
+            is_train=False,
+            dataset_name=dataset_name,
+        )
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
@@ -672,7 +850,7 @@ def evaluate_captioning(
         result_path=results_path,
         annotations_path=args.coco_annotations_json_path
         if dataset_name == "coco"
-        else args.flickr_annotations_json_path,
+        else args.flickr_annotations_json_path if dataset_name == "flickr" else args.nocaps_annotations_json_path,
     )
 
     # delete the temporary file
@@ -864,6 +1042,10 @@ def evaluate_classification(
             "models"
         )
     batch_size = args.batch_size
+    
+    if dataset_name == "scienceqa" or dataset_name == "iconqa":
+        assert batch_size == 1, "ScienceQA only supports batch_size=1"
+    
     num_samples = args.num_samples
     np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
@@ -871,24 +1053,52 @@ def evaluate_classification(
 
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
-        val_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
+        test_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
     elif dataset_name == "hateful_memes":
         train_dataset = HatefulMemesDataset(
             args.hateful_memes_image_dir_path,
             args.hateful_memes_train_annotations_json_path,
         )
-        val_dataset = HatefulMemesDataset(
+        test_dataset = HatefulMemesDataset(
             args.hateful_memes_image_dir_path,
             args.hateful_memes_test_annotations_json_path,
         )
-
-    if num_samples > len(val_dataset):
-        raise ValueError(
-            f"num_samples ({num_samples}) cannot be larger than the number of samples "
-            f"in the dataset ({len(val_dataset)})"
+    elif dataset_name == "scienceqa":
+        train_dataset = ScienceQADataset(
+            args.scienceqa_train_image_dir_path,
+            args.scienceqa_annotations_json_path,
+            is_train=True,
         )
+        test_dataset = ScienceQADataset(
+            args.scienceqa_test_image_dir_path,
+            args.scienceqa_annotations_json_path,
+            is_train=False,
+        )
+    elif dataset_name == "iconqa":
+        train_dataset = IconQADataset(
+            args.iconqa_train_dir_path,
+        )
+        test_dataset = IconQADataset(
+            args.iconqa_test_dir_path,
+        )
+    elif dataset_name == "vsr":
+        train_dataset = VSRDataset(
+            args.vsr_train_annotations_json_path
+        )
+        test_dataset = VSRDataset(
+            args.vsr_test_annotations_json_path
+        )
+    else:
+        raise ValueError(f"Unsupported dataset {dataset_name}")
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
+
+    test_dataset = prepare_eval_samples(
+        test_dataset,
+        args.num_samples if args.num_samples > 0 else len(test_dataset),
+        seed,
+    )
+    
     tokenizer.padding_side = (
         "left"  # For generation padding tokens should be on the left
     )
@@ -900,15 +1110,19 @@ def evaluate_classification(
         prompt_text = "<image>A photo of a"
     elif dataset_name == "hateful_memes":
         prompt_text = "<image>is an image with written: '{meme_text}' on it. Is it hateful? Answer:"
-    else:
-        raise NotImplementedError(f"Dataset {dataset_name} not supported")
+    elif dataset_name == "scienceqa":
+        prompt_text = "<image>{context} Question: {question} Answer:"
+    elif dataset_name == "iconqa":
+        prompt_text = "<image>Question: {question} Answer:"
+    elif dataset_name == "vsr":
+        prompt_text = "<image>{caption}"
 
     # used to calculate the ROC-AUC score
     gts = []
     pred_scores = []
 
-    val_iterator = more_itertools.chunked(val_dataset, batch_size)
-    for batch_idx, batch in enumerate(val_iterator):
+    test_iterator = more_itertools.chunked(test_dataset, args.batch_size)
+    for batch_idx, batch in tqdm(enumerate(test_iterator), total=len(test_dataset), desc=f"Running inference {dataset_name}"):
         batch_images = []
         batch_text = []
 
@@ -926,9 +1140,21 @@ def evaluate_classification(
                 for data in in_context_samples
             ] + [eval_model.image_processor(batch[idx]["image"]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
+            
+            def sample_to_prompt(sample):
+                if dataset_name == "hateful_memes":
+                    return prompt_text.replace("{meme_text}", sample["ocr"])
+                elif dataset_name == "scienceqa":
+                    return prompt_text.replace("{context}", sample["context"]).replace("{question}", sample["question"])
+                elif dataset_name == "iconqa":
+                    return prompt_text.replace("{question}", sample["question"])
+                elif dataset_name == "vsr":
+                    return prompt_text.replace("{caption}", sample["caption"])
+                else:
+                    return prompt_text
 
             context_text = "".join(
-                f"{prompt_text.replace('{meme_text}', in_context_samples[i]['ocr']) if dataset_name == 'hateful_memes' else prompt_text} {in_context_samples[i]['class_name']}<|endofchunk|>"
+                f"{sample_to_prompt(in_context_samples[i])} {in_context_samples[i]['class_name']}<|endofchunk|>"
                 for i in range(effective_num_shots)
             )
             batch_text.append(context_text)
@@ -941,8 +1167,11 @@ def evaluate_classification(
 
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
+        text_x = [context_text + sample_to_prompt(batch[idx]) + " " for idx, context_text in enumerate(batch_text)]
+        # print(text_x)
+        
         ctx_and_prompt_tokenized = tokenizer(
-            [context_text + prompt_text + " " for context_text in batch_text],
+            text_x,
             return_tensors="pt",
             padding=True,
             truncation=True,
@@ -967,18 +1196,26 @@ def evaluate_classification(
 
         precomputed_logits = precomputed.logits.detach()
 
-        all_class_names = (
-            IMAGENET_CLASSNAMES if dataset_name == "imagenet" else HM_CLASSNAMES
-        )
+        if dataset_name == "imagenet":
+            all_class_names = IMAGENET_CLASSNAMES
+        elif dataset_name == "scienceqa" or dataset_name == "iconqa":
+            all_class_names = batch[0]["choices"] # MEGA HACK: ScienceQA has different classes for each sample 
+        elif dataset_name == "vsr":
+            all_class_names = VSR_CLASSNAMES
+        else:
+            all_class_names = HM_CLASSNAMES
 
-        class_id_to_name = (
-            IMAGENET_1K_CLASS_ID_TO_LABEL
-            if dataset_name == "imagenet"
-            else HM_CLASS_ID_TO_LABEL
-        )
+        if dataset_name == "imagenet":
+            class_id_to_name = IMAGENET_1K_CLASS_ID_TO_LABEL
+        elif dataset_name == "scienceqa" or dataset_name == "iconqa":
+            class_id_to_name = dict(zip(range(len(all_class_names)), all_class_names))
+        elif dataset_name == "vsr":
+            class_id_to_name = VSR_CLASS_ID_TO_LABEL
+        else:
+            class_id_to_name = HM_CLASS_ID_TO_LABEL
 
         overall_probs = []
-        for class_name in tqdm(all_class_names):
+        for class_name in all_class_names:
             past_key_values = None
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
@@ -990,7 +1227,7 @@ def evaluate_classification(
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
 
             classname_tokens = repeat(
-                classname_tokens, "b s -> (repeat b) s", repeat=batch_size
+                classname_tokens, "b s -> (repeat b) s", repeat=args.batch_size
             )
 
             # Compute the outputs one token at a time, using cached
@@ -1026,13 +1263,14 @@ def evaluate_classification(
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1.
             probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
+            # print(f"DEBUG: probs.shape = {probs.shape}")
+            
+            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1).detach().cpu()
 
-            gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1)
+            # print(f"DEBUG: gen_probs.shape = {gen_probs.shape}")
+            # print(f"DEBUG: gen_probs = {gen_probs}")
 
-            print(f"DEBUG: gen_probs.shape = {gen_probs.shape}")
-            print(f"DEBUG: gen_probs = {gen_probs}")
-
-            class_prob = gen_probs.detach().cpu().numpy()
+            class_prob = torch.prod(gen_probs, 1).numpy()
             overall_probs.append(class_prob)
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
@@ -1041,7 +1279,7 @@ def evaluate_classification(
             """Return the indices of the top k elements in probs_ary."""
             return np.argsort(probs_ary)[::-1][:k]
 
-        for i in range(batch_size):
+        for i in range(args.batch_size):
             highest_prob_idxs = topk(overall_probs[i], 5)
 
             top5 = [class_id_to_name[pred] for pred in highest_prob_idxs]
@@ -1051,31 +1289,28 @@ def evaluate_classification(
             acc1 += int(y_i == top5[0])
 
             print(
-                f"DEBUG: batch {idx} elem {i} of {batch_size}:"
-                f"label {y_i} // top5 {top5}"
+                f"DEBUG: batch {idx} elem {i} of {args.batch_size}:"
+                f"label {y_i} // top5 {top5} // all_class_names {all_class_names}"
             )
 
             if dataset_name == "hateful_memes":
                 gts.append(highest_prob_idxs[0])
                 pred_scores.append(overall_probs[i][highest_prob_idxs[0]])
 
-        examples_seen = (batch_idx + 1) * batch_size
+        examples_seen = (batch_idx + 1) * args.batch_size
         print(
             "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
                 examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
             )
         )
-        if batch_idx * batch_size >= num_samples - 1:
-            break
 
-    if dataset_name == "imagenet":
-        # return top-1 accuracy
-        return float(acc1) / num_samples
-    elif dataset_name == "hateful_memes":
+    if dataset_name == "hateful_memes":
         # return ROC-AUC score
         return roc_auc_score(gts, pred_scores)
     else:
-        raise ValueError(f"Unknown dataset {dataset_name}")
+        # return top-1 accuracy
+        return float(acc1) / len(test_dataset)
+
 
 
 if __name__ == "__main__":
