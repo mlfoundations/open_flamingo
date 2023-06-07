@@ -20,9 +20,15 @@ from open_flamingo.eval.imagenet_utils import (
     IMAGENET_1K_CLASS_ID_TO_LABEL,
     find_sub_list,
 )
-from open_flamingo.eval.coco_metric import compute_cider, postprocess_captioning_generation
+from open_flamingo.eval.coco_metric import (
+    compute_cider,
+    postprocess_captioning_generation,
+)
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
-from open_flamingo.eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
+from open_flamingo.eval.vqa_metric import (
+    compute_vqa_accuracy,
+    postprocess_vqa_generation,
+)
 from open_flamingo.src.flamingo import Flamingo
 from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
 
@@ -232,6 +238,7 @@ parser.add_argument(
     help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
 )
 
+
 def main():
     args, leftovers = parser.parse_known_args()
     module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
@@ -361,7 +368,8 @@ def main():
                 )
                 if args.rank == 0:
                     print(
-                        f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
+                        f"Shots {shot} Trial {trial} "
+                        f"ImageNet score: {imagenet_score}"
                     )
                     scores.append(imagenet_score)
 
@@ -402,7 +410,10 @@ def prepare_eval_samples(test_dataset, num_samples, batch_size, seed):
     dataset = torch.utils.data.Subset(test_dataset, random_indices)
     sampler = torch.utils.data.distributed.DistributedSampler(dataset)
     loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, sampler=sampler, collate_fn=custom_collate_fn,
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        collate_fn=custom_collate_fn,
     )
     return loader
 
@@ -416,11 +427,13 @@ def compute_effective_num_shots(num_shots, model_type):
         return num_shots if num_shots > 0 else 2
     return num_shots
 
+
 def custom_collate_fn(batch):
     collated_batch = {}
     for key in batch[0].keys():
         collated_batch[key] = [item[key] for item in batch]
     return collated_batch
+
 
 def evaluate_captioning(
     args: argparse.Namespace,
@@ -537,13 +550,16 @@ def evaluate_captioning(
                 "caption": new_predictions[i],
             }
 
-    # all gather 
+    # all gather
     all_predictions = [None] * args.world_size
-    torch.distributed.all_gather_object(all_predictions, predictions) # list of dicts
+    torch.distributed.all_gather_object(all_predictions, predictions)  # list of dicts
 
-    if args.rank != 0: return
+    if args.rank != 0:
+        return
 
-    all_predictions = {k: v for d in all_predictions for k, v in d.items()} # merge dicts
+    all_predictions = {
+        k: v for d in all_predictions for k, v in d.items()
+    }  # merge dicts
     print("After allgather:", len(all_predictions))
 
     # save the predictions to a temporary file
@@ -693,16 +709,17 @@ def evaluate_vqa(
         new_predictions = map(process_function, outputs)
 
         for new_prediction, sample_id in zip(new_predictions, batch["question_id"]):
-            predictions.append({
-                "answer": new_prediction, "question_id": sample_id
-            })
+            predictions.append({"answer": new_prediction, "question_id": sample_id})
 
-    # all gather 
+    # all gather
     all_predictions = [None] * args.world_size
-    torch.distributed.all_gather_object(all_predictions, predictions) # list of lists
-    if args.rank != 0: return
+    torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
+    if args.rank != 0:
+        return
 
-    all_predictions = [item for sublist in all_predictions for item in sublist] # flatten
+    all_predictions = [
+        item for sublist in all_predictions for item in sublist
+    ]  # flatten
     print("After allgather:", len(all_predictions))
 
     # save the predictions to a temporary file
@@ -817,7 +834,9 @@ def evaluate_imagenet(
             precomputed = model(
                 vision_x=None,
                 lang_x=ctx_and_prompt_tokenized["input_ids"].to(model.device),
-                attention_mask=ctx_and_prompt_tokenized["attention_mask"].to(model.device),
+                attention_mask=ctx_and_prompt_tokenized["attention_mask"].to(
+                    model.device
+                ),
                 clear_conditioned_layers=False,
                 use_cached_vision_x=True,
                 use_cache=True,

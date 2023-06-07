@@ -49,7 +49,7 @@ def main():
 
                         # Add each image to the tar file
                         for img_idx, image_name in enumerate(image_names):
-                            try: 
+                            try:
                                 # load image
                                 img = Image.open(
                                     os.path.join(args.image_dir, str(idx), image_name)
@@ -58,9 +58,13 @@ def main():
                                 img.save(buffered, format="JPEG")
                                 img_str = base64.b64encode(buffered.getvalue())
                                 # convert to base64
-                                sample_data["image_info"][img_idx]["image_base64"] = str(img_str)
+                                sample_data["image_info"][img_idx][
+                                    "image_base64"
+                                ] = str(img_str)
                             except FileNotFoundError:
-                                print(f"Did not find {image_name} downloaded. This can happen if the url is now 404.")
+                                print(
+                                    f"Did not find {image_name} downloaded. This can happen if the url is now 404."
+                                )
                             except Exception as e:
                                 print(f"Error processing {image_name}: {e}")
 

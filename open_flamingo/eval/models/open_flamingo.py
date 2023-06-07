@@ -44,14 +44,14 @@ class EvalModel(BaseEvalModel):
             cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
         checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
-        if 'model_state_dict' in checkpoint:
-            checkpoint = checkpoint['model_state_dict']
+        if "model_state_dict" in checkpoint:
+            checkpoint = checkpoint["model_state_dict"]
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
         self.model.load_state_dict(checkpoint, strict=False)
         self.model.to(self.device)
         self.model.eval()
         self.tokenizer.padding_side = "left"
-        
+
         # autocast
         self.autocast = get_autocast(model_args["precision"])
         self.cast_dtype = get_cast_dtype(model_args["precision"])
@@ -101,11 +101,17 @@ class EvalModel(BaseEvalModel):
 
         with torch.inference_mode():
             with self.autocast():
-                handle = self.model.module if isinstance(self.model, DDP) else self.model
+                handle = (
+                    self.model.module if isinstance(self.model, DDP) else self.model
+                )
                 outputs = handle.generate(
-                    self._prepare_images(batch_images).to(self.device, dtype=self.cast_dtype, non_blocking=True),
+                    self._prepare_images(batch_images).to(
+                        self.device, dtype=self.cast_dtype, non_blocking=True
+                    ),
                     input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True),
-                    attention_mask=attention_mask.to(self.device, dtype=self.cast_dtype, non_blocking=True),
+                    attention_mask=attention_mask.to(
+                        self.device, dtype=self.cast_dtype, non_blocking=True
+                    ),
                     min_new_tokens=min_generation_length,
                     max_new_tokens=max_generation_length,
                     num_beams=num_beams,
@@ -125,6 +131,7 @@ class EvalModel(BaseEvalModel):
     def get_classification_prompt(self, class_str=None) -> str:
         return f"<image>A photo of a {class_str if class_str is not None else ''}{'<|endofchunk|>' if class_str is not None else ''}"
 
+
 def get_cast_dtype(precision: str):
     cast_dtype = None
     if precision == "bf16":
@@ -132,6 +139,7 @@ def get_cast_dtype(precision: str):
     elif precision == "fp16":
         cast_dtype = torch.float16
     return cast_dtype
+
 
 def get_autocast(precision):
     if precision == "amp":
