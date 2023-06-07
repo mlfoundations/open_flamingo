@@ -1,8 +1,17 @@
 import torch
 from einops import rearrange
 from torch import nn
-
 from .helpers import PerceiverResampler
+from torch.distributed.fsdp.wrap import (
+    enable_wrap,
+    wrap,
+)
+from transformers.modeling_outputs import CausalLMOutputWithPast
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+)
+
+from .utils import apply_with_stopping_condition
 
 
 class Flamingo(nn.Module):
@@ -14,7 +23,7 @@ class Flamingo(nn.Module):
         media_token_id: int,
         vis_dim: int,
         cross_attn_every_n_layers: int = 1,
-        use_media_placement_augmentation: bool = False,
+        gradient_checkpointing: bool = False,
     ):
         """
         Args:
@@ -25,22 +34,28 @@ class Flamingo(nn.Module):
             vis_dim (int): Dimension of the visual features.
                 Visual features are projected to match this shape along the last dimension.
             cross_attn_every_n_layers (int, optional): How often to apply cross attention after transformer layer. Defaults to 1.
-            use_media_placement_augmentation (bool, optional): Whether to randomly assign images to the preceding or following text in training. Defaults to False.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id
         self.media_token_id = media_token_id
-        self.use_media_placement_augmentation = use_media_placement_augmentation
         self.vis_dim = vis_dim
-        self.vision_encoder = vision_encoder
+        if hasattr(lang_encoder.config, "d_model"):
+            self.lang_dim = lang_encoder.config.d_model  # mpt uses d_model
+        else:
+            self.lang_dim = lang_encoder.config.hidden_size
+
+        self.vision_encoder = vision_encoder.visual
         self.perceiver = PerceiverResampler(dim=self.vis_dim)
         self.lang_encoder = lang_encoder
         self.lang_encoder.init_flamingo(
             media_token_id=media_token_id,
+            lang_hidden_size=self.lang_dim,
             vis_hidden_size=self.vis_dim,
             cross_attn_every_n_layers=cross_attn_every_n_layers,
-            use_media_placement_augmentation=self.use_media_placement_augmentation,
+            gradient_checkpointing=gradient_checkpointing,
         )
+        self._use_gradient_checkpointing = gradient_checkpointing
+        self.perceiver._use_gradient_checkpointing = gradient_checkpointing
 
     def forward(
         self,
@@ -91,13 +106,42 @@ class Flamingo(nn.Module):
             # Case: do not use caching (i.e. this is a standard forward pass);
             self._encode_vision_x(vision_x=vision_x)
 
-        output = self.lang_encoder(
-            input_ids=lang_x,
-            attention_mask=attention_mask,
-            labels=labels,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-        )
+        if not self.lang_encoder.is_mpt_1b:
+            output = self.lang_encoder(
+                input_ids=lang_x,
+                attention_mask=attention_mask,
+                labels=labels,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+            )
+        else:
+            output = self.lang_encoder(
+                input_ids=lang_x,
+                attention_mask=attention_mask.bool(),
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+            )
+            # compute loss from logits
+            if labels is not None:
+                logits = output.logits
+                # Shift so that tokens < n predict n
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                # Flatten the tokens
+                loss_fct = torch.nn.CrossEntropyLoss()
+                loss = loss_fct(
+                    shift_logits.view(
+                        -1, self.lang_encoder.get_input_embeddings().num_embeddings
+                    ),
+                    shift_labels.view(-1),
+                )
+                output = CausalLMOutputWithPast(
+                    loss=loss,
+                    logits=logits,
+                    past_key_values=output.past_key_values,
+                    hidden_states=output.hidden_states,
+                    attentions=output.attentions,
+                )
 
         if clear_conditioned_layers:
             self.lang_encoder.clear_conditioned_layers()
@@ -149,6 +193,7 @@ class Flamingo(nn.Module):
         if num_beams > 1:
             vision_x = vision_x.repeat_interleave(num_beams, dim=0)
 
+        self.lang_encoder._generating = True
         self._encode_vision_x(vision_x=vision_x)
 
         output = self.lang_encoder.generate(
@@ -169,6 +214,7 @@ class Flamingo(nn.Module):
         )
 
         self.lang_encoder.clear_conditioned_layers()
+        self.lang_encoder._generating = False
         return output
 
     def _encode_vision_x(self, vision_x: torch.Tensor):
@@ -189,10 +235,110 @@ class Flamingo(nn.Module):
 
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         with torch.no_grad():
-            vision_x = self.vision_encoder.visual(vision_x)[1]
+            vision_x = self.vision_encoder(vision_x)[1]
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
-
-        vision_x = self.perceiver(vision_x)  # reshapes to (b, T, n, d)
+        vision_x = self.perceiver(vision_x)
 
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_vis_x(vision_x)
+
+    def wrap_fsdp(self, wrapper_kwargs, device_id):
+        """
+        Manually wraps submodules for FSDP and move other parameters to device_id.
+
+        Why manually wrap?
+        - all parameters within the FSDP wrapper must have the same requires_grad.
+            We have a mix of frozen and unfrozen parameters.
+        - model.vision_encoder.visual needs to be individually wrapped or encode_vision_x errors
+            See: https://github.com/pytorch/pytorch/issues/82461#issuecomment-1269136344
+
+        The rough wrapping structure is:
+        - FlamingoModel
+            - FSDP(FSDP(vision_encoder))
+            - FSDP(FSDP(perceiver))
+            - lang_encoder
+                - FSDP(FSDP(input_embeddings))
+                - FlamingoLayers
+                    - FSDP(FSDP(gated_cross_attn_layer))
+                    - FSDP(FSDP(decoder_layer))
+                - FSDP(FSDP(output_embeddings))
+                - other parameters
+
+        Known issues:
+        - Our FSDP strategy is not compatible with tied embeddings. If the LM embeddings are tied,
+            train with DDP or set the --freeze_lm_embeddings flag to true.
+        - With FSDP + gradient ckpting, one can increase the batch size with seemingly no upper bound.
+            Although the training curves look okay, we found that downstream performance dramatically
+            degrades if the batch size is unreasonably large (e.g., 100 MMC4 batch size for OPT-125M).
+
+        FAQs about our FSDP wrapping strategy:
+        Why double wrap?
+        As of torch==2.0.1, FSDP's _post_forward_hook and _post_backward_hook
+        only free gathered parameters if the module is NOT FSDP root.
+
+        Why unfreeze the decoder_layers?
+        See https://github.com/pytorch/pytorch/issues/95805
+        As of torch==2.0.1, FSDP's _post_backward_hook is only registed if the flat param
+        requires_grad=True. We need the postback to fire to avoid OOM.
+        To effectively freeze the decoder layers, we exclude them from the optimizer.
+
+        What is assumed to be frozen v. unfrozen?
+        We assume that the model is being trained under normal Flamingo settings
+        with these lines being called in factory.py:
+            ```
+            # Freeze all parameters
+            model.requires_grad_(False)
+            assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+
+            # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
+            model.perceiver.requires_grad_(True)
+            model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
+            [optional] model.lang_encoder.get_input_embeddings().requires_grad_(True)
+            ```
+        """
+        # unfreeze the decoder layers
+        for block in self.lang_encoder.old_decoder_blocks:
+            block.requires_grad_(True)
+
+        # wrap in FSDP
+        with enable_wrap(wrapper_cls=FSDP, **wrapper_kwargs):
+            self.perceiver = wrap(wrap(self.perceiver))
+            self.lang_encoder.old_decoder_blocks = nn.ModuleList(
+                wrap(wrap(block)) for block in self.lang_encoder.old_decoder_blocks
+            )
+            self.lang_encoder.gated_cross_attn_layers = nn.ModuleList(
+                wrap(wrap(layer)) if layer is not None else None
+                for layer in self.lang_encoder.gated_cross_attn_layers
+            )
+            self.lang_encoder.init_flamingo_layers(self._use_gradient_checkpointing)
+            self.lang_encoder.set_input_embeddings(
+                wrap(wrap(self.lang_encoder.get_input_embeddings()))
+            )
+            self.lang_encoder.set_output_embeddings(
+                wrap(wrap(self.lang_encoder.get_output_embeddings()))
+            )
+            self.vision_encoder = wrap(wrap(self.vision_encoder))  # frozen
+
+        # manually move non-FSDP managed parameters to device_id
+        # these are all in lang_encoder
+        apply_with_stopping_condition(
+            module=self.lang_encoder,
+            apply_fn=lambda m: m.to(device_id),
+            apply_condition=lambda m: len(list(m.children())) == 0,
+            stopping_condition=lambda m: isinstance(m, FSDP),
+        )
+
+        # exclude the original decoder layers from the optimizer
+        for block in self.lang_encoder.old_decoder_blocks:
+            for p in block.parameters():
+                p.exclude_from_optimizer = True
+
+        # set up clip_grad_norm_ function
+        def clip_grad_norm_(max_norm):
+            self.perceiver.clip_grad_norm_(max_norm)
+            for layer in self.lang_encoder.gated_cross_attn_layers:
+                if layer is not None:
+                    layer.clip_grad_norm_(max_norm)
+            self.lang_encoder.get_input_embeddings().clip_grad_norm_(max_norm)
+
+        self.clip_grad_norm_ = clip_grad_norm_

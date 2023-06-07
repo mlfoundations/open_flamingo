@@ -777,7 +777,7 @@ def evaluate_captioning(
 
     in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
 
-    predictions = defaultdict()
+    in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
 
     for batch in more_itertools.chunked(
         tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"),
@@ -1232,6 +1232,23 @@ def evaluate_classification(
             classname_tokens = repeat(
                 classname_tokens, "b s -> (repeat b) s", repeat=args.batch_size
             )
+            batch_text.append(context_text)
+
+        # shape [B, T_img, C, h, w]
+        vision_x = torch.stack(batch_images, dim=0)
+        # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
+        vision_x = vision_x.unsqueeze(2)
+        model._encode_vision_x(vision_x.cuda())
+
+        # Cache the context text: tokenize context and prompt,
+        # e.g. '<context> a picture of a '
+        ctx_and_prompt_tokenized = tokenizer(
+            [context_text + prompt_text + " " for context_text in batch_text],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048,
+        )
 
             # Compute the outputs one token at a time, using cached
             # activations.

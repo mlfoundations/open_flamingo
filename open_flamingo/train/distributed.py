@@ -1,5 +1,9 @@
-import os
+"""
+Util functions for setting up distributed training.
+Credit: https://github.com/mlfoundations/open_clip/blob/main/src/training/distributed.py
+"""
 
+import os
 import torch
 
 try:

@@ -1,22 +1,30 @@
-import random
-
 import torch.nn as nn
-
 from .helpers import GatedCrossAttentionBlock
 from .utils import getattr_recursive, setattr_recursive
 
 
 class FlamingoLayer(nn.Module):
-    def __init__(self, gated_cross_attn_layer, decoder_layer):
+    """
+    FlamingoLayer is a wrapper around the GatedCrossAttentionBlock and DecoderLayer.
+    """
+
+    def __init__(
+        self, gated_cross_attn_layer, decoder_layer, gradient_checkpointing=False
+    ):
         super().__init__()
         self.gated_cross_attn_layer = gated_cross_attn_layer
         self.decoder_layer = decoder_layer
         self.vis_x = None
         self.media_locations = None
+        if self.gated_cross_attn_layer is not None:
+            self.gated_cross_attn_layer._use_gradient_checkpointing = (
+                gradient_checkpointing
+            )
+        self.decoder_layer._use_gradient_checkpointing = gradient_checkpointing
 
     def is_conditioned(self) -> bool:
         """Check whether the layer is conditioned."""
-        return self.vis_x is not None
+        return self.vis_x is not None and self.media_locations is not None
 
     # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
     def condition_vis_x(self, vis_x):
@@ -25,8 +33,8 @@ class FlamingoLayer(nn.Module):
     def condition_media_locations(self, media_locations):
         self.media_locations = media_locations
 
-    def condition_attend_previous(self, attend_previous):
-        self.attend_previous = attend_previous
+    def condition_use_cached_media(self, use_cached_media):
+        self.use_cached_media = use_cached_media
 
     def forward(
         self,
@@ -34,23 +42,24 @@ class FlamingoLayer(nn.Module):
         attention_mask=None,
         **decoder_layer_kwargs,
     ):
-        if self.gated_cross_attn_layer is None:
-            return self.decoder_layer(
-                lang_x, attention_mask=attention_mask, **decoder_layer_kwargs
+        # Cross attention
+        if self.gated_cross_attn_layer is not None:
+            if self.vis_x is None:
+                raise ValueError("vis_x must be conditioned before forward pass")
+
+            if self.media_locations is None:
+                raise ValueError(
+                    "media_locations must be conditioned before forward pass"
+                )
+
+            lang_x = self.gated_cross_attn_layer(
+                lang_x,
+                self.vis_x,
+                media_locations=self.media_locations,
+                use_cached_media=self.use_cached_media,
             )
 
-        if self.vis_x is None:
-            raise ValueError("vis_x must be conditioned before forward pass")
-
-        if self.media_locations is None:
-            raise ValueError("media_locations must be conditioned before forward pass")
-
-        lang_x = self.gated_cross_attn_layer(
-            lang_x,
-            self.vis_x,
-            media_locations=self.media_locations,
-            attend_previous=self.attend_previous,
-        )
+        # Normal decoder layer
         lang_x = self.decoder_layer(
             lang_x, attention_mask=attention_mask, **decoder_layer_kwargs
         )
@@ -74,37 +83,47 @@ class FlamingoLMMixin(nn.Module):
     def init_flamingo(
         self,
         media_token_id,
+        lang_hidden_size,
         vis_hidden_size,
         cross_attn_every_n_layers,
-        use_media_placement_augmentation,
+        gradient_checkpointing,
     ):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
         """
-
+        self.old_decoder_blocks = self._get_decoder_layers()
         self.gated_cross_attn_layers = nn.ModuleList(
             [
                 GatedCrossAttentionBlock(
-                    dim=self.config.hidden_size, dim_visual=vis_hidden_size
+                    dim=lang_hidden_size, dim_visual=vis_hidden_size
                 )
                 if (layer_idx + 1) % cross_attn_every_n_layers == 0
                 else None
                 for layer_idx, _ in enumerate(self._get_decoder_layers())
             ]
         )
+        self.init_flamingo_layers(gradient_checkpointing)
+        self.media_token_id = media_token_id
+        self.initialized_flamingo = True
+        self._generating = False
+
+    def init_flamingo_layers(self, gradient_checkpointing):
+        """
+        Re initializes the FlamingoLayers.
+        Propagates any changes made to self.gated_corss_attn_layers or self.old_decoder_blocks
+        """
         self._set_decoder_layers(
             nn.ModuleList(
                 [
-                    FlamingoLayer(gated_cross_attn_layer, decoder_layer)
+                    FlamingoLayer(
+                        gated_cross_attn_layer, decoder_layer, gradient_checkpointing
+                    )
                     for gated_cross_attn_layer, decoder_layer in zip(
-                        self.gated_cross_attn_layers, self._get_decoder_layers()
+                        self.gated_cross_attn_layers, self.old_decoder_blocks
                     )
                 ]
             )
         )
-        self.media_token_id = media_token_id
-        self.use_media_placement_augmentation = use_media_placement_augmentation
-        self.initialized_flamingo = True
 
     def forward(self, *input, **kwargs):
         """Condition the Flamingo layers on the media locations before forward()"""
@@ -115,13 +134,20 @@ class FlamingoLMMixin(nn.Module):
 
         input_ids = kwargs["input_ids"] if "input_ids" in kwargs else input[0]
         media_locations = input_ids == self.media_token_id
-        attend_previous = (
-            (random.random() < 0.5) if self.use_media_placement_augmentation else False
+
+        # if there are media already cached and we're generating and there are no media tokens in the input,
+        # we'll assume that ALL input tokens should attend to the last previous media that is cached.
+        # this is especially important for HF generate() compatibility, since generate() calls forward()
+        # repeatedly one token at a time (with no media tokens).
+        # without this check, the model would not attend to any images when generating (after the first token)
+        use_cached_media_locations = (
+            self._generating and self.is_conditioned() and not media_locations.any()
         )
 
-        for layer in self.get_decoder().layers:
-            layer.condition_media_locations(media_locations)
-            layer.condition_attend_previous(attend_previous)
+        for layer in self._get_decoder_layers():
+            if not use_cached_media_locations:
+                layer.condition_media_locations(media_locations)
+            layer.condition_use_cached_media(use_cached_media_locations)
 
         return super().forward(
             *input, **kwargs
@@ -135,4 +161,4 @@ class FlamingoLMMixin(nn.Module):
         for layer in self._get_decoder_layers():
             layer.condition_vis_x(None)
             layer.condition_media_locations(None)
-            layer.condition_attend_previous(None)
+            layer.condition_use_cached_media(None)

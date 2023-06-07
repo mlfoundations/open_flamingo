@@ -1,5 +1,5 @@
 """
-Taken from https://github.com/lucidrains/flamingo-pytorch
+Based on: https://github.com/lucidrains/flamingo-pytorch
 """
 
 import torch
@@ -133,8 +133,6 @@ class PerceiverResampler(nn.Module):
 
 
 # gated cross attention
-
-
 class MaskedCrossAttention(nn.Module):
     def __init__(
         self,
@@ -159,7 +157,7 @@ class MaskedCrossAttention(nn.Module):
         # whether for text to only attend to immediate preceding image, or all previous images
         self.only_attend_immediate_media = only_attend_immediate_media
 
-    def forward(self, x, media, media_locations=None, attend_previous=True):
+    def forward(self, x, media, media_locations=None, use_cached_media=False):
         """
         Args:
             x (torch.Tensor): text features
@@ -168,9 +166,18 @@ class MaskedCrossAttention(nn.Module):
                 shape (B, T_img, n, D_img) where n is the dim of the latents
             media_locations: boolean mask identifying the media tokens in x
                 shape (B, T_txt)
-            attend_previous: bool
-                If false, ignores immediately preceding image and starts attending when following image
+            use_cached_media: bool
+                If true, treat all of x as if they occur after the last media
+                registered in media_locations. T_txt does not need to exactly
+                equal media_locations.shape[1] in this case
         """
+
+        if not use_cached_media:
+            assert (
+                media_locations.shape[1] == x.shape[1]
+            ), f"media_location.shape is {media_locations.shape} but x.shape is {x.shape}"
+
+        T_txt = x.shape[1]
         _, T_img, n = media.shape[:3]
         h = self.heads
 
@@ -187,21 +194,18 @@ class MaskedCrossAttention(nn.Module):
         sim = einsum("... i d, ... j d -> ... i j", q, k)
 
         if exists(media_locations):
-            # at each boolean of True, increment the time counter (relative to media time)
-            text_time = media_locations.cumsum(dim=-1)
             media_time = torch.arange(T_img, device=x.device) + 1
 
-            if not attend_previous:
-                text_time[~media_locations] += 1
-                # make sure max is still the number of images in the sequence
-                text_time[
-                    text_time
-                    > repeat(
-                        torch.count_nonzero(media_locations, dim=1),
-                        "b -> b i",
-                        i=text_time.shape[1],
-                    )
-                ] = 0
+            if use_cached_media:
+                # text time is set to the last cached media location
+                text_time = repeat(
+                    torch.count_nonzero(media_locations, dim=1),
+                    "b -> b i",
+                    i=T_txt,
+                )
+            else:
+                # at each boolean of True, increment the time counter (relative to media time)
+                text_time = media_locations.cumsum(dim=-1)
 
             # text time must equal media time if only attending to most immediate image
             # otherwise, as long as text time is greater than media time (if attending to all previous images / media)
@@ -258,14 +262,14 @@ class GatedCrossAttentionBlock(nn.Module):
         x,
         media,
         media_locations=None,
-        attend_previous=True,
+        use_cached_media=False,
     ):
         x = (
             self.attn(
                 x,
                 media,
                 media_locations=media_locations,
-                attend_previous=attend_previous,
+                use_cached_media=use_cached_media,
             )
             * self.attn_gate.tanh()
             + x
