@@ -65,12 +65,14 @@ model, image_processor, tokenizer = create_model_and_transforms(
 ## Released OpenFlamingo models
 We have trained the following OpenFlamingo models so far.
 
-|# params|Language model|Vision encoder|`cross_attn_every_n_layers`|COCO 32-shot CIDEr|License|
-|------------|--------------|--------------|---------------------|---------|----|
-|3B| mosaicml/mpt-1b-redpajama-200b-dolly | openai CLIP ViT-L/14 | 1 | 94.8 | cc-by-sa-3.0 |
-|4B| togethercomputer/RedPajama-INCITE-Base-3B-v1 | openai CLIP ViT-L/14 | 2 | - | apache-2.0 |
-|4B| togethercomputer/RedPajama-INCITE-Instruct-3B-v1 | openai CLIP ViT-L/14 | 2 | - | apache-2.0 |
-|9B| mosaicml/mpt-7b | openai CLIP ViT-L/14 | 4 | - | apache-2.0 |
+|# params|Language model|Vision encoder|Xattn frequency*|COCO 32-shot CIDEr|VQAv2 32-shot Accuracy|License|Weights|
+|------------|--------------|--------------|----------|-----------|----|-----|----|
+|3B| mosaicml/mpt-1b-redpajama-200b-dolly | openai CLIP ViT-L/14 | 1 | 94.8 | 44.3 |cc-by-sa-3.0 |[Link]()|
+|4B| togethercomputer/RedPajama-INCITE-Base-3B-v1 | openai CLIP ViT-L/14 | 2 | 95.1 | 47.0 | apache-2.0 |[Link]()|
+|4B| togethercomputer/RedPajama-INCITE-Instruct-3B-v1 | openai CLIP ViT-L/14 | 2 | 99.2 | 45.8 | apache-2.0 |[Link]()|
+|9B| mosaicml/mpt-7b | openai CLIP ViT-L/14 | 4 | 99.5 | 50.2 | apache-2.0 |[Link]()|
+
+*\*Xattn frequency refers to the `--cross_attn_every_n_layers` argument.*
 
 
 To instantiate an OpenFlamingo model with these weights, initialize the model as above and use the following code.
@@ -167,7 +169,7 @@ torchrun --nnodes=1 --nproc_per_node=4 open_flamingo/train/train.py \
   --train_num_samples_laion 250000 \
   --loss_multiplier_laion 0.2 \
   --workers=4 \
-  --run_name openflamingo-3B \
+  --run_name OpenFlamingo-3B \
   --num_epochs 480 \
   --warmup_steps  1875 \
   --mmc4_textsim_threshold 0.24 \

@@ -6,7 +6,7 @@ Our codebase uses [WebDataset](https://github.com/webdataset/webdataset) to effi
 
 ### LAION-2B Dataset
 [LAION-2B](https://arxiv.org/abs/2210.08402) contains 2B web-scraped (image, text) pairs. 
-We use [img2dataset](https://github.com/rom1504/img2dataset) to download this dataset into tar files; note that tar files should include pre-downloaded images.
+We use [img2dataset](https://github.com/rom1504/img2dataset) to download this dataset into tar files.
 
 ### Multimodal C4 Dataset
 We train on the full version of [Multimodal C4 (MMC4)](https://github.com/allenai/mmc4), which includes 103M documents of web-scraped, interleaved image-text sequences. During training, we truncate sequences to 256 text tokens and six images per sequence.
@@ -36,7 +36,7 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
   --train_num_samples_laion 250000 \
   --loss_multiplier_laion 0.2 \
   --workers=4 \
-  --run_name openflamingo-3B \
+  --run_name OpenFlamingo-3B \
   --num_epochs 480 \
   --warmup_steps  1875 \
   --mmc4_textsim_threshold 0.24 \
