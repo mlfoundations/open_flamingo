@@ -17,10 +17,11 @@ This is the evaluation module of OpenFlamingo. It contains a set of utilities fo
 When evaluating a model using `num_shots` shots, we sample the exemplars from the training split. Performance is evaluated on a disjoint test split, subsampled to `--num_samples` examples.
 
 ## Sample scripts
+Our codebase uses DistributedDataParallel to parallelize evaluation by default, so please make sure to set the `MASTER_ADDR` and `MASTER_PORT` environment variables or use `torchrun`. We provide a sample Slurm evaluation script in `open_flamingo/open_flamingo/scripts/run_eval.sh`. 
 
-We provide a sample Slurm evaluation script in `open_flamingo/open_flamingo/scripts/run_eval.sh`.
+We also support evaluating at a lower precision using the `--precision` flag. We find minimal difference between evaluating at full precision vs. amp_bf16.
 
-Before running that script, we suggest to download a local copy of the OpenFlamingo model, as follows:
+To evaluate one of our pretrained checkpoints, we suggest first downloading a local copy of the weights, as follows:
 
 ```
 # grab model checkpoint from huggingface hub
