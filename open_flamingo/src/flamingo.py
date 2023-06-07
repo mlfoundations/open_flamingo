@@ -106,42 +106,13 @@ class Flamingo(nn.Module):
             # Case: do not use caching (i.e. this is a standard forward pass);
             self._encode_vision_x(vision_x=vision_x)
 
-        if not self.lang_encoder.is_mpt_1b:
-            output = self.lang_encoder(
-                input_ids=lang_x,
-                attention_mask=attention_mask,
-                labels=labels,
-                past_key_values=past_key_values,
-                use_cache=use_cache,
-            )
-        else:
-            output = self.lang_encoder(
-                input_ids=lang_x,
-                attention_mask=attention_mask.bool(),
-                past_key_values=past_key_values,
-                use_cache=use_cache,
-            )
-            # compute loss from logits
-            if labels is not None:
-                logits = output.logits
-                # Shift so that tokens < n predict n
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
-                # Flatten the tokens
-                loss_fct = torch.nn.CrossEntropyLoss()
-                loss = loss_fct(
-                    shift_logits.view(
-                        -1, self.lang_encoder.get_input_embeddings().num_embeddings
-                    ),
-                    shift_labels.view(-1),
-                )
-                output = CausalLMOutputWithPast(
-                    loss=loss,
-                    logits=logits,
-                    past_key_values=output.past_key_values,
-                    hidden_states=output.hidden_states,
-                    attentions=output.attentions,
-                )
+        output = self.lang_encoder(
+            input_ids=lang_x,
+            attention_mask=attention_mask,
+            labels=labels,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+        )
 
         if clear_conditioned_layers:
             self.lang_encoder.clear_conditioned_layers()

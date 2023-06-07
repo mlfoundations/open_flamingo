@@ -59,7 +59,8 @@ def create_model_and_transforms(
         local_files_only=use_local_files,
         trust_remote_code=True,
     )
-    # hacks for mosaicml/mpt-1b-redpajama-200b-dolly
+
+    # hacks for MPT-1B, which doesn't have a get_input_embeddings method
     if "mpt-1b-redpajama-200b" in lang_encoder_path:
 
         class EmbeddingFnMixin:
@@ -70,10 +71,8 @@ def create_model_and_transforms(
                 self.transformer.wte = new_embeddings
 
         extend_instance(lang_encoder, EmbeddingFnMixin)
-        lang_encoder.is_mpt_1b = True
-    else:
-        lang_encoder.is_mpt_1b = False
 
+    # convert LM to FlamingoLM
     extend_instance(lang_encoder, FlamingoLMMixin)
 
     if decoder_layers_attr_name is None:
