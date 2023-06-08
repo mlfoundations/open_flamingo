@@ -25,9 +25,7 @@ class EvalModel(BaseEvalModel):
             and "device" in model_args
         ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
 
-        model_args["device"] = int(model_args["device"])
-
-        self.device = model_args["device"] if model_args["device"] >= 0 else "cpu"
+        self.device = int(model_args["device"]) if "device" in model_args else "cpu"
         self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
         self.model = Blip2ForConditionalGeneration.from_pretrained(
             model_args["lm_path"]

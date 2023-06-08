@@ -22,7 +22,6 @@ class EvalModel(BaseEvalModel):
         assert (
             "vision_encoder_path" in model_args
             and "lm_path" in model_args
-            and "device" in model_args
             and "checkpoint_path" in model_args
             and "lm_tokenizer_path" in model_args
             and "cross_attn_every_n_layers" in model_args
@@ -30,8 +29,8 @@ class EvalModel(BaseEvalModel):
             and "precision" in model_args
         ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained, and precision arguments to be specified"
 
-        model_args["device"] = int(model_args["device"])
-        self.device = model_args["device"] if model_args["device"] >= 0 else "cpu"
+        self.device = int(model_args["device"]) if "device" in model_args else "cpu"
+
         (
             self.model,
             self.image_processor,

@@ -49,6 +49,7 @@ parser.add_argument(
     "--trial_seeds",
     nargs="+",
     default=[42],
+    type=int,
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
