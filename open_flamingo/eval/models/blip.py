@@ -3,8 +3,6 @@ from typing import List
 from PIL import Image
 import torch
 
-from torch.nn.parallel import DistributedDataParallel as DDP
-
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 from open_flamingo.eval.eval_model import BaseEvalModel
 
@@ -25,7 +23,11 @@ class EvalModel(BaseEvalModel):
             and "device" in model_args
         ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
 
-        self.device = int(model_args["device"]) if "device" in model_args else "cpu"
+        self.device = (
+            int(model_args["device"])
+            if ("device" in model_args and model_args["device"] >= 0)
+            else "cpu"
+        )
         self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
         self.model = Blip2ForConditionalGeneration.from_pretrained(
             model_args["lm_path"]
@@ -87,12 +89,12 @@ class EvalModel(BaseEvalModel):
         attention_mask = encodings["attention_mask"]
 
         with torch.inference_mode():
-            handle = self.model.module if isinstance(self.model, DDP) else self.model
             outputs = self.model.generate(
                 self._prepare_images(batch_images).to(self.device),
                 input_ids.to(self.device),
                 attention_mask=attention_mask.to(self.device),
                 max_new_tokens=max_generation_length,
+                min_new_tokens=8,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
             )

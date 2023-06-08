@@ -29,7 +29,11 @@ class EvalModel(BaseEvalModel):
             and "precision" in model_args
         ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained, and precision arguments to be specified"
 
-        self.device = int(model_args["device"]) if "device" in model_args else "cpu"
+        self.device = (
+            model_args["device"]
+            if ("device" in model_args and model_args["device"] >= 0)
+            else "cpu"
+        )
 
         (
             self.model,
@@ -121,14 +125,35 @@ class EvalModel(BaseEvalModel):
 
         return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
+    def get_logits(
+        self,
+        lang_x: torch.Tensor,
+        vision_x: torch.Tensor = None,
+        past_key_values: torch.Tensor = None,
+        clear_conditioned_layers: bool = False,
+        use_cached_vision_x: bool = False,
+    ):
+        with torch.no_grad():
+            with self.autocast():
+                outputs = self.model(
+                    vision_x=vision_x,
+                    lang_x=lang_x,
+                    clear_conditioned_layers=clear_conditioned_layers,
+                    use_cached_vision_x=use_cached_vision_x,
+                    past_key_values=past_key_values,
+                    use_cache=(past_key_values is not None),
+                )
+        return outputs
+
+    def encode_vision_x(self, image_tensor: torch.Tensor):
+        handle = self.model.module if isinstance(self.model, DDP) else self.model
+        handle._encode_vision_x(image_tensor.to(self.device))
+
     def get_vqa_prompt(self, question, answer=None) -> str:
         return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
 
     def get_caption_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
-
-    def get_classification_prompt(self, class_str=None) -> str:
-        return f"<image>A photo of a {class_str if class_str is not None else ''}{'<|endofchunk|>' if class_str is not None else ''}"
 
 
 def get_cast_dtype(precision: str):
