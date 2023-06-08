@@ -5,19 +5,21 @@ import os
 import random
 import uuid
 from collections import defaultdict
-from typing import Mapping
 
 from einops import repeat
 import more_itertools
 import numpy as np
 import torch
 
+
 from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import CaptionDataset, ImageNetDataset, ClassificationDataset
+from eval_datasets import CaptionDataset, VQADataset, ImageNetDataset
 from tqdm import tqdm
+
 
 from eval_datasets import VQADataset, ImageNetDataset
 from open_flamingo.eval.imagenet_utils import (
+    openai_imagenet_classnames,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
 )
 
@@ -429,25 +431,13 @@ def main():
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                imagenet_dataset = ClassificationDataset(
-                    train_dataset=ImageNetDataset(
-                        os.path.join(args.imagenet_root, "train")
-                    ),
-                    val_dataset=ImageNetDataset(
-                        os.path.join(args.imagenet_root, "val")
-                    ),
-                    class_id_to_label=IMAGENET_1K_CLASS_ID_TO_LABEL,
-                    prompts=[
-                        "A photo of a",
-                    ],
-                )
-                imagenet_score = evaluate_classification(
+                imagenet_score = evaluate_imagenet(
                     eval_model=eval_model,
                     batch_size=args.batch_size,
                     num_samples=args.num_samples,
                     num_shots=shot,
                     seed=seed,
-                    classification_dataset=imagenet_dataset,
+                    imagenet_root=args.imagenet_root,
                 )
                 print(
                     f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
@@ -797,20 +787,21 @@ def evaluate_vqa(
     return acc
 
 
-def evaluate_classification(
+def evaluate_imagenet(
     eval_model,
     batch_size: int,
-    classification_dataset: ClassificationDataset,
+    imagenet_root: str,
     seed: int = 42,
     num_samples: int = 5000,
     num_shots: int = 8,
 ):
     """
-    Evaluate a model on a classification dataset.
+    Evaluate a model on ImageNet dataset.
 
     Args:
         eval_model (BaseEvalModel): model to evaluate
         batch_size (int): batch size
+        imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
         num_samples (int, optional): number of samples to evaluate on. Defaults to 5000 samples.
         num_shots (int, optional): number of shots to use. Defaults to 8.
@@ -826,20 +817,17 @@ def evaluate_classification(
     model, tokenizer = eval_model.model, eval_model.tokenizer
     assert isinstance(model, Flamingo)
 
-    train_dataset = classification_dataset.train_dataset
-    val_dataset = classification_dataset.val_dataset
-    class_id_to_label = classification_dataset.class_id_to_label
+    train_dataset = ImageNetDataset(os.path.join(imagenet_root, "train"))
+    val_dataset = ImageNetDataset(os.path.join(imagenet_root, "val"))
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
     tokenizer.padding_side = (
         "left"  # For generation padding tokens should be on the left
     )
 
-    _metrics = defaultdict(
-        float
-    )  # accumulates metric values over each batch, to be averaged at end.
-    # TODO(jpgard): iterate over prompts here.
-    prompt_text = f"<image>{classification_dataset.prompts[0]}"
+    acc1 = 0
+    acc5 = 0
+    prompt_text = "<image>A photo of a"
 
     val_iterator = more_itertools.chunked(val_dataset, batch_size)
     for batch_idx, batch in enumerate(val_iterator):
@@ -849,8 +837,8 @@ def evaluate_classification(
         for idx in range(len(batch)):
             # Choose a different set of random context samples for each sample
             # from the training set
-            context_indices = classification_dataset.get_in_context_samples(
-                effective_num_shots
+            context_indices = np.random.choice(
+                len(train_dataset), effective_num_shots, replace=False
             )
 
             in_context_samples = [train_dataset[i] for i in context_indices]
@@ -905,12 +893,12 @@ def evaluate_classification(
         precomputed_logits = precomputed.logits.detach()
 
         overall_probs = []
-        for class_name in tqdm(class_id_to_label.values()):
+        for imagenet_class_name in tqdm(openai_imagenet_classnames):
             past_key_values = None
             # Tokenize only the class name and iteratively decode the model's
             # predictions for this class.
             classname_tokens = tokenizer(
-                class_name, add_special_tokens=False, return_tensors="pt"
+                imagenet_class_name, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].cuda()
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
@@ -961,23 +949,35 @@ def evaluate_classification(
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
 
-        targets = [x["class_name"] for x in batch]
-        metrics = classification_dataset.metric_fn(targets, overall_probs)
+        def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
+            """Return the indices of the top k elements in probs_ary."""
+            return np.argsort(probs_ary)[::-1][:k]
 
-        for k in metrics.keys():
-            _metrics[k] += metrics[k]
+        for i in range(batch_size):
+            top5 = [
+                IMAGENET_1K_CLASS_ID_TO_LABEL[pred]
+                for pred in topk(overall_probs[i], 5)
+            ]
+
+            y_i = batch[i]["class_name"]
+            acc5 += int(y_i in set(top5))
+            acc1 += int(y_i == top5[0])
+
+            print(
+                f"DEBUG: batch {idx} elem {i} of {batch_size}:"
+                f"label {y_i} // top5 {top5}"
+            )
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
-            f"eval {examples_seen}/{num_samples}: "
-            + "\n\t".join(
-                [f"{k}: {v / examples_seen:.4f}" for k, v in _metrics.items()]
+            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
+                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
             )
         )
         if batch_idx * batch_size >= num_samples - 1:
             break
 
-    return float(_metrics["acc1"]) / num_samples
+    return float(acc1) / num_samples
 
 
 if __name__ == "__main__":
