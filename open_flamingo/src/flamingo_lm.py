@@ -51,7 +51,7 @@ class FlamingoLayer(nn.Module):
                 raise ValueError(
                     "media_locations must be conditioned before forward pass"
                 )
-
+                
             lang_x = self.gated_cross_attn_layer(
                 lang_x,
                 self.vis_x,
@@ -144,8 +144,10 @@ class FlamingoLMMixin(nn.Module):
             and self.is_conditioned()
             and not media_locations.any()
         )
-
+        
         for layer in self._get_decoder_layers():
+            if not use_cached_media_locations:
+                layer.condition_media_locations(media_locations)
             layer.condition_use_cached_media(use_cached_media_locations)
 
         # package arguments for the other parent's forward. since we don't know the order of the arguments,

@@ -169,7 +169,6 @@ class Flamingo(nn.Module):
 
         self.lang_encoder._use_cached_vision_x = True
         self._encode_vision_x(vision_x=vision_x)
-        self._condition_media_locations(input_ids=lang_x, repeat_size=num_beams)
 
         output = self.lang_encoder.generate(
             input_ids=lang_x,
@@ -319,19 +318,14 @@ class Flamingo(nn.Module):
 
         self.clip_grad_norm_ = clip_grad_norm_
 
-    def _condition_media_locations(self, input_ids: torch.Tensor, repeat_size: int = 1):
+    def _condition_media_locations(self, input_ids: torch.Tensor):
         """
         Compute the media token locations from lang_x and condition the language model on these.
         Args:
             input_ids (torch.Tensor): Language input
                 shape (B, T_txt)
-            repeat_size (int): Number of times to repeat the media token mask. This is used for beam search.
         """
         media_locations = input_ids == self.media_token_id
-
-        # repeat the media_locations for each beam
-        if repeat_size > 1:
-            media_locations = media_locations.repeat_interleave(repeat_size, dim=0)
 
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_media_locations(media_locations)
