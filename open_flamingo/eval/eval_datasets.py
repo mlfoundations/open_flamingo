@@ -139,6 +139,6 @@ class HatefulMemesDataset(Dataset):
         return {
             "image": image,
             "ocr": annotation["text"],
-            "class_name": "yes" if annotation["label"] == 1 else "no",
+            "class_name": "Yes." if annotation["label"] == 1 else "No.",
             "class_id": annotation["label"],
         }

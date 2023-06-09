@@ -5,7 +5,7 @@ import torch
 
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 from open_flamingo.eval.eval_model import BaseEvalModel
-
+from open_flamingo.eval.models.utils import unwrap_model
 
 class EvalModel(BaseEvalModel):
     """BLIP-2 model evaluation.
@@ -89,7 +89,7 @@ class EvalModel(BaseEvalModel):
         attention_mask = encodings["attention_mask"]
 
         with torch.inference_mode():
-            outputs = self.model.generate(
+            outputs = unwrap_model(self.model).generate(
                 self._prepare_images(batch_images).to(self.device),
                 input_ids.to(self.device),
                 attention_mask=attention_mask.to(self.device),
