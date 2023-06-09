@@ -1165,21 +1165,21 @@ def evaluate_classification(
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
 
-            # print(
-            #     f"DEBUG: batch {batch_idx} elem {i} of {batch_size}:"
-            #     f"label {y_i} // top5 {top5} // all_class_names {all_class_names}"
-            # )
+            print(
+                f"DEBUG: batch {batch_idx} elem {i} of {batch_size}:"
+                f"label {y_i} // top5 {top5} // all_class_names {all_class_names}"
+            )
 
             if dataset_name == "hateful_memes":
-                gts.append(highest_prob_idxs[0])
+                gts.append(batch["class_id"][i])
                 pred_scores.append(overall_probs[i][highest_prob_idxs[0]])
 
-        # examples_seen = (batch_idx + 1) * batch_size
-        # print(
-        #     "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-        #         examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
-        #     )
-        # )
+        examples_seen = (batch_idx + 1) * batch_size
+        print(
+            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
+                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
+            )
+        )
 
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
