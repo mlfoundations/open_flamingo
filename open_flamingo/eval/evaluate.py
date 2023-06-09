@@ -994,7 +994,7 @@ def evaluate_classification(
     if dataset_name == "imagenet":
         prompt_text = "<image>A photo of a"
     elif dataset_name == "hateful_memes":
-        prompt_text = "<image>is a meme with: '{meme_text}' written on it. Is it hateful?"
+        prompt_text = "<image>is a meme with: '{meme_text}' written on it. Is it hateful? Answer:"
 
     # used to calculate the ROC-AUC score
     gts = []
@@ -1076,7 +1076,7 @@ def evaluate_classification(
 
         def _detach_pkvs(pkvs):
             """Detach a set of past key values."""
-            return tuple([tuple([x.detach() for x in inner]) for inner in pkvs])
+            return list([tuple([x.detach() for x in inner]) for inner in pkvs])
 
         precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
 
