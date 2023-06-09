@@ -190,7 +190,7 @@ class Flamingo(nn.Module):
         )
 
         self.lang_encoder.clear_conditioned_layers()
-        self.lang_encoder._generating = False
+        self.lang_encoder._use_cached_vision_x = False
         return output
 
     def _encode_vision_x(self, vision_x: torch.Tensor):
