@@ -174,7 +174,7 @@ class Flamingo(nn.Module):
         self._condition_media_locations(input_ids=lang_x, repeat_size=num_beams)
 
         output = self.lang_encoder.generate(
-            lang_x,
+            input_ids=lang_x,
             attention_mask=attention_mask,
             eos_token_id=self.eoc_token_id,
             num_beams=num_beams,

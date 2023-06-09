@@ -125,14 +125,13 @@ class FlamingoLMMixin(nn.Module):
             )
         )
 
-    def forward(self, *input, **kwargs):
+    def forward(self, input_ids, attention_mask, **kwargs):
         """Condition the Flamingo layers on the media locations before forward()"""
         if not self.initialized_flamingo:
             raise ValueError(
                 "Flamingo layers are not initialized. Please call `init_flamingo` first."
             )
 
-        input_ids = kwargs["input_ids"] if "input_ids" in kwargs else input[0]
         media_locations = input_ids == self.media_token_id
 
         # if there are media already cached and we're generating and there are no media tokens in the input,
@@ -149,8 +148,12 @@ class FlamingoLMMixin(nn.Module):
         for layer in self._get_decoder_layers():
             layer.condition_use_cached_media(use_cached_media_locations)
 
+        # package arguments for the other parent's forward. since we don't know the order of the arguments,
+        # make them all kwargs
+        kwargs["input_ids"] = input_ids
+        kwargs["attention_mask"] = attention_mask
         return super().forward(
-            *input, **kwargs
+            **kwargs
         )  # Call the other parent's forward method
 
     def is_conditioned(self) -> bool:
