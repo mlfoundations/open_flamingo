@@ -193,7 +193,7 @@ def main():
         "--fsdp_use_orig_params",
         default=False,
         action="store_true",
-        help="Passed into the FSDP constructor. Enables param_groups and gradient masking for weight_decay. Still does not work with OPT.",
+        help="Passed into the FSDP constructor. Enables param_groups and gradient masking for weight_decay. Does not work with OPT.",
     )
     parser.add_argument(
         "--fsdp_sharding_strategy", default="full", type=str, choices=["full", "hybrid"]

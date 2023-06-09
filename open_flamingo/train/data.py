@@ -161,6 +161,8 @@ def preprocess_interleaved(
     # convert images from base64 to PIL and filter based on image-text similarity
     images, sentence_ixs = [], []
     for sample_image, sim_vec in zip(info["image_info"], sim_matrix):
+        if "image_base64" not in sample_image:
+            continue
         image_base64 = sample_image["image_base64"]
         rawbytes = base64.b64decode(image_base64)
 

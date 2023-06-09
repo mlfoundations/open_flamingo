@@ -51,7 +51,7 @@ class FlamingoLayer(nn.Module):
                 raise ValueError(
                     "media_locations must be conditioned before forward pass"
                 )
-
+                
             lang_x = self.gated_cross_attn_layer(
                 lang_x,
                 self.vis_x,
@@ -105,7 +105,7 @@ class FlamingoLMMixin(nn.Module):
         self.init_flamingo_layers(gradient_checkpointing)
         self.media_token_id = media_token_id
         self.initialized_flamingo = True
-        self._generating = False
+        self._use_cached_vision_x = False
 
     def init_flamingo_layers(self, gradient_checkpointing):
         """
@@ -125,14 +125,13 @@ class FlamingoLMMixin(nn.Module):
             )
         )
 
-    def forward(self, *input, **kwargs):
+    def forward(self, input_ids, attention_mask, **kwargs):
         """Condition the Flamingo layers on the media locations before forward()"""
         if not self.initialized_flamingo:
             raise ValueError(
                 "Flamingo layers are not initialized. Please call `init_flamingo` first."
             )
 
-        input_ids = kwargs["input_ids"] if "input_ids" in kwargs else input[0]
         media_locations = input_ids == self.media_token_id
 
         # if there are media already cached and we're generating and there are no media tokens in the input,
@@ -141,16 +140,22 @@ class FlamingoLMMixin(nn.Module):
         # repeatedly one token at a time (with no media tokens).
         # without this check, the model would not attend to any images when generating (after the first token)
         use_cached_media_locations = (
-            self._generating and self.is_conditioned() and not media_locations.any()
+            self._use_cached_vision_x
+            and self.is_conditioned()
+            and not media_locations.any()
         )
-
+        
         for layer in self._get_decoder_layers():
             if not use_cached_media_locations:
                 layer.condition_media_locations(media_locations)
             layer.condition_use_cached_media(use_cached_media_locations)
 
+        # package arguments for the other parent's forward. since we don't know the order of the arguments,
+        # make them all kwargs
+        kwargs["input_ids"] = input_ids
+        kwargs["attention_mask"] = attention_mask
         return super().forward(
-            *input, **kwargs
+            **kwargs
         )  # Call the other parent's forward method
 
     def is_conditioned(self) -> bool:

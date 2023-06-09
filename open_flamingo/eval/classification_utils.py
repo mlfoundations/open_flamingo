@@ -1006,8 +1006,8 @@ IMAGENET_1K_CLASS_ID_TO_LABEL = dict(
 )
 
 HM_CLASSNAMES = [
-    "yes",
     "no",
+    "yes",
 ]
 HM_CLASS_ID_TO_LABEL = dict(zip(range(len(HM_CLASSNAMES)), HM_CLASSNAMES))
 

@@ -1,45 +1,45 @@
-echo 'activating virtual environment'
-source ~/.bashrc
-eval "$(conda shell.bash hook)"
-conda activate openflamingo
-which python
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=2
+#SBATCH --gpus-per-task=1
 
-LM_PATH="luodian/llama-7b-hf"
-LM_TOKENIZER_PATH="luodian/llama-7b-hf"
-VISION_ENCODER_NAME="ViT-L-14"
-VISION_ENCODER_PRETRAINED="openai"
-CKPT_PATH="openflamingo/OpenFlamingo-9B/checkpoint.pt"
-DEVICE="0"
+export PYTHONFAULTHANDLER=1
+export CUDA_LAUNCH_BLOCKING=0
+export HOSTNAMES=`scontrol show hostnames "$SLURM_JOB_NODELIST"`
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=$(shuf -i 0-65535 -n 1)
+export COUNT_NODE=`scontrol show hostnames "$SLURM_JOB_NODELIST" | wc -l`
 
-COCO_IMG_PATH="<path to coco>/train2017/"
-COCO_ANNO_PATH="<path to coco>/annotations/captions_train2017.json"
-VQAV2_IMG_PATH="<path to vqav2>/train2014"
-VQAV2_ANNO_PATH="<path to vqav2>/v2_mscoco_train2014_annotations.json"
-VQAV2_QUESTION_PATH="<path to vqav2>/v2_OpenEnded_mscoco_train2014_questions.json"
+echo go $COUNT_NODE
+echo $HOSTNAMES
 
-RANDOM_ID=$$
-RESULTS_FILE="results_${RANDOM_ID}.json"
-
-python open_flamingo/eval/evaluate.py \
-    --lm_path $LM_PATH \
-    --lm_tokenizer_path $LM_TOKENIZER_PATH \
-    --vision_encoder_path $VISION_ENCODER_NAME \
-    --vision_encoder_pretrained $VISION_ENCODER_PRETRAINED \
-    --checkpoint_path $CKPT_PATH \
-    --cross_attn_every_n_layers 4 \
-    --device $DEVICE \
-    --coco_image_dir_path $COCO_IMG_PATH \
-    --coco_annotations_json_path $COCO_ANNO_PATH \
-    --vqav2_image_dir_path $VQAV2_IMG_PATH \
-    --vqav2_annotations_json_path $VQAV2_ANNO_PATH \
-    --vqav2_questions_json_path $VQAV2_QUESTION_PATH \
-    --results_file $RESULTS_FILE \
-    --eval_coco \
-    --eval_vqav2 \
-    --num_samples 5000 \
-    --shots 8 \
-    --num_trials 1 \
-    --batch_size 1
-
-
-echo "evaluation complete! results written to ${RESULTS_FILE}"
+export PYTHONPATH="$PYTHONPATH:open_flamingo"
+srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evaluate.py \
+    --vision_encoder_path ViT-L-14 \
+    --vision_encoder_pretrained openai\
+    --lm_path mosaicml/mpt-1b-redpajama-200b-dolly \
+    --lm_tokenizer_path mosaicml/mpt-1b-redpajama-200b-dolly \
+    --cross_attn_every_n_layers 1 \
+    --checkpoint_path "openflamingo/OpenFlamingo-3B/checkpoint.pt" \
+    --results_file "results.json" \
+    --precision amp_bf16 \
+    --batch_size 8 \
+    --coco_train_image_dir_path "/path/to/mscoco_karpathy/train2014" \
+    --coco_val_image_dir_path "/path/to/mscoco_karpathy/val2014" \
+    --coco_karpathy_json_path "/path/to/mscoco_karpathy/dataset_coco.json" \
+    --coco_annotations_json_path "/path/to/mscoco_karpathy/annotations/captions_val2014.json" \
+    --vqav2_train_image_dir_path "/path/to/vqav2/train2014" \
+    --vqav2_train_annotations_json_path "/path/to/vqav2/v2_mscoco_train2014_annotations.json" \
+    --vqav2_train_questions_json_path "/path/to/vqav2/v2_OpenEnded_mscoco_train2014_questions.json" \
+    --vqav2_test_image_dir_path "/path/to/vqav2/val2014" \
+    --vqav2_test_annotations_json_path "/path/to/vqav2/v2_mscoco_val2014_annotations.json" \
+    --vqav2_test_questions_json_path "/path/to/vqav2/v2_OpenEnded_mscoco_val2014_questions.json" \
+    --flickr_image_dir_path "/path/to/flickr30k/flickr30k-images" \
+    --flickr_karpathy_json_path "/path/to/flickr30k/dataset_flickr30k.json" \
+    --flickr_annotations_json_path "/path/to/flickr30k/dataset_flickr30k_coco_style.json" \
+    --ok_vqa_train_image_dir_path "/path/to/okvqa/train2014" \
+    --ok_vqa_train_annotations_json_path "/path/to/okvqa/mscoco_train2014_annotations.json" \
+    --ok_vqa_train_questions_json_path "/path/to/okvqa/OpenEnded_mscoco_train2014_questions.json" \
+    --ok_vqa_test_image_dir_path "/path/to/okvqa/val2014" \
+    --ok_vqa_test_annotations_json_path "/path/to/okvqa/mscoco_val2014_annotations.json" \
+    --ok_vqa_test_questions_json_path "/path/to/okvqa/OpenEnded_mscoco_val2014_questions.json" \
