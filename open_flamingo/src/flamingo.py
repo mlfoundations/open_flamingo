@@ -88,14 +88,12 @@ class Flamingo(nn.Module):
                 documentation in Hugging Face CausalLM models.
         """
         assert (
-             self.lang_encoder.initialized_flamingo
-         ), "Flamingo layers are not initialized. Please call `init_flamingo` first."
-        
+            self.lang_encoder.initialized_flamingo
+        ), "Flamingo layers are not initialized. Please call `init_flamingo` first."
+
         assert (
-            self.lang_encoder._use_cached_vision_x is not None
-        ) or use_cached_vision_x, (
-            "Must provide either vision_x or have precached media using cache_media()."
-        )
+            self.lang_encoder._use_cached_vision_x or vision_x is not None
+        ), "Must provide either vision_x or have precached media using cache_media()."
 
         if self.lang_encoder._use_cached_vision_x:
             # Case: use cached; vision_x should be cached and other
@@ -321,7 +319,6 @@ class Flamingo(nn.Module):
 
         self.clip_grad_norm_ = clip_grad_norm_
 
-
     def _condition_media_locations(self, input_ids: torch.Tensor, repeat_size: int = 1):
         """
         Compute the media token locations from lang_x and condition the language model on these.
@@ -331,11 +328,11 @@ class Flamingo(nn.Module):
             repeat_size (int): Number of times to repeat the media token mask. This is used for beam search.
         """
         media_locations = input_ids == self.media_token_id
-        
+
         # repeat the media_locations for each beam
         if repeat_size > 1:
             media_locations = media_locations.repeat_interleave(repeat_size, dim=0)
-        
+
         for layer in self.lang_encoder._get_decoder_layers():
             layer.condition_media_locations(media_locations)
 
