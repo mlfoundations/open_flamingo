@@ -1171,8 +1171,13 @@ def evaluate_classification(
             )
 
             if dataset_name == "hateful_memes":
+                # apply a softmax to the logits to get the probability
+                # distribution over the classes
+                pred_probs = torch.softmax(
+                    torch.tensor(overall_probs[i]), dim=0
+                ).numpy()
                 gts.append(batch["class_id"][i])
-                pred_scores.append(overall_probs[i][highest_prob_idxs[0]])
+                pred_scores.append(pred_probs[highest_prob_idxs[0]])
 
         examples_seen = (batch_idx + 1) * batch_size
         print(
