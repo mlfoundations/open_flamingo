@@ -408,22 +408,6 @@ parser.add_argument(
     default=None,
 )
 
-parser.add_argument(
-    "--hateful_memes_image_dir_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--hateful_memes_train_annotations_json_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--hateful_memes_test_annotations_json_path",
-    type=str,
-    default=None,
-)
-
 # Distributed evaluation
 parser.add_argument(
     "--dist-url",
@@ -1235,6 +1219,7 @@ def evaluate_classification(
     test_dataset = prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
+        batch_size,
         seed,
     )
     
@@ -1260,8 +1245,7 @@ def evaluate_classification(
     gts = []
     pred_scores = []
 
-    test_iterator = more_itertools.chunked(test_dataset, args.batch_size)
-    for batch_idx, batch in tqdm(enumerate(test_iterator), total=len(test_dataset), desc=f"Running inference {dataset_name}"):
+    for batch_idx, batch in tqdm(enumerate(test_dataset), total=len(test_dataset), desc=f"Running inference {dataset_name}"):
         batch_images = []
         batch_text = []
 
@@ -1310,7 +1294,7 @@ def evaluate_classification(
 
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
-        text_x = [context_text + sample_to_prompt(batch[idx]) + " " for idx, context_text in enumerate(batch_text)]
+        text_x = [context_text + sample_to_prompt({k: batch[k][idx] for k in batch.keys()}) + " " for idx, context_text in enumerate(batch_text)]
         # print(text_x)
         
         ctx_and_prompt_tokenized = tokenizer(
@@ -1346,7 +1330,7 @@ def evaluate_classification(
         if dataset_name == "imagenet":
             all_class_names = IMAGENET_CLASSNAMES
         elif dataset_name == "scienceqa" or dataset_name == "iconqa":
-            all_class_names = batch[0]["choices"] # MEGA HACK: ScienceQA has different classes for each sample 
+            all_class_names = batch["choices"][0] # MEGA HACK: ScienceQA has different classes for each sample 
         elif dataset_name == "vsr":
             all_class_names = VSR_CLASSNAMES
         else:
