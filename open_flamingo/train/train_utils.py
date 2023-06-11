@@ -196,14 +196,6 @@ def train_one_epoch(
                 model.module.lang_encoder.get_input_embeddings().weight.grad = (
                     embed_grad * zero_mask
                 )
-            print(
-                "Before gradient masking, num nonzero elements in embedding grad: ",
-                torch.nonzero(embed_grad).shape[0],
-            )
-            print(
-                "After gradient masking, num nonzero elements in embedding grad: ",
-                torch.nonzero(embed_grad * zero_mask).shape[0],
-            )
 
         # clip gradient norm
         if args.fsdp:
