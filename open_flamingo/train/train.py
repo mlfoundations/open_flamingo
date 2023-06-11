@@ -421,13 +421,6 @@ def main():
             osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
         optimizer.load_state_dict(osd)
 
-    # Print model and trainable params as a sanity check
-    if args.rank == 0:
-        print(model)  # to check wrapping
-        # print params that are being trained
-        for n, _ in params_to_optimize:
-            print(n)
-
     # Initialize data loaders
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
     mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
