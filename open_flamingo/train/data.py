@@ -20,7 +20,6 @@ from data_utils import *
 Image.MAX_IMAGE_PIXELS = 1000000000
 MAX_NUM_TOKENS = 256
 N_CHANNELS = 3
-INTERLEAVED_IMAGE_SIZE = 224
 MIN_KB = 10
 _SHARD_SHUFFLE_SIZE = 2000
 _SHARD_SHUFFLE_INITIAL = 500
@@ -192,8 +191,8 @@ def preprocess_interleaved(
             (
                 max_num_images - len(images_tensors),
                 N_CHANNELS,
-                INTERLEAVED_IMAGE_SIZE,
-                INTERLEAVED_IMAGE_SIZE,
+                images_tensors[0].shape[1],
+                images_tensors[0].shape[2]
             ),
             dtype=torch.float,
         )
