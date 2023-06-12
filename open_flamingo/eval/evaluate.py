@@ -994,7 +994,7 @@ def evaluate_classification(
     if dataset_name == "imagenet":
         prompt_text = "<image>A photo of a"
     elif dataset_name == "hateful_memes":
-        prompt_text = "<image>is a meme with: '{meme_text}' written on it. Is it hateful? Answer:"
+        prompt_text = "<image>is an image with written: '{meme_text}' on it. Is it hateful? Answer:"
 
     # used to calculate the ROC-AUC score
     gts = []
@@ -1051,7 +1051,7 @@ def evaluate_classification(
             + " "
             for idx, context_text in enumerate(batch_text)
         ]
-        
+                
         ctx_and_prompt_tokenized = tokenizer(
             text_x,
             return_tensors="pt",
@@ -1061,7 +1061,7 @@ def evaluate_classification(
         )
         
         ctx_and_prompt_input_ids = ctx_and_prompt_tokenized["input_ids"].to(model.device)
-        ctx_and_prompt_attention_mask = ctx_and_prompt_tokenized["attention_mask"].to(model.device)
+        ctx_and_prompt_attention_mask = ctx_and_prompt_tokenized["attention_mask"].to(model.device).bool()
         
         eval_model.cache_media(input_ids=ctx_and_prompt_input_ids, vision_x=vision_x.to(model.device))
 
@@ -1165,26 +1165,14 @@ def evaluate_classification(
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
 
-            print(
-                f"DEBUG: batch {batch_idx} elem {i} of {batch_size}:"
-                f"label {y_i} // top5 {top5} // all_class_names {all_class_names}"
-            )
+            if dataset_name == "hateful_memes":                
+                # sum over the probabilities of the different classes
+                binary_probs = [overall_probs[i][0] + overall_probs[i][3], overall_probs[i][1] + overall_probs[i][2]]
 
-            if dataset_name == "hateful_memes":
-                # apply a softmax to the logits to get the probability
-                # distribution over the classes
-                pred_probs = torch.softmax(
-                    torch.tensor(overall_probs[i]), dim=0
-                ).numpy()
                 gts.append(batch["class_id"][i])
-                pred_scores.append(pred_probs[highest_prob_idxs[0]])
+                pred_scores.append(binary_probs[highest_prob_idxs[0]])
 
         examples_seen = (batch_idx + 1) * batch_size
-        print(
-            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
-            )
-        )
 
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
