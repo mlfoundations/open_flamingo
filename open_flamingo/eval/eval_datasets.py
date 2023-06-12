@@ -78,7 +78,7 @@ class VQADataset(Dataset):
         return len(self.questions)
 
     def get_img_path(self, question):
-        if self.dataset_name in {"vqav2", "ok-vqa"}:
+        if self.dataset_name in {"vqav2", "ok_vqa"}:
             return os.path.join(
                 self.image_dir_path,
                 f"COCO_train2014_{question['image_id']:012d}.jpg"
