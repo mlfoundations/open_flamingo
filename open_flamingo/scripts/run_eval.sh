@@ -3,6 +3,14 @@
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-task=1
 
+<<com
+Example Slurm evaluation script. 
+Notes:
+- VQAv2 test-dev and test-std annotations are not publicly available. 
+  To evaluate on these splits, please follow the VQAv2 instructions and submit to EvalAI.
+  This script will evaluate on the val split.
+com
+
 export PYTHONFAULTHANDLER=1
 export CUDA_LAUNCH_BLOCKING=0
 export HOSTNAMES=`scontrol show hostnames "$SLURM_JOB_NODELIST"`
@@ -24,6 +32,12 @@ srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evalua
     --results_file "results.json" \
     --precision amp_bf16 \
     --batch_size 8 \
+    --eval_coco \
+    --eval_vqav2 \
+    --eval_flickr30 \
+    --eval_ok_vqa \
+    --eval_textvqa \
+    --eval_vizwiz \
     --coco_train_image_dir_path "/path/to/mscoco_karpathy/train2014" \
     --coco_val_image_dir_path "/path/to/mscoco_karpathy/val2014" \
     --coco_karpathy_json_path "/path/to/mscoco_karpathy/dataset_coco.json" \
@@ -43,3 +57,14 @@ srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evalua
     --ok_vqa_test_image_dir_path "/path/to/okvqa/val2014" \
     --ok_vqa_test_annotations_json_path "/path/to/okvqa/mscoco_val2014_annotations.json" \
     --ok_vqa_test_questions_json_path "/path/to/okvqa/OpenEnded_mscoco_val2014_questions.json" \
+    --textvqa_image_dir_path "/path/to/textvqa/train_images/" \
+    --textvqa_train_questions_json_path "/path/to/textvqa/train_questions_vqa_format.json" \
+    --textvqa_train_annotations_json_path "/path/to/textvqa/train_annotations_vqa_format.json" \
+    --textvqa_test_questions_json_path "/path/to/textvqa/val_questions_vqa_format.json" \
+    --textvqa_test_annotations_json_path "/path/to/textvqa/val_annotations_vqa_format.json" \
+    --vizwiz_train_image_dir_path "/path/to/v7w/train" \
+    --vizwiz_test_image_dir_path "/path/to/v7w/val" \
+    --vizwiz_train_questions_json_path "/path/to/v7w/train_questions_vqa_format.json" \
+    --vizwiz_train_annotations_json_path "/path/to/v7w/train_annotations_vqa_format.json" \
+    --vizwiz_test_questions_json_path "/path/to/v7w/val_questions_vqa_format.json" \
+    --vizwiz_test_annotations_json_path "/path/to/v7w/val_annotations_vqa_format.json" \

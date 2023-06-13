@@ -12,7 +12,10 @@ This is the evaluation module of OpenFlamingo. It contains a set of utilities fo
 |[Flickr-30K](https://aclanthology.org/Q14-1006/)|Captioning|CIDEr|Generation|
 |[VQAv2](https://arxiv.org/abs/1612.00837v3)|VQA|Accuracy|Generation|
 |[OK-VQA](https://arxiv.org/abs/1906.00067)|VQA|Accuracy|Generation|
+|[TextVQA](https://arxiv.org/abs/1904.08920)|VQA|Accuracy|Generation|
+|[VizWiz](https://arxiv.org/abs/1802.08218)|VQA|Accuracy|Generation|
 |[ImageNet](https://arxiv.org/abs/1409.0575)|Classification|Top-1 Accuracy|Logprobs|
+|[Hateful Memes](https://arxiv.org/abs/2005.04790)|Classification|ROC AUC|Logprobs|
 
 When evaluating a model using `num_shots` shots, we sample the exemplars from the training split. Performance is evaluated on a disjoint test split, subsampled to `--num_samples` examples.
 

@@ -61,6 +61,7 @@ parser.add_argument(
 parser.add_argument(
     "--trial_seeds",
     nargs="+",
+    type=int,
     default=[42],
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
@@ -496,6 +497,7 @@ def main():
                     num_shots=shot,
                     seed=seed,
                     dataset_name="textvqa",
+                    max_generation_length=10,
                 )
                 if args.rank == 0: 
                     print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
@@ -918,14 +920,19 @@ def evaluate_vqa(
     with open(f"{dataset_name}results_{random_uuid}.json", "w") as f:
         f.write(json.dumps(all_predictions, indent=4))
 
-    acc = compute_vqa_accuracy(
-        f"{dataset_name}results_{random_uuid}.json",
-        test_questions_json_path,
-        test_annotations_json_path,
-    )
+    if test_annotations_json_path is not None:
+        acc = compute_vqa_accuracy(
+            f"{dataset_name}results_{random_uuid}.json",
+            test_questions_json_path,
+            test_annotations_json_path,
+        )
+        # delete the temporary file
+        os.remove(f"{dataset_name}results_{random_uuid}.json")
 
-    # delete the temporary file
-    os.remove(f"{dataset_name}results_{random_uuid}.json")
+    else:
+        print("No annotations provided, skipping accuracy computation.")
+        print("Temporary file saved to:", f"{dataset_name}results_{random_uuid}.json")
+        acc = None
 
     return acc
 
