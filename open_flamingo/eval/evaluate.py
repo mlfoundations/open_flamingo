@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 
 from eval_datasets import VQADataset, ImageNetDataset
-from open_flamingo.eval.classification_utils import (
+from classification_utils import (
     IMAGENET_CLASSNAMES,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
     HM_CLASSNAMES,
@@ -32,7 +32,7 @@ from open_flamingo.eval.classification_utils import (
 
 from eval_model import BaseEvalModel
 
-from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
+from ok_vqa_utils import postprocess_ok_vqa_generation
 from open_flamingo.src.flamingo import Flamingo
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
@@ -66,7 +66,7 @@ parser.add_argument(
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
-    "--num_samples", type=int, default=5000, help="Number of samples to evaluate on"
+    "--num_samples", type=int, default=-1, help="Number of samples to evaluate on. -1 for all samples."
 )
 parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
@@ -268,7 +268,7 @@ parser.add_argument(
     default=None,
 )
 parser.add_argument(
-    "--vizwiz_test_annotations_json_path",
+    "--vizwiz_test_annotations_json_path", 
     type=str,
     help="Path to the vizwiz annotations json file.",
     default=None,
@@ -311,7 +311,7 @@ parser.add_argument("--imagenet_root", type=str, default="/tmp")
 
 ## Hateful Memes dataset
 parser.add_argument(
-    "--hateful_memes_train_image_dir_path",
+    "--hateful_memes_image_dir_path",
     type=str,
     default=None,
 )
@@ -957,7 +957,7 @@ def evaluate_classification(
     Returns:
         float: accuracy score
     """
-    if not hasattr(eval_model, "model") or not hasattr(eval_model, "tokenizer"):
+    if args.model != "open_flamingo":
         raise NotImplementedError(
             "evaluate_classification is currently only supported for OpenFlamingo "
             "models"
@@ -966,7 +966,6 @@ def evaluate_classification(
     num_samples = args.num_samples
     np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
-    assert isinstance(model, Flamingo)
 
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
@@ -1039,13 +1038,17 @@ def evaluate_classification(
                 f"{sample_to_prompt(in_context_samples[i])} {in_context_samples[i]['class_name']}<|endofchunk|>"
                 for i in range(effective_num_shots)
             )
+            
+            # Keep the text but remove the image tags for the zero-shot case
+            if num_shots == 0:
+                context_text = context_text.replace("<image>", "")
+                
             batch_text.append(context_text)
 
         # shape [B, T_img, C, h, w]
         vision_x = torch.stack(batch_images, dim=0)
         # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
         vision_x = vision_x.unsqueeze(2)
-        model.encode_vision_x(vision_x)
 
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
@@ -1055,30 +1058,32 @@ def evaluate_classification(
             + " "
             for idx, context_text in enumerate(batch_text)
         ]
-
+                
         ctx_and_prompt_tokenized = tokenizer(
             text_x,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=2048,
+            max_length=2000,
         )
+        
+        ctx_and_prompt_input_ids = ctx_and_prompt_tokenized["input_ids"].to(model.device)
+        ctx_and_prompt_attention_mask = ctx_and_prompt_tokenized["attention_mask"].to(model.device).bool()
+        
+        eval_model.cache_media(input_ids=ctx_and_prompt_input_ids, vision_x=vision_x.to(model.device))
 
         with torch.no_grad():
-            precomputed = model(
+            precomputed = eval_model.model(
                 vision_x=None,
-                lang_x=ctx_and_prompt_tokenized["input_ids"].to(model.device),
-                attention_mask=ctx_and_prompt_tokenized["attention_mask"].to(
-                    model.device
-                ),
+                lang_x=ctx_and_prompt_input_ids,
+                attention_mask=ctx_and_prompt_attention_mask,
                 clear_conditioned_layers=False,
-                use_cached_vision_x=True,
                 use_cache=True,
             )
 
         def _detach_pkvs(pkvs):
             """Detach a set of past key values."""
-            return tuple([tuple([x.detach() for x in inner]) for inner in pkvs])
+            return list([tuple([x.detach() for x in inner]) for inner in pkvs])
 
         precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
 
@@ -1107,7 +1112,7 @@ def evaluate_classification(
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
 
             classname_tokens = repeat(
-                classname_tokens, "b s -> (repeat b) s", repeat=args.batch_size
+                classname_tokens, "b s -> (repeat b) s", repeat=len(batch_text)
             )
 
             # Compute the outputs one token at a time, using cached
@@ -1122,13 +1127,12 @@ def evaluate_classification(
 
             for token_idx in range(classname_tokens.shape[1]):
                 _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
-                outputs = model.get_logits(
+                outputs = eval_model.get_logits(
                     lang_x=_lang_x,
                     past_key_values=(
                         past_key_values if token_idx > 0 else precomputed_pkvs
                     ),
                     clear_conditioned_layers=False,
-                    use_cached_vision_x=True,
                 )
                 past_key_values = _detach_pkvs(outputs.past_key_values)
                 elementwise_logits.append(outputs.logits.detach())
@@ -1140,7 +1144,6 @@ def evaluate_classification(
             # collect the probability of the generated token -- probability
             # at index 0 corresponds to the token at index 1.
             probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
-            # print(f"DEBUG: probs.shape = {probs.shape}")
 
             gen_probs = (
                 torch.gather(probs, 2, classname_tokens[:, :, None])
@@ -1149,19 +1152,18 @@ def evaluate_classification(
                 .cpu()
             )
 
-            # print(f"DEBUG: gen_probs.shape = {gen_probs.shape}")
-            # print(f"DEBUG: gen_probs = {gen_probs}")
-
             class_prob = torch.prod(gen_probs, 1).numpy()
             overall_probs.append(class_prob)
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
 
+        eval_model.uncache_media()
+        
         def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
             """Return the indices of the top k elements in probs_ary."""
             return np.argsort(probs_ary)[::-1][:k]
 
-        for i in range(args.batch_size):
+        for i in range(len(batch_text)):
             highest_prob_idxs = topk(overall_probs[i], 5)
 
             top5 = [class_id_to_name[pred] for pred in highest_prob_idxs]
@@ -1170,21 +1172,14 @@ def evaluate_classification(
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
 
-            print(
-                f"DEBUG: batch {idx} elem {i} of {args.batch_size}:"
-                f"label {y_i} // top5 {top5} // all_class_names {all_class_names}"
-            )
+            if dataset_name == "hateful_memes":                
+                # sum over the probabilities of the different classes
+                binary_probs = [overall_probs[i][0] + overall_probs[i][3], overall_probs[i][1] + overall_probs[i][2]]
 
-            if dataset_name == "hateful_memes":
-                gts.append(highest_prob_idxs[0])
-                pred_scores.append(overall_probs[i][highest_prob_idxs[0]])
+                gts.append(batch["class_id"][i])
+                pred_scores.append(binary_probs[highest_prob_idxs[0]])
 
-        examples_seen = (batch_idx + 1) * args.batch_size
-        print(
-            "eval {}/{}: acc@1 ({}), acc@5 ({})".format(
-                examples_seen, num_samples, acc1 / examples_seen, acc5 / examples_seen
-            )
-        )
+        examples_seen = (batch_idx + 1) * batch_size
 
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
@@ -1192,7 +1187,6 @@ def evaluate_classification(
     else:
         # return top-1 accuracy
         return float(acc1) / len(test_dataset)
-
 
 if __name__ == "__main__":
     main()

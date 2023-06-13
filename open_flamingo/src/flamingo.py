@@ -63,7 +63,6 @@ class Flamingo(nn.Module):
         lang_x: torch.Tensor,
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
-        use_cached_vision_x: bool = False,
         clear_conditioned_layers: bool = True,
         past_key_values=None,
         use_cache: bool = False,
@@ -89,22 +88,25 @@ class Flamingo(nn.Module):
                 documentation in Hugging Face CausalLM models.
         """
         assert (
-            vision_x is not None
-        ) or use_cached_vision_x, (
-            "Must provide either vision_x or use_cached_vision_x to True."
-        )
+            self.lang_encoder.initialized_flamingo
+        ), "Flamingo layers are not initialized. Please call `init_flamingo` first."
 
-        if use_cached_vision_x:
+        assert (
+            self.lang_encoder._use_cached_vision_x or vision_x is not None
+        ), "Must provide either vision_x or have precached media using cache_media()."
+
+        if self.lang_encoder._use_cached_vision_x:
             # Case: use cached; vision_x should be cached and other
             # vision-related inputs should not be provided.
             assert (
                 vision_x is None
-            ), "Expect vision_x to be None when use_cached_vision_x is True."
+            ), "Expect vision_x to be None when media has been cached using cache_media(). Try uncache_media() first."
             assert self.lang_encoder.is_conditioned()
 
         else:
             # Case: do not use caching (i.e. this is a standard forward pass);
             self._encode_vision_x(vision_x=vision_x)
+            self._condition_media_locations(input_ids=lang_x)
 
         output = self.lang_encoder(
             input_ids=lang_x,
@@ -165,11 +167,11 @@ class Flamingo(nn.Module):
         if num_beams > 1:
             vision_x = vision_x.repeat_interleave(num_beams, dim=0)
 
-        self.lang_encoder._generating = True
+        self.lang_encoder._use_cached_vision_x = True
         self._encode_vision_x(vision_x=vision_x)
 
         output = self.lang_encoder.generate(
-            lang_x,
+            input_ids=lang_x,
             attention_mask=attention_mask,
             eos_token_id=self.eoc_token_id,
             num_beams=num_beams,
@@ -187,7 +189,7 @@ class Flamingo(nn.Module):
         )
 
         self.lang_encoder.clear_conditioned_layers()
-        self.lang_encoder._generating = False
+        self.lang_encoder._use_cached_vision_x = False
         return output
 
     def _encode_vision_x(self, vision_x: torch.Tensor):
@@ -315,3 +317,40 @@ class Flamingo(nn.Module):
             self.lang_encoder.get_input_embeddings().clip_grad_norm_(max_norm)
 
         self.clip_grad_norm_ = clip_grad_norm_
+
+    def _condition_media_locations(self, input_ids: torch.Tensor):
+        """
+        Compute the media token locations from lang_x and condition the language model on these.
+        Args:
+            input_ids (torch.Tensor): Language input
+                shape (B, T_txt)
+        """
+        media_locations = input_ids == self.media_token_id
+
+        for layer in self.lang_encoder._get_decoder_layers():
+            layer.condition_media_locations(media_locations)
+
+    def cache_media(self, input_ids: torch.Tensor, vision_x: torch.Tensor):
+        """
+        Pre-cache a prompt/sequence of images / text for log-likelihood evaluations.
+        All subsequent calls to forward() will generate attending to the LAST
+        image in vision_x.
+        This is not meant to be used to cache things for generate().
+        Args:
+            input_ids (torch.Tensor): Language input
+                shape (B, T_txt)
+            vision_x (torch.Tensor): Vision input
+                shape (B, T_img, F, C, H, W)
+                Images in the same chunk are collated along T_img, and frames are collated along F
+                Currently only F=1 is supported (single-frame videos)
+        """
+        self._encode_vision_x(vision_x=vision_x)
+        self._condition_media_locations(input_ids=input_ids)
+        self.lang_encoder._use_cached_vision_x = True
+
+    def uncache_media(self):
+        """
+        Clear all conditioning.
+        """
+        self.lang_encoder.clear_conditioned_layers()
+        self.lang_encoder._use_cached_vision_x = False

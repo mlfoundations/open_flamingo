@@ -2,12 +2,11 @@ from typing import List
 
 from PIL import Image
 import torch
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
 from contextlib import suppress
-
+from open_flamingo.eval.models.utils import unwrap_model
 
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation.
@@ -104,10 +103,7 @@ class EvalModel(BaseEvalModel):
 
         with torch.inference_mode():
             with self.autocast():
-                handle = (
-                    self.model.module if isinstance(self.model, DDP) else self.model
-                )
-                outputs = handle.generate(
+                outputs = unwrap_model(self.model).generate(
                     self._prepare_images(batch_images).to(
                         self.device, dtype=self.cast_dtype, non_blocking=True
                     ),
@@ -131,23 +127,26 @@ class EvalModel(BaseEvalModel):
         vision_x: torch.Tensor = None,
         past_key_values: torch.Tensor = None,
         clear_conditioned_layers: bool = False,
-        use_cached_vision_x: bool = False,
     ):
         with torch.no_grad():
             with self.autocast():
-                outputs = self.model(
+                outputs = unwrap_model(self.model)(
                     vision_x=vision_x,
                     lang_x=lang_x,
                     clear_conditioned_layers=clear_conditioned_layers,
-                    use_cached_vision_x=use_cached_vision_x,
                     past_key_values=past_key_values,
                     use_cache=(past_key_values is not None),
                 )
         return outputs
 
     def encode_vision_x(self, image_tensor: torch.Tensor):
-        handle = self.model.module if isinstance(self.model, DDP) else self.model
-        handle._encode_vision_x(image_tensor.to(self.device))
+        unwrap_model(self.model)._encode_vision_x(image_tensor.to(self.device))
+
+    def uncache_media(self):
+        unwrap_model(self.model).uncache_media()
+        
+    def cache_media(self, input_ids, vision_x):
+        unwrap_model(self.model).cache_media(input_ids=input_ids, vision_x=vision_x)
 
     def get_vqa_prompt(self, question, answer=None) -> str:
         return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
