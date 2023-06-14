@@ -393,9 +393,9 @@ def main():
                     scores.append(cider_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
                 results["flickr30"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.eval_coco:
@@ -415,9 +415,9 @@ def main():
                     scores.append(cider_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean CIDEr score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
                 results["coco"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.eval_ok_vqa:
@@ -437,9 +437,9 @@ def main():
                     scores.append(ok_vqa_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean OK-VQA score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean OK-VQA score: {np.nanmean(scores)}")
                 results["ok_vqa"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.eval_vqav2:
@@ -459,9 +459,9 @@ def main():
                     scores.append(vqa_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean VQA score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean VQA score: {np.nanmean(scores)}")
                 results["vqav2"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.eval_vizwiz:
@@ -481,9 +481,9 @@ def main():
                     scores.append(vizwiz_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean VizWiz score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean VizWiz score: {np.nanmean(scores)}")
                 results["vizwiz"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.eval_textvqa:
@@ -504,9 +504,9 @@ def main():
                     scores.append(textvqa_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean TextVQA score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean TextVQA score: {np.nanmean(scores)}")
                 results["textvqa"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.eval_imagenet:
@@ -528,9 +528,9 @@ def main():
                     scores.append(imagenet_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean ImageNet score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean ImageNet score: {np.nanmean(scores)}")
                 results["imagenet"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.eval_hateful_memes:
@@ -553,9 +553,9 @@ def main():
                     scores.append(hateful_memes_score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean Hateful Memes score: {np.mean(scores)}")
+                print(f"Shots {shot} Mean Hateful Memes score: {np.nanmean(scores)}")
                 results["hateful_memes"].append(
-                    {"shots": shot, "trials": scores, "mean": np.mean(scores)}
+                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
     if args.rank == 0 and args.results_file is not None:

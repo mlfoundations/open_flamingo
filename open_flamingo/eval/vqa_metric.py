@@ -217,7 +217,8 @@ class VQAEval:
         self.evalAnsType = {}
         self.vqa = vqa
         self.vqaRes = vqaRes
-        self.params = {"question_id": vqaRes.getQuesIds()}
+        if not vqa is None and not vqaRes is None:
+            self.params = {"question_id": vqaRes.getQuesIds()}
         self.contractions = {
             "aint": "ain't",
             "arent": "aren't",
