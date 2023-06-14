@@ -38,6 +38,7 @@ srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evalua
     --eval_ok_vqa \
     --eval_textvqa \
     --eval_vizwiz \
+    --eval_hateful_memes \
     --coco_train_image_dir_path "/path/to/mscoco_karpathy/train2014" \
     --coco_val_image_dir_path "/path/to/mscoco_karpathy/val2014" \
     --coco_karpathy_json_path "/path/to/mscoco_karpathy/dataset_coco.json" \
@@ -68,3 +69,6 @@ srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evalua
     --vizwiz_train_annotations_json_path "/path/to/v7w/train_annotations_vqa_format.json" \
     --vizwiz_test_questions_json_path "/path/to/v7w/val_questions_vqa_format.json" \
     --vizwiz_test_annotations_json_path "/path/to/v7w/val_annotations_vqa_format.json" \
+    --hateful_memes_image_dir_path "/path/to/hateful_memes/img" \
+    --hateful_memes_train_annotations_json_path "/path/to/hateful_memes/train.json" \
+    --hateful_memes_test_annotations_json_path "/path/to/hateful_memes/dev.json" \
