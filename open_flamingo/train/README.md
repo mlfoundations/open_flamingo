@@ -19,15 +19,18 @@ We provide scripts to convert MMC4 to this format:
 2. Run `scripts/convert_mmc4_to_wds.py` to convert the downloaded items into the expected tar files.
 
 ### ChatGPT-generated sequences
-We also train some models on custom ChatGPT-generated (image, text) sequences. These sequences will be released soon.
+A subset of our models (listed below) were also trained on experimental ChatGPT-generated (image, text) sequences, where images are pulled from LAION. We are working to release these sequences soon.
 
-## Distributed training
+* OpenFlamingo-4B-vitl-rpj3b
+* OpenFlamingo-4B-vitl-rpj3b-langinstruct
+
+## Example training command
 We provide a sample Slurm training script in `scripts/`. You can also modify the following command:
 
 ```
 torchrun --nnodes=1 --nproc_per_node=4 train.py \
-  --lm_path mosaicml/mpt-1b-redpajama-200b-dolly \
-  --tokenizer_path mosaicml/mpt-1b-redpajama-200b-dolly \
+  --lm_path anas-awadalla/mpt-1b-redpajama-200b \
+  --tokenizer_path anas-awadalla/mpt-1b-redpajama-200b \
   --cross_attn_every_n_layers 1 \
   --dataset_resampled \
   --batch_size_mmc4 32 \
@@ -36,7 +39,7 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
   --train_num_samples_laion 250000 \
   --loss_multiplier_laion 0.2 \
   --workers=4 \
-  --run_name OpenFlamingo-3B \
+  --run_name OpenFlamingo-3B-vitl-mpt1b \
   --num_epochs 480 \
   --warmup_steps  1875 \
   --mmc4_textsim_threshold 0.24 \
@@ -44,6 +47,9 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
   --mmc4_shards "/path/to/shards/shard-{0000..0999}.tar" \
   --report_to_wandb
 ```
+*Note: The MPT-1B [base](https://huggingface.co/mosaicml/mpt-1b-redpajama-200b)  and [instruct](https://huggingface.co/mosaicml/mpt-1b-redpajama-200b-dolly) modeling code does not accept the `labels` kwarg or compute cross-entropy loss directly within `forward()`, as expected by our codebase. We suggest using a modified version of the MPT-1B models found [here](https://huggingface.co/anas-awadalla/mpt-1b-redpajama-200b) and [here](https://huggingface.co/anas-awadalla/mpt-1b-redpajama-200b-dolly).*
+
+## Distributed training
 
 By default, `train.py` uses Pytorch's [DistributedDataParallel](https://pytorch.org/docs/stable/torch.nn.parallel.DistributedDataParallel.html) for training. 
 To use [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html), use the `--fsdp` flag. 
