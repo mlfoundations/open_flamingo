@@ -2,7 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/open_flamingo.svg)](https://badge.fury.io/py/open_flamingo)
 
-[Blog post](https://laion.ai/blog/open-flamingo/) | Paper (coming soon)
+Blog posts: [1](https://laion.ai/blog/open-flamingo/), [2]() | Paper (coming soon)
 
 Welcome to our open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model)! 
 
@@ -65,24 +65,30 @@ model, image_processor, tokenizer = create_model_and_transforms(
 ## Released OpenFlamingo models
 We have trained the following OpenFlamingo models so far.
 
-|# params|Language model|Vision encoder|Xattn frequency*|COCO 32-shot CIDEr|VQAv2 32-shot Accuracy|License|Weights|
-|------------|--------------|--------------|----------|-----------|----|-----|----|
-|3B| mosaicml/mpt-1b-redpajama-200b-dolly | openai CLIP ViT-L/14 | 1 | 94.8 | 44.3 |cc-by-sa-3.0 |[Link]()|
-|4B| togethercomputer/RedPajama-INCITE-Base-3B-v1 | openai CLIP ViT-L/14 | 2 | 95.1 | 47.0 | apache-2.0 |[Link]()|
-|4B| togethercomputer/RedPajama-INCITE-Instruct-3B-v1 | openai CLIP ViT-L/14 | 2 | 99.2 | 45.8 | apache-2.0 |[Link]()|
-|9B| mosaicml/mpt-7b | openai CLIP ViT-L/14 | 4 | 99.5 | 50.2 | apache-2.0 |[Link]()|
+|# params|Language model|Vision encoder|Xattn frequency*|COCO 4-shot CIDEr**|VQAv2 4-shot Accuracy**|Weights|
+|------------|--------------|--------------|----------|-----------|-------|----|
+|3B| mosaicml/mpt-1b-redpajama-200b | openai CLIP ViT-L/14 | 1 | - | - |[Link](https://huggingface.co/openflamingo/OpenFlamingo-3B-vitl-mpt1b)|
+|3B| mosaicml/mpt-1b-redpajama-200b-dolly | openai CLIP ViT-L/14 | 1 | 82.7 | - |[Link](https://huggingface.co/openflamingo/OpenFlamingo-3B-vitl-mpt1b-langinstruct)|
+|4B| togethercomputer/RedPajama-INCITE-Base-3B-v1 | openai CLIP ViT-L/14 | 2 | 81.8 | -| [Link](https://huggingface.co/openflamingo/OpenFlamingo-4B-vitl-rpj3b)|
+|4B| togethercomputer/RedPajama-INCITE-Instruct-3B-v1 | openai CLIP ViT-L/14 | 2 | 85.8 | - | [Link](https://huggingface.co/openflamingo/OpenFlamingo-4B-vitl-rpj3b-langinstruct)|
+|9B| mosaicml/mpt-7b | openai CLIP ViT-L/14 | 4 | 89.0 | - | [Link](https://huggingface.co/openflamingo/OpenFlamingo-9B-vitl-mpt7b)|
 
-*\*Xattn frequency refers to the `--cross_attn_every_n_layers` argument.*
+*\* Xattn frequency refers to the `--cross_attn_every_n_layers` argument.*
 
+*\*\* 4-shot COCO and VQAv2 performances were calculated over a sample of 5000 test split examples, following the [Flamingo paper](https://arxiv.org/abs/2204.14198).*
 
-To instantiate an OpenFlamingo model with these weights, initialize the model as above and use the following code.
+Note: as part of our v2 release, we have deprecated a previous LLaMA-based checkpoint. However, you can continue to use our older checkpoint using the new codebase.
+
+## Downloading pretrained weights
+
+To instantiate an OpenFlamingo model with one of our released weights, initialize the model as above and use the following code.
 
 ```python
 # grab model checkpoint from huggingface hub
 from huggingface_hub import hf_hub_download
 import torch
 
-checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-3B", "checkpoint.pt")
+checkpoint_path = hf_hub_download("openflamingo/OpenFlamingo-3B-vitl-mpt1b", "checkpoint.pt")
 model.load_state_dict(torch.load(checkpoint_path), strict=False)
 ```
 
@@ -159,8 +165,8 @@ print("Generated text: ", tokenizer.decode(generated_text[0]))
 We provide training scripts in `open_flamingo/train`. We provide an example Slurm script in `open_flamingo/scripts/run_train.py`, as well as the following example command:
 ```
 torchrun --nnodes=1 --nproc_per_node=4 open_flamingo/train/train.py \
-  --lm_path mosaicml/mpt-1b-redpajama-200b-dolly \
-  --tokenizer_path mosaicml/mpt-1b-redpajama-200b-dolly \
+  --lm_path anas-awadalla/mpt-1b-redpajama-200b \
+  --tokenizer_path anas-awadalla/mpt-1b-redpajama-200b \
   --cross_attn_every_n_layers 1 \
   --dataset_resampled \
   --batch_size_mmc4 32 \
@@ -169,7 +175,7 @@ torchrun --nnodes=1 --nproc_per_node=4 open_flamingo/train/train.py \
   --train_num_samples_laion 250000 \
   --loss_multiplier_laion 0.2 \
   --workers=4 \
-  --run_name OpenFlamingo-3B \
+  --run_name OpenFlamingo-3B-vitl-mpt1b \
   --num_epochs 480 \
   --warmup_steps  1875 \
   --mmc4_textsim_threshold 0.24 \
@@ -178,11 +184,13 @@ torchrun --nnodes=1 --nproc_per_node=4 open_flamingo/train/train.py \
   --report_to_wandb
 ```
 
-For more details, see our [training README]().
+*Note: The MPT-1B [base](https://huggingface.co/mosaicml/mpt-1b-redpajama-200b)  and [instruct](https://huggingface.co/mosaicml/mpt-1b-redpajama-200b-dolly) modeling code does not accept the `labels` kwarg or compute cross-entropy loss directly within `forward()`, as expected by our codebase. We suggest using a modified version of the MPT-1B models found [here](https://huggingface.co/anas-awadalla/mpt-1b-redpajama-200b) and [here](https://huggingface.co/anas-awadalla/mpt-1b-redpajama-200b-dolly).*
+
+For more details, see our [training README](https://github.com/mlfoundations/open_flamingo/tree/main/open_flamingo/train).
 
 
 # Evaluation
-We currently support running evaluations on [COCO](https://cocodataset.org/#home), [VQAv2](https://visualqa.org/index.html), [OKVQA](https://okvqa.allenai.org), [Flickr30k](https://www.kaggle.com/datasets/hsankesara/flickr-image-dataset), and [ImageNet](https://image-net.org/index.php). An example evaluation script is at `open_flamingo/scripts/run_eval.sh`. Please see our [evaluation README]() for more details.
+An example evaluation script is at `open_flamingo/scripts/run_eval.sh`. Please see our [evaluation README](https://github.com/mlfoundations/open_flamingo/tree/main/open_flamingo/eval) for more details.
 
 Before evaluating the model, you will need to install the coco evaluation package by running the following command:
 ```
@@ -203,7 +211,7 @@ nltk.download('wordnet')
 
 OpenFlamingo is developed by:
 
-[Anas Awadalla](https://anas-awadalla.streamlit.app/), [Irena Gao](https://i-gao.github.io/), [Joshua Gardner](https://homes.cs.washington.edu/~jpgard/), [Jack Hessel](https://jmhessel.com/), [Yusuf Hanafy](https://www.linkedin.com/in/yusufhanafy/), [Wanrong Zhu](https://wanrong-zhu.com/), [Kalyani Marathe](https://sites.google.com/uw.edu/kalyanimarathe/home?authuser=0), [Yonatan Bitton](https://yonatanbitton.github.io/), [Samir Gadre](https://sagadre.github.io/), [Jenia Jitsev](https://scholar.google.de/citations?user=p1FuAMkAAAAJ&hl=en), [Simon Kornblith](https://simonster.com/), [Pang Wei Koh](https://koh.pw/), [Gabriel Ilharco](https://gabrielilharco.com/), [Mitchell Wortsman](https://mitchellnw.github.io/), [Ludwig Schmidt](https://people.csail.mit.edu/ludwigs/).
+[Anas Awadalla*](https://anas-awadalla.streamlit.app/), [Irena Gao*](https://i-gao.github.io/), [Joshua Gardner](https://homes.cs.washington.edu/~jpgard/), [Jack Hessel](https://jmhessel.com/), [Yusuf Hanafy](https://www.linkedin.com/in/yusufhanafy/), [Wanrong Zhu](https://wanrong-zhu.com/), [Kalyani Marathe](https://sites.google.com/uw.edu/kalyanimarathe/home?authuser=0), [Yonatan Bitton](https://yonatanbitton.github.io/), [Samir Gadre](https://sagadre.github.io/), [Jenia Jitsev](https://scholar.google.de/citations?user=p1FuAMkAAAAJ&hl=en), [Simon Kornblith](https://simonster.com/), [Pang Wei Koh](https://koh.pw/), [Gabriel Ilharco](https://gabrielilharco.com/), [Mitchell Wortsman](https://mitchellnw.github.io/), [Ludwig Schmidt](https://people.csail.mit.edu/ludwigs/).
 
 The team is primarily from the University of Washington, Stanford, AI2, UCSB, and Google.
 

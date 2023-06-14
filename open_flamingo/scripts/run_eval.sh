@@ -25,10 +25,10 @@ export PYTHONPATH="$PYTHONPATH:open_flamingo"
 srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evaluate.py \
     --vision_encoder_path ViT-L-14 \
     --vision_encoder_pretrained openai\
-    --lm_path mosaicml/mpt-1b-redpajama-200b-dolly \
-    --lm_tokenizer_path mosaicml/mpt-1b-redpajama-200b-dolly \
+    --lm_path anas-awadalla/mpt-1b-redpajama-200b \
+    --lm_tokenizer_path anas-awadalla/mpt-1b-redpajama-200b \
     --cross_attn_every_n_layers 1 \
-    --checkpoint_path "openflamingo/OpenFlamingo-3B/checkpoint.pt" \
+    --checkpoint_path "openflamingo/OpenFlamingo-3B-vitl-mpt1b/checkpoint.pt" \
     --results_file "results.json" \
     --precision amp_bf16 \
     --batch_size 8 \
