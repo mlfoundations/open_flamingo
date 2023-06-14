@@ -125,14 +125,16 @@ class EvalModel(BaseEvalModel):
         self,
         lang_x: torch.Tensor,
         vision_x: torch.Tensor = None,
+        attention_mask: torch.Tensor = None,
         past_key_values: torch.Tensor = None,
         clear_conditioned_layers: bool = False,
     ):
-        with torch.no_grad():
+        with torch.inference_mode():
             with self.autocast():
-                outputs = unwrap_model(self.model)(
+                outputs = self.model(
                     vision_x=vision_x,
                     lang_x=lang_x,
+                    attention_mask=attention_mask,
                     clear_conditioned_layers=clear_conditioned_layers,
                     past_key_values=past_key_values,
                     use_cache=(past_key_values is not None),

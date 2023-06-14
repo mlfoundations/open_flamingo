@@ -116,6 +116,7 @@ class ImageNetDataset(ImageFolder):
         sample, target = super().__getitem__(idx)
         target_label = IMAGENET_1K_CLASS_ID_TO_LABEL[target]
         return {
+            "id": idx,
             "image": sample,
             "class_id": target,  # numeric ID of the ImageNet class
             "class_name": target_label,  # human-readable name of ImageNet class
@@ -137,6 +138,7 @@ class HatefulMemesDataset(Dataset):
         image = Image.open(img_path)
         image.load()
         return {
+            "id": idx,
             "image": image,
             "ocr": annotation["text"],
             "class_name": "yes" if annotation["label"] == 1 else "no",

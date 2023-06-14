@@ -61,7 +61,7 @@ parser.add_argument(
 parser.add_argument(
     "--trial_seeds",
     nargs="+",
-    default=[42],
+    default=[42, 2, 8],
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
@@ -72,6 +72,11 @@ parser.add_argument(
 )
 
 parser.add_argument("--batch_size", type=int, default=8)
+
+parser.add_argument("--use_kv_caching_for_classification", 
+                    action="store_true",
+                    help="Use key-value caching for classification evals to speed it up. Currently this doesn't underperforms for MPT models."
+                    )
 
 # Per-dataset evaluation flags
 parser.add_argument(
@@ -517,6 +522,7 @@ def main():
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
+                    use_kv_caching=args.use_kv_caching_for_classification,
                     dataset_name="imagenet",
                 )
                 if args.rank == 0:
@@ -541,6 +547,7 @@ def main():
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
+                    use_kv_caching=args.use_kv_caching_for_classification,
                     dataset_name="hateful_memes",
                 )
                 if args.rank == 0:
@@ -736,7 +743,6 @@ def evaluate_captioning(
     all_predictions = {
         k: v for d in all_predictions for k, v in d.items()
     }  # merge dicts
-    print("After allgather:", len(all_predictions))
 
     # save the predictions to a temporary file
     results_path = f"{dataset_name}results_{uuid.uuid4()}.json"
@@ -911,7 +917,6 @@ def evaluate_vqa(
     all_predictions = [
         item for sublist in all_predictions for item in sublist
     ]  # flatten
-    print("After allgather:", len(all_predictions))
 
     # save the predictions to a temporary file
     random_uuid = str(uuid.uuid4())
@@ -935,6 +940,7 @@ def evaluate_classification(
     eval_model,
     seed: int = 42,
     num_shots: int = 8,
+    use_kv_caching=False,
     dataset_name: str = "imagenet",
 ):
     """
@@ -977,31 +983,25 @@ def evaluate_classification(
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
-    test_dataset = prepare_eval_samples(
+    test_dataloader = prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         batch_size,
         seed,
     )
 
-    tokenizer.padding_side = (
-        "left"  # For generation padding tokens should be on the left
-    )
-
     acc1 = 0
     acc5 = 0
 
     if dataset_name == "imagenet":
-        prompt_text = "<image>A photo of a"
+        prompt_text = "<image>Output:"
     elif dataset_name == "hateful_memes":
-        prompt_text = "<image>is an image with written: '{meme_text}' on it. Is it hateful? Answer:"
+        prompt_text = "<image>is an image with: '{meme_text}' written on it. Is it hateful? Answer: "
 
-    # used to calculate the ROC-AUC score
-    gts = []
-    pred_scores = []
-
+    predictions = []
+    
     for batch_idx, batch in tqdm(
-        enumerate(test_dataset), desc=f"Running inference {dataset_name}"
+        enumerate(test_dataloader), desc=f"Running inference {dataset_name}", disable=args.rank != 0
     ):
         batch_images = []
         batch_text = []
@@ -1015,10 +1015,15 @@ def evaluate_classification(
 
             in_context_samples = [train_dataset[i] for i in context_indices]
 
-            vision_x = [
-                eval_model.image_processor(data["image"]).unsqueeze(0)
-                for data in in_context_samples
-            ] + [eval_model.image_processor(batch["image"][idx]).unsqueeze(0)]
+            if num_shots > 0:
+                vision_x = [
+                    eval_model.image_processor(data["image"]).unsqueeze(0)
+                    for data in in_context_samples
+                ]
+            else:
+                vision_x = [] 
+                
+            vision_x = vision_x  + [eval_model.image_processor(batch["image"][idx]).unsqueeze(0)]
             batch_images.append(torch.cat(vision_x, dim=0))
 
             def sample_to_prompt(sample):
@@ -1028,7 +1033,7 @@ def evaluate_classification(
                     return prompt_text
 
             context_text = "".join(
-                f"{sample_to_prompt(in_context_samples[i])} {in_context_samples[i]['class_name']}<|endofchunk|>"
+                f"{sample_to_prompt(in_context_samples[i])}{in_context_samples[i]['class_name']}<|endofchunk|>"
                 for i in range(effective_num_shots)
             )
             
@@ -1042,46 +1047,47 @@ def evaluate_classification(
         vision_x = torch.stack(batch_images, dim=0)
         # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
         vision_x = vision_x.unsqueeze(2)
-
+        
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
         text_x = [
             context_text
             + sample_to_prompt({k: batch[k][idx] for k in batch.keys()})
-            + " "
             for idx, context_text in enumerate(batch_text)
         ]
-                
+        
         ctx_and_prompt_tokenized = tokenizer(
             text_x,
             return_tensors="pt",
-            padding=True,
-            truncation=True,
+            padding="longest",
             max_length=2000,
         )
         
-        ctx_and_prompt_input_ids = ctx_and_prompt_tokenized["input_ids"].to(model.device)
-        ctx_and_prompt_attention_mask = ctx_and_prompt_tokenized["attention_mask"].to(model.device).bool()
-        
-        eval_model.cache_media(input_ids=ctx_and_prompt_input_ids, vision_x=vision_x.to(model.device))
-
-        with torch.no_grad():
-            precomputed = eval_model.model(
-                vision_x=None,
-                lang_x=ctx_and_prompt_input_ids,
-                attention_mask=ctx_and_prompt_attention_mask,
-                clear_conditioned_layers=False,
-                use_cache=True,
-            )
+        ctx_and_prompt_input_ids = ctx_and_prompt_tokenized["input_ids"].to(eval_model.device)
+        ctx_and_prompt_attention_mask = ctx_and_prompt_tokenized["attention_mask"].to(eval_model.device).bool()
 
         def _detach_pkvs(pkvs):
             """Detach a set of past key values."""
             return list([tuple([x.detach() for x in inner]) for inner in pkvs])
 
-        precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
+        if use_kv_caching:
+            eval_model.cache_media(input_ids=ctx_and_prompt_input_ids, vision_x=vision_x.to(eval_model.device))
 
-        precomputed_logits = precomputed.logits.detach()
+            with torch.no_grad():
+                precomputed = eval_model.model(
+                    vision_x=None,
+                    lang_x=ctx_and_prompt_input_ids,
+                    attention_mask=ctx_and_prompt_attention_mask,
+                    clear_conditioned_layers=False,
+                    use_cache=True,
+                )
 
+            precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
+            precomputed_logits = precomputed.logits.detach()
+        else:
+            precomputed_pkvs = None
+            precomputed_logits = None
+        
         if dataset_name == "imagenet":
             all_class_names = IMAGENET_CLASSNAMES
         else:
@@ -1099,7 +1105,7 @@ def evaluate_classification(
             # predictions for this class.
             classname_tokens = tokenizer(
                 class_name, add_special_tokens=False, return_tensors="pt"
-            )["input_ids"].cuda()
+            )["input_ids"].to(eval_model.device)
 
             if classname_tokens.ndim == 1:  # Case: classname is only 1 token
                 classname_tokens = torch.unsqueeze(classname_tokens, 1)
@@ -1108,44 +1114,70 @@ def evaluate_classification(
                 classname_tokens, "b s -> (repeat b) s", repeat=len(batch_text)
             )
 
-            # Compute the outputs one token at a time, using cached
-            # activations.
+            if use_kv_caching:
+                # Compute the outputs one token at a time, using cached
+                # activations.
 
-            # Initialize the elementwise predictions with the last set of
-            # logits from precomputed; this will correspond to the predicted
-            # probability of the first position/token in the imagenet
-            # classname. We will append the logits for each token to this
-            # list (each element has shape [B, 1, vocab_size]).
-            elementwise_logits = [precomputed_logits[:, -2:-1, :]]
+                # Initialize the elementwise predictions with the last set of
+                # logits from precomputed; this will correspond to the predicted
+                # probability of the first position/token in the imagenet
+                # classname. We will append the logits for each token to this
+                # list (each element has shape [B, 1, vocab_size]).
+                elementwise_logits = [precomputed_logits[:, -2:-1, :]]
 
-            for token_idx in range(classname_tokens.shape[1]):
-                _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
-                outputs = eval_model.get_logits(
-                    lang_x=_lang_x,
-                    past_key_values=(
-                        past_key_values if token_idx > 0 else precomputed_pkvs
-                    ),
-                    clear_conditioned_layers=False,
+                for token_idx in range(classname_tokens.shape[1]):
+                    _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
+                    outputs = eval_model.get_logits(
+                        lang_x=_lang_x,
+                        past_key_values=(
+                            past_key_values if token_idx > 0 else precomputed_pkvs
+                        ),
+                        clear_conditioned_layers=False,
+                    )
+                    past_key_values = _detach_pkvs(outputs.past_key_values)
+                    elementwise_logits.append(outputs.logits.detach())
+
+                # logits/probs has shape [B, classname_tokens + 1, vocab_size]
+                logits = torch.concat(elementwise_logits, 1)
+                probs = torch.softmax(logits, dim=-1)
+
+                # collect the probability of the generated token -- probability
+                # at index 0 corresponds to the token at index 1.
+                probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
+
+                gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1).cpu()
+                
+                class_prob = torch.prod(gen_probs, 1).numpy()
+            else:
+                # Compute the outputs without using cached
+                # activations.
+
+                # contatenate the class name tokens to the end of the context
+                # tokens
+                _lang_x = torch.cat([ctx_and_prompt_input_ids, classname_tokens], dim=1)
+                _attention_mask = torch.cat(
+                    [
+                        ctx_and_prompt_attention_mask,
+                        torch.ones_like(classname_tokens).bool(),
+                    ],
+                    dim=1,
                 )
-                past_key_values = _detach_pkvs(outputs.past_key_values)
-                elementwise_logits.append(outputs.logits.detach())
 
-            # logits/probs has shape [B, classname_tokens + 1, vocab_size]
-            logits = torch.concat(elementwise_logits, 1)
-            probs = torch.softmax(logits, dim=-1).detach()
+                outputs = eval_model.get_logits(
+                    vision_x=vision_x.to(eval_model.device),
+                    lang_x=_lang_x.to(eval_model.device),
+                    attention_mask=_attention_mask.to(eval_model.device),
+                    clear_conditioned_layers=True,
+                )
+                
+                logits = outputs.logits.detach().float()
+                probs = torch.softmax(logits, dim=-1)
 
-            # collect the probability of the generated token -- probability
-            # at index 0 corresponds to the token at index 1.
-            probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
-
-            gen_probs = (
-                torch.gather(probs, 2, classname_tokens[:, :, None])
-                .squeeze(-1)
-                .detach()
-                .cpu()
-            )
-
-            class_prob = torch.prod(gen_probs, 1).numpy()
+                # get probability of the generated class name tokens
+                gen_probs = probs[:, ctx_and_prompt_input_ids.shape[1]-1:_lang_x.shape[1], :]
+                gen_probs = torch.gather(gen_probs, 2, classname_tokens[:, :, None]).squeeze(-1).cpu()
+                class_prob = torch.prod(gen_probs, 1).numpy()
+                
             overall_probs.append(class_prob)
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
@@ -1164,22 +1196,45 @@ def evaluate_classification(
             y_i = batch["class_name"][i]
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
-
+            
             if dataset_name == "hateful_memes":                
                 # sum over the probabilities of the different classes
                 binary_probs = [overall_probs[i][0] + overall_probs[i][3], overall_probs[i][1] + overall_probs[i][2]]
 
-                gts.append(batch["class_id"][i])
-                pred_scores.append(binary_probs[highest_prob_idxs[0]])
+            predictions.append({
+                "id": batch["id"][i],
+                "gt_label": y_i,
+                "pred_label": top5[0],
+                "pred_score": binary_probs[highest_prob_idxs[0]] if dataset_name == "hateful_memes" else None, # only for hateful memes
+            })
+    
+    # all gather
+    all_predictions = [None] * args.world_size
+    torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
+    if args.rank != 0:
+        return
 
-        examples_seen = (batch_idx + 1) * batch_size
-
+    all_predictions = [
+        item for sublist in all_predictions for item in sublist
+    ]  # flatten
+    
+    # Hack to remove samples with duplicate ids (only necessary for multi-GPU evaluation)
+    all_predictions = {pred["id"]: pred for pred in all_predictions}.values()
+    
+    assert len(all_predictions) == len(test_dataset) # sanity check
+    
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
+        gts = [pred["gt_label"] for pred in all_predictions]
+        pred_scores = [pred["pred_score"] for pred in all_predictions]
         return roc_auc_score(gts, pred_scores)
     else:
         # return top-1 accuracy
-        return float(acc1) / len(test_dataset)
-
+        acc1 = sum(
+            int(pred["gt_label"] == pred["pred_label"])
+            for pred in all_predictions
+        )
+        return float(acc1) / len(all_predictions)
+    
 if __name__ == "__main__":
     main()
