@@ -15,6 +15,7 @@ This is the evaluation module of OpenFlamingo. It contains a set of utilities fo
 |[TextVQA](https://arxiv.org/abs/1904.08920)|VQA|VQA accuracy|Generation|
 |[VizWiz](https://arxiv.org/abs/1802.08218)|VQA|VQA accuracy|Generation|
 |[Hateful Memes](https://arxiv.org/abs/2005.04790)|Classification|ROC AUC|Logprobs|
+|[ImageNet](https://arxiv.org/abs/1409.0575)|Classification|Top-1 accuracy|Logprobs|
 
 When evaluating a model using `num_shots` shots, we sample the exemplars from the training split. Performance is evaluated on a disjoint test split, subsampled to `--num_samples` examples.
 
