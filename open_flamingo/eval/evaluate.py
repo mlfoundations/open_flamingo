@@ -690,7 +690,7 @@ def evaluate_captioning(
 
     predictions = defaultdict()
 
-    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"):
+    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}", disable=args.rank != 0):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch["image"])
         )
@@ -859,7 +859,7 @@ def evaluate_vqa(
     in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
     predictions = []
 
-    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}"):
+    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}", disable=args.rank != 0):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch["image"])
         )
