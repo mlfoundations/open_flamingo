@@ -74,7 +74,7 @@ parser.add_argument(
 
 parser.add_argument("--batch_size", type=int, default=8)
 
-parser.add_argument("--use_kv_caching_for_classification", 
+parser.add_argument("--no_caching_for_classification", 
                     action="store_true",
                     help="Use key-value caching for classification evals to speed it up. Currently this doesn't underperforms for MPT models."
                     )
@@ -389,9 +389,9 @@ def main():
                     num_shots=shot,
                     seed=seed,
                     dataset_name="flickr",
-                    min_generation_length=12,
-                    max_generation_length=30,
-                    num_beams=5,
+                    min_generation_length=0,
+                    max_generation_length=20,
+                    num_beams=3,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
@@ -524,7 +524,7 @@ def main():
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
-                    use_kv_caching=args.use_kv_caching_for_classification,
+                    no_kv_caching=args.no_caching_for_classification,
                     dataset_name="imagenet",
                 )
                 if args.rank == 0:
@@ -549,7 +549,7 @@ def main():
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
-                    use_kv_caching=args.use_kv_caching_for_classification,
+                    no_kv_caching=args.no_caching_for_classification,
                     dataset_name="hateful_memes",
                 )
                 if args.rank == 0:
@@ -628,7 +628,7 @@ def evaluate_captioning(
     min_generation_length: int = 0,
     max_generation_length: int = 20,
     num_beams: int = 3,
-    length_penalty: float = 0.0,
+    length_penalty: float = -2.0,
     num_shots: int = 8,
     dataset_name: str = "coco",
 ):
@@ -679,18 +679,19 @@ def evaluate_captioning(
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
-    test_dataset = prepare_eval_samples(
+    test_dataloader = prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
-        seed,
+        seed
     )
 
     in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
 
     predictions = defaultdict()
 
-    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}", disable=args.rank != 0):
+    np.random.seed(seed + args.rank) # make sure each worker has a different seed for the random context samples
+    for batch in tqdm(test_dataloader, desc=f"Running inference {dataset_name.upper()}", disable=args.rank != 0):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch["image"])
         )
@@ -780,7 +781,7 @@ def evaluate_vqa(
     min_generation_length: int = 0,
     max_generation_length: int = 5,
     num_beams: int = 3,
-    length_penalty: float = -2.0,
+    length_penalty: float = 0.0,
     num_shots: int = 8,
     dataset_name: str = "vqav2",
 ):
@@ -849,7 +850,7 @@ def evaluate_vqa(
 
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
-    test_dataset = prepare_eval_samples(
+    test_dataloader = prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
@@ -859,7 +860,8 @@ def evaluate_vqa(
     in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
     predictions = []
 
-    for batch in tqdm(test_dataset, desc=f"Running inference {dataset_name.upper()}", disable=args.rank != 0):
+    np.random.seed(seed + args.rank) # make sure each worker has a different seed for the random context samples
+    for batch in tqdm(test_dataloader, desc=f"Running inference {dataset_name}", disable=args.rank != 0):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch["image"])
         )
@@ -947,7 +949,7 @@ def evaluate_classification(
     eval_model,
     seed: int = 42,
     num_shots: int = 8,
-    use_kv_caching=False,
+    no_kv_caching=False,
     dataset_name: str = "imagenet",
 ):
     """
@@ -970,7 +972,6 @@ def evaluate_classification(
         )
     batch_size = args.batch_size
     num_samples = args.num_samples
-    np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
 
     if dataset_name == "imagenet":
@@ -1007,6 +1008,7 @@ def evaluate_classification(
 
     predictions = []
     
+    np.random.seed(seed + args.rank) # make sure each worker has a different seed for the random context samples
     for batch_idx, batch in tqdm(
         enumerate(test_dataloader), desc=f"Running inference {dataset_name}", disable=args.rank != 0
     ):
@@ -1019,9 +1021,9 @@ def evaluate_classification(
             context_indices = np.random.choice(
                 len(train_dataset), effective_num_shots, replace=False
             )
-
+            
             in_context_samples = [train_dataset[i] for i in context_indices]
-
+            
             if num_shots > 0:
                 vision_x = [
                     eval_model.image_processor(data["image"]).unsqueeze(0)
@@ -1077,7 +1079,7 @@ def evaluate_classification(
             """Detach a set of past key values."""
             return list([tuple([x.detach() for x in inner]) for inner in pkvs])
 
-        if use_kv_caching:
+        if not no_kv_caching:
             eval_model.cache_media(input_ids=ctx_and_prompt_input_ids, vision_x=vision_x.to(eval_model.device))
 
             with torch.no_grad():
@@ -1121,7 +1123,7 @@ def evaluate_classification(
                 classname_tokens, "b s -> (repeat b) s", repeat=len(batch_text)
             )
 
-            if use_kv_caching:
+            if not no_kv_caching:
                 # Compute the outputs one token at a time, using cached
                 # activations.
 
@@ -1203,18 +1205,14 @@ def evaluate_classification(
             y_i = batch["class_name"][i]
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
-            
-            if dataset_name == "hateful_memes":                
-                # sum over the probabilities of the different classes
-                binary_probs = [overall_probs[i][0] + overall_probs[i][3], overall_probs[i][1] + overall_probs[i][2]]
 
             predictions.append({
                 "id": batch["id"][i],
                 "gt_label": y_i,
                 "pred_label": top5[0],
-                "pred_score": binary_probs[highest_prob_idxs[0]] if dataset_name == "hateful_memes" else None, # only for hateful memes
+                "pred_score": overall_probs[i][highest_prob_idxs[0]] if dataset_name == "hateful_memes" else None, # only for hateful memes
             })
-    
+            
     # all gather
     all_predictions = [None] * args.world_size
     torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists

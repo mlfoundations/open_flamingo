@@ -146,7 +146,7 @@ class HatefulMemesDataset(Dataset):
         image = Image.open(img_path)
         image.load()
         return {
-            "id": idx,
+            "id": annotation["id"],
             "image": image,
             "ocr": annotation["text"],
             "class_name": "yes" if annotation["label"] == 1 else "no",
