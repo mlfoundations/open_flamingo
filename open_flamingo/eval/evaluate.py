@@ -970,7 +970,6 @@ def evaluate_classification(
         )
     batch_size = args.batch_size
     num_samples = args.num_samples
-    np.random.seed(seed)
     model, tokenizer = eval_model.model, eval_model.tokenizer
 
     if dataset_name == "imagenet":
