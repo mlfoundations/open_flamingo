@@ -45,7 +45,7 @@ class EvalModel(BaseEvalModel):
             model_args["lm_tokenizer_path"],
             cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
-        checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
+        checkpoint = torch.load(model_args["checkpoint_path"], map_location=self.device)
         if "model_state_dict" in checkpoint:
             checkpoint = checkpoint["model_state_dict"]
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
