@@ -8,6 +8,7 @@ from open_flamingo.src.factory import create_model_and_transforms
 from contextlib import suppress
 from open_flamingo.eval.models.utils import unwrap_model
 
+
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation.
 
@@ -146,7 +147,7 @@ class EvalModel(BaseEvalModel):
 
     def uncache_media(self):
         unwrap_model(self.model).uncache_media()
-        
+
     def cache_media(self, input_ids, vision_x):
         unwrap_model(self.model).cache_media(input_ids=input_ids, vision_x=vision_x)
 

@@ -7,6 +7,7 @@ from transformers import Blip2Processor, Blip2ForConditionalGeneration
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.eval.models.utils import unwrap_model
 
+
 class EvalModel(BaseEvalModel):
     """BLIP-2 model evaluation.
 

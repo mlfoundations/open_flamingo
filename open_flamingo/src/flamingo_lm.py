@@ -51,7 +51,7 @@ class FlamingoLayer(nn.Module):
                 raise ValueError(
                     "media_locations must be conditioned before forward pass"
                 )
-                
+
             lang_x = self.gated_cross_attn_layer(
                 lang_x,
                 self.vis_x,
@@ -144,7 +144,7 @@ class FlamingoLMMixin(nn.Module):
             and self.is_conditioned()
             and not media_locations.any()
         )
-        
+
         for layer in self._get_decoder_layers():
             if not use_cached_media_locations:
                 layer.condition_media_locations(media_locations)
@@ -154,9 +154,7 @@ class FlamingoLMMixin(nn.Module):
         # make them all kwargs
         kwargs["input_ids"] = input_ids
         kwargs["attention_mask"] = attention_mask
-        return super().forward(
-            **kwargs
-        )  # Call the other parent's forward method
+        return super().forward(**kwargs)  # Call the other parent's forward method
 
     def is_conditioned(self) -> bool:
         """Check whether all decoder layers are already conditioned."""

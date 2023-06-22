@@ -66,7 +66,10 @@ parser.add_argument(
     help="Seeds to use for each trial for picking demonstrations and eval sets",
 )
 parser.add_argument(
-    "--num_samples", type=int, default=-1, help="Number of samples to evaluate on. -1 for all samples."
+    "--num_samples",
+    type=int,
+    default=-1,
+    help="Number of samples to evaluate on. -1 for all samples.",
 )
 parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
@@ -74,10 +77,11 @@ parser.add_argument(
 
 parser.add_argument("--batch_size", type=int, default=8)
 
-parser.add_argument("--no_caching_for_classification", 
-                    action="store_true",
-                    help="Use key-value caching for classification evals to speed it up. Currently this doesn't underperforms for MPT models."
-                    )
+parser.add_argument(
+    "--no_caching_for_classification",
+    action="store_true",
+    help="Use key-value caching for classification evals to speed it up. Currently this doesn't underperforms for MPT models.",
+)
 
 # Per-dataset evaluation flags
 parser.add_argument(
@@ -273,7 +277,7 @@ parser.add_argument(
     default=None,
 )
 parser.add_argument(
-    "--vizwiz_test_annotations_json_path", 
+    "--vizwiz_test_annotations_json_path",
     type=str,
     help="Path to the vizwiz annotations json file.",
     default=None,
@@ -504,7 +508,7 @@ def main():
                     dataset_name="textvqa",
                     max_generation_length=10,
                 )
-                if args.rank == 0: 
+                if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
                     scores.append(textvqa_score)
 
@@ -529,7 +533,8 @@ def main():
                 )
                 if args.rank == 0:
                     print(
-                        f"Shots {shot} Trial {trial} " f"ImageNet score: {imagenet_score}"
+                        f"Shots {shot} Trial {trial} "
+                        f"ImageNet score: {imagenet_score}"
                     )
                     scores.append(imagenet_score)
 
@@ -683,15 +688,21 @@ def evaluate_captioning(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
-        seed
+        seed,
     )
 
     in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
 
     predictions = defaultdict()
 
-    np.random.seed(seed + args.rank) # make sure each worker has a different seed for the random context samples
-    for batch in tqdm(test_dataloader, desc=f"Running inference {dataset_name.upper()}", disable=args.rank != 0):
+    np.random.seed(
+        seed + args.rank
+    )  # make sure each worker has a different seed for the random context samples
+    for batch in tqdm(
+        test_dataloader,
+        desc=f"Running inference {dataset_name.upper()}",
+        disable=args.rank != 0,
+    ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch["image"])
         )
@@ -860,8 +871,14 @@ def evaluate_vqa(
     in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
     predictions = []
 
-    np.random.seed(seed + args.rank) # make sure each worker has a different seed for the random context samples
-    for batch in tqdm(test_dataloader, desc=f"Running inference {dataset_name}", disable=args.rank != 0):
+    np.random.seed(
+        seed + args.rank
+    )  # make sure each worker has a different seed for the random context samples
+    for batch in tqdm(
+        test_dataloader,
+        desc=f"Running inference {dataset_name}",
+        disable=args.rank != 0,
+    ):
         batch_demo_samples = sample_batch_demos_from_query_set(
             in_context_samples, effective_num_shots, len(batch["image"])
         )
@@ -1007,10 +1024,14 @@ def evaluate_classification(
         prompt_text = "<image>is an image with: '{meme_text}' written on it. Is it hateful? Answer: "
 
     predictions = []
-    
-    np.random.seed(seed + args.rank) # make sure each worker has a different seed for the random context samples
+
+    np.random.seed(
+        seed + args.rank
+    )  # make sure each worker has a different seed for the random context samples
     for batch_idx, batch in tqdm(
-        enumerate(test_dataloader), desc=f"Running inference {dataset_name}", disable=args.rank != 0
+        enumerate(test_dataloader),
+        desc=f"Running inference {dataset_name}",
+        disable=args.rank != 0,
     ):
         batch_images = []
         batch_text = []
@@ -1021,18 +1042,20 @@ def evaluate_classification(
             context_indices = np.random.choice(
                 len(train_dataset), effective_num_shots, replace=False
             )
-            
+
             in_context_samples = [train_dataset[i] for i in context_indices]
-            
+
             if num_shots > 0:
                 vision_x = [
                     eval_model.image_processor(data["image"]).unsqueeze(0)
                     for data in in_context_samples
                 ]
             else:
-                vision_x = [] 
-                
-            vision_x = vision_x  + [eval_model.image_processor(batch["image"][idx]).unsqueeze(0)]
+                vision_x = []
+
+            vision_x = vision_x + [
+                eval_model.image_processor(batch["image"][idx]).unsqueeze(0)
+            ]
             batch_images.append(torch.cat(vision_x, dim=0))
 
             def sample_to_prompt(sample):
@@ -1045,42 +1068,48 @@ def evaluate_classification(
                 f"{sample_to_prompt(in_context_samples[i])}{in_context_samples[i]['class_name']}<|endofchunk|>"
                 for i in range(effective_num_shots)
             )
-            
+
             # Keep the text but remove the image tags for the zero-shot case
             if num_shots == 0:
                 context_text = context_text.replace("<image>", "")
-                
+
             batch_text.append(context_text)
 
         # shape [B, T_img, C, h, w]
         vision_x = torch.stack(batch_images, dim=0)
         # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
         vision_x = vision_x.unsqueeze(2)
-        
+
         # Cache the context text: tokenize context and prompt,
         # e.g. '<context> a picture of a '
         text_x = [
-            context_text
-            + sample_to_prompt({k: batch[k][idx] for k in batch.keys()})
+            context_text + sample_to_prompt({k: batch[k][idx] for k in batch.keys()})
             for idx, context_text in enumerate(batch_text)
         ]
-        
+
         ctx_and_prompt_tokenized = tokenizer(
             text_x,
             return_tensors="pt",
             padding="longest",
             max_length=2000,
         )
-        
-        ctx_and_prompt_input_ids = ctx_and_prompt_tokenized["input_ids"].to(eval_model.device)
-        ctx_and_prompt_attention_mask = ctx_and_prompt_tokenized["attention_mask"].to(eval_model.device).bool()
+
+        ctx_and_prompt_input_ids = ctx_and_prompt_tokenized["input_ids"].to(
+            eval_model.device
+        )
+        ctx_and_prompt_attention_mask = (
+            ctx_and_prompt_tokenized["attention_mask"].to(eval_model.device).bool()
+        )
 
         def _detach_pkvs(pkvs):
             """Detach a set of past key values."""
             return list([tuple([x.detach() for x in inner]) for inner in pkvs])
 
         if not no_kv_caching:
-            eval_model.cache_media(input_ids=ctx_and_prompt_input_ids, vision_x=vision_x.to(eval_model.device))
+            eval_model.cache_media(
+                input_ids=ctx_and_prompt_input_ids,
+                vision_x=vision_x.to(eval_model.device),
+            )
 
             with torch.no_grad():
                 precomputed = eval_model.model(
@@ -1096,7 +1125,7 @@ def evaluate_classification(
         else:
             precomputed_pkvs = None
             precomputed_logits = None
-        
+
         if dataset_name == "imagenet":
             all_class_names = IMAGENET_CLASSNAMES
         else:
@@ -1154,8 +1183,12 @@ def evaluate_classification(
                 # at index 0 corresponds to the token at index 1.
                 probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
 
-                gen_probs = torch.gather(probs, 2, classname_tokens[:, :, None]).squeeze(-1).cpu()
-                
+                gen_probs = (
+                    torch.gather(probs, 2, classname_tokens[:, :, None])
+                    .squeeze(-1)
+                    .cpu()
+                )
+
                 class_prob = torch.prod(gen_probs, 1).numpy()
             else:
                 # Compute the outputs without using cached
@@ -1178,21 +1211,27 @@ def evaluate_classification(
                     attention_mask=_attention_mask.to(eval_model.device),
                     clear_conditioned_layers=True,
                 )
-                
+
                 logits = outputs.logits.detach().float()
                 probs = torch.softmax(logits, dim=-1)
 
                 # get probability of the generated class name tokens
-                gen_probs = probs[:, ctx_and_prompt_input_ids.shape[1]-1:_lang_x.shape[1], :]
-                gen_probs = torch.gather(gen_probs, 2, classname_tokens[:, :, None]).squeeze(-1).cpu()
+                gen_probs = probs[
+                    :, ctx_and_prompt_input_ids.shape[1] - 1 : _lang_x.shape[1], :
+                ]
+                gen_probs = (
+                    torch.gather(gen_probs, 2, classname_tokens[:, :, None])
+                    .squeeze(-1)
+                    .cpu()
+                )
                 class_prob = torch.prod(gen_probs, 1).numpy()
-                
+
             overall_probs.append(class_prob)
 
         overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
 
         eval_model.uncache_media()
-        
+
         def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
             """Return the indices of the top k elements in probs_ary."""
             return np.argsort(probs_ary)[::-1][:k]
@@ -1206,13 +1245,17 @@ def evaluate_classification(
             acc5 += int(y_i in set(top5))
             acc1 += int(y_i == top5[0])
 
-            predictions.append({
-                "id": batch["id"][i],
-                "gt_label": y_i,
-                "pred_label": top5[0],
-                "pred_score": overall_probs[i][highest_prob_idxs[0]] if dataset_name == "hateful_memes" else None, # only for hateful memes
-            })
-            
+            predictions.append(
+                {
+                    "id": batch["id"][i],
+                    "gt_label": y_i,
+                    "pred_label": top5[0],
+                    "pred_score": overall_probs[i][highest_prob_idxs[0]]
+                    if dataset_name == "hateful_memes"
+                    else None,  # only for hateful memes
+                }
+            )
+
     # all gather
     all_predictions = [None] * args.world_size
     torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
@@ -1222,12 +1265,12 @@ def evaluate_classification(
     all_predictions = [
         item for sublist in all_predictions for item in sublist
     ]  # flatten
-    
+
     # Hack to remove samples with duplicate ids (only necessary for multi-GPU evaluation)
     all_predictions = {pred["id"]: pred for pred in all_predictions}.values()
-    
-    assert len(all_predictions) == len(test_dataset) # sanity check
-    
+
+    assert len(all_predictions) == len(test_dataset)  # sanity check
+
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
         gts = [pred["gt_label"] for pred in all_predictions]
@@ -1236,10 +1279,10 @@ def evaluate_classification(
     else:
         # return top-1 accuracy
         acc1 = sum(
-            int(pred["gt_label"] == pred["pred_label"])
-            for pred in all_predictions
+            int(pred["gt_label"] == pred["pred_label"]) for pred in all_predictions
         )
         return float(acc1) / len(all_predictions)
-    
+
+
 if __name__ == "__main__":
     main()

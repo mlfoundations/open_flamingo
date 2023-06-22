@@ -18,7 +18,6 @@ import base64
 from data_utils import *
 
 Image.MAX_IMAGE_PIXELS = 1000000000
-MAX_NUM_TOKENS = 256
 N_CHANNELS = 3
 MIN_KB = 10
 _SHARD_SHUFFLE_SIZE = 2000
@@ -192,7 +191,7 @@ def preprocess_interleaved(
                 max_num_images - len(images_tensors),
                 N_CHANNELS,
                 images_tensors[0].shape[1],
-                images_tensors[0].shape[2]
+                images_tensors[0].shape[2],
             ),
             dtype=torch.float,
         )
