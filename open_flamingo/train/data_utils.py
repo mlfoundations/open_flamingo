@@ -57,7 +57,6 @@ class DataInfo:
 
 def get_dataset_size(shards):
     shards_list = list(braceexpand.braceexpand(shards))
-    shards_list = shards
     dir_path = os.path.dirname(shards[0])
     sizes_filename = os.path.join(dir_path, "sizes.json")
     len_filename = os.path.join(dir_path, "__len__")
