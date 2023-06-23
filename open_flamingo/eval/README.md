@@ -19,6 +19,8 @@ This is the evaluation module of OpenFlamingo. It contains a set of utilities fo
 
 When evaluating a model using `num_shots` shots, we sample the exemplars from the training split. Performance is evaluated on a disjoint test split, subsampled to `--num_samples` examples (or using the full test split if `--num_samples=-1`).
 
+Warning: we have found that classification evaluation does not work as well as expected for MPT models (e.g. OpenFlamingo-3B, OpenFlamingo-9B) and we are not sure why yet. We will update this README when we have more information.
+
 ## Sample scripts
 Our codebase uses DistributedDataParallel to parallelize evaluation by default, so please make sure to set the `MASTER_ADDR` and `MASTER_PORT` environment variables or use `torchrun`. We provide a sample Slurm evaluation script in `open_flamingo/open_flamingo/scripts/run_eval.sh`. 
 
