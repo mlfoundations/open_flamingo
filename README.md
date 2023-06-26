@@ -98,6 +98,7 @@ Below is an example of generating text conditioned on interleaved images/text. I
 ``` python
 from PIL import Image
 import requests
+import torch
 
 """
 Step 1: Load images
