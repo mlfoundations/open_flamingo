@@ -217,7 +217,8 @@ class VQAEval:
         self.evalAnsType = {}
         self.vqa = vqa
         self.vqaRes = vqaRes
-        self.params = {"question_id": vqaRes.getQuesIds()}
+        if not vqa is None and not vqaRes is None:
+            self.params = {"question_id": vqaRes.getQuesIds()}
         self.contractions = {
             "aint": "ain't",
             "arent": "aren't",
@@ -527,8 +528,9 @@ def compute_vqa_accuracy(result_json_path, question_json_path, annotation_json_p
     """Compute the VQA accuracy metric.
 
     Args:
-        predictions (List): list of predictions
-        ground_truth (List[List]): list of all possible ground truth answers
+        result_json_path (str): Path to the json file with model outputs
+        question_json_path (str): Path to the json file with questions
+        annotation_json_path (str): Path to the json file with annotations
 
     Returns:
         float: VQA accuracy

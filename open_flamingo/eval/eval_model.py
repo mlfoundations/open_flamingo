@@ -1,7 +1,7 @@
 import abc
 import argparse
 from typing import List
-
+from torch.nn.parallel import DistributedDataParallel as DDP
 from PIL import Image
 
 
@@ -17,10 +17,20 @@ class BaseEvalModel(abc.ABC):
                 is non-empty.
         """
 
+    def init_distributed(self):
+        """Wrap model as DDP."""
+        self.model = DDP(self.model, device_ids=[self.device])
+
+    def set_device(self, device):
+        """Set device for model."""
+        self.device = device
+        self.model = self.model.to(device)
+
     def get_outputs(
         self,
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
+        min_generation_length: int,
         max_generation_length: int,
         num_beams: int,
         length_penalty: float,

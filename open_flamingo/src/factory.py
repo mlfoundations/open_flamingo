@@ -14,6 +14,7 @@ def create_model_and_transforms(
     cross_attn_every_n_layers: int = 1,
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
+    freeze_lm_embeddings: bool = False,
     **flamingo_kwargs,
 ):
     """
@@ -40,7 +41,9 @@ def create_model_and_transforms(
     vision_encoder.visual.output_tokens = True
 
     text_tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path, local_files_only=use_local_files
+        tokenizer_path,
+        local_files_only=use_local_files,
+        trust_remote_code=True,
     )
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens(
@@ -52,8 +55,24 @@ def create_model_and_transforms(
         text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
 
     lang_encoder = AutoModelForCausalLM.from_pretrained(
-        lang_encoder_path, local_files_only=use_local_files
+        lang_encoder_path,
+        local_files_only=use_local_files,
+        trust_remote_code=True,
     )
+
+    # hacks for MPT-1B, which doesn't have a get_input_embeddings method
+    if "mpt-1b-redpajama-200b" in lang_encoder_path:
+
+        class EmbeddingFnMixin:
+            def get_input_embeddings(self):
+                return self.transformer.wte
+
+            def set_input_embeddings(self, new_embeddings):
+                self.transformer.wte = new_embeddings
+
+        extend_instance(lang_encoder, EmbeddingFnMixin)
+
+    # convert LM to FlamingoLM
     extend_instance(lang_encoder, FlamingoLMMixin)
 
     if decoder_layers_attr_name is None:
@@ -80,7 +99,9 @@ def create_model_and_transforms(
     # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
     model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
-    model.lang_encoder.get_input_embeddings().requires_grad_(True)
+    if not freeze_lm_embeddings:
+        model.lang_encoder.get_input_embeddings().requires_grad_(True)
+        # TODO: investigate also training the output embeddings when untied
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
@@ -101,9 +122,11 @@ def _infer_decoder_layers_attr_name(model):
 
 __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "opt": "model.decoder.layers",
-    "gptneo": "transformer.h",
     "gptj": "transformer.h",
     "gpt-j": "transformer.h",
     "pythia": "gpt_neox.layers",
     "llama": "model.layers",
+    "gptneoxforcausallm": "gpt_neox.layers",
+    "mpt": "transformer.blocks",
+    "mosaicgpt": "transformer.blocks",
 }
