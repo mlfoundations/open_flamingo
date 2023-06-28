@@ -74,9 +74,6 @@ parser.add_argument(
 parser.add_argument(
     "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
-parser.add_argument(
-    "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
-)
 
 parser.add_argument("--batch_size", type=int, default=8)
 
