@@ -20,7 +20,7 @@ if __name__ == "__main__":
         "einops",
         "einops-exts",
         "transformers>=4.28.1",
-        "torch",
+        "torch==2.0.1",
         "torchvision",
         "pillow",
         "more-itertools",
@@ -31,15 +31,15 @@ if __name__ == "__main__":
         "nltk",
         "scipy",
         "inflection",
-        "sentencepiece",
-        "open_clip_torch",
+        "sentencepiece==0.1.98",
+        "open_clip_torch>=2.16.0",
     ]
 
     setup(
         name="open_flamingo",
         packages=find_packages(),
         include_package_data=True,
-        version="0.0.3",
+        version="2.0.0",
         license="MIT",
         description="An open-source framework for training large multimodal models",
         long_description=long_description,
