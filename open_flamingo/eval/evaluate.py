@@ -19,10 +19,10 @@ from eval_datasets import (
     ImageNetDataset,
     HatefulMemesDataset,
 )
-from rices import RICES
 from tqdm import tqdm
 
 
+from eval_datasets import VQADataset, ImageNetDataset
 from classification_utils import (
     IMAGENET_CLASSNAMES,
     IMAGENET_1K_CLASS_ID_TO_LABEL,
@@ -393,6 +393,9 @@ def main():
                     num_shots=shot,
                     seed=seed,
                     dataset_name="flickr",
+                    min_generation_length=0,
+                    max_generation_length=20,
+                    num_beams=3,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
@@ -668,7 +671,7 @@ def evaluate_captioning(
     min_generation_length: int = 0,
     max_generation_length: int = 20,
     num_beams: int = 3,
-    length_penalty: float = 0.0,
+    length_penalty: float = -2.0,
     num_shots: int = 8,
     dataset_name: str = "coco",
 ):
@@ -716,7 +719,7 @@ def evaluate_captioning(
         is_train=False,
         dataset_name=dataset_name,
     )
-    
+
     effective_num_shots = compute_effective_num_shots(num_shots, args.model)
 
     test_dataloader = prepare_eval_samples(
@@ -726,9 +729,7 @@ def evaluate_captioning(
         seed,
     )
 
-    # in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
-    
-    rices_dataset = RICES(train_dataset, eval_model.device, args.batch_size*16)
+    in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
 
     predictions = defaultdict()
 
@@ -740,16 +741,9 @@ def evaluate_captioning(
         desc=f"Running inference {dataset_name.upper()}",
         disable=args.rank != 0,
     ):
-        # batch_demo_samples = sample_batch_demos_from_query_set(
-        #     in_context_samples, effective_num_shots, len(batch["image"])
-        # )
-        
-        batch_demo_samples = []
-        for sample in batch["image"]:
-            sample_demos = rices_dataset.find(sample, effective_num_shots)
-            # reverse order so most similar is last
-            sample_demos.reverse()
-            batch_demo_samples.append(sample_demos)
+        batch_demo_samples = sample_batch_demos_from_query_set(
+            in_context_samples, effective_num_shots, len(batch["image"])
+        )
 
         batch_images = []
         batch_text = []
@@ -785,7 +779,7 @@ def evaluate_captioning(
         new_predictions = [
             postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
-        
+
         for i, sample_id in enumerate(batch["image_id"]):
             predictions[sample_id] = {
                 "caption": new_predictions[i],
@@ -894,7 +888,7 @@ def evaluate_vqa(
         is_train=True,
         dataset_name=dataset_name,
     )
-    
+
     test_dataset = VQADataset(
         image_dir_path=test_image_dir_path,
         question_path=test_questions_json_path,
@@ -912,9 +906,7 @@ def evaluate_vqa(
         seed,
     )
 
-    # in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
-    
-    rices_dataset = RICES(train_dataset, eval_model.device, args.batch_size*16)
+    in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
     predictions = []
 
     np.random.seed(
@@ -925,16 +917,9 @@ def evaluate_vqa(
         desc=f"Running inference {dataset_name}",
         disable=args.rank != 0,
     ):
-        batch_demo_samples = []
-        for sample in batch["image"]:
-            sample_demos = rices_dataset.find(sample, effective_num_shots)
-            # reverse order so most similar is last
-            sample_demos.reverse()
-            batch_demo_samples.append(sample_demos)
-            
-        # batch_demo_samples = sample_batch_demos_from_query_set(
-        #     in_context_samples, effective_num_shots, len(batch["image"])
-        # )
+        batch_demo_samples = sample_batch_demos_from_query_set(
+            in_context_samples, effective_num_shots, len(batch["image"])
+        )
 
         batch_images = []
         batch_text = []
@@ -1339,3 +1324,4 @@ def evaluate_classification(
 
 if __name__ == "__main__":
     main()
+    
