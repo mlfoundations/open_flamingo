@@ -384,15 +384,18 @@ def main():
 
     if args.eval_flickr30:
         print("Evaluating on Flickr30k...")
+        cached_features = None
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_captioning(
+                cider_score, cached_features = evaluate_captioning(
                     args,
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
                     dataset_name="flickr",
+                    num_beams=1,
+                    cached_features=cached_features,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
@@ -406,15 +409,17 @@ def main():
 
     if args.eval_coco:
         print("Evaluating on COCO...")
+        cached_features = None
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_captioning(
+                cider_score, cached_features = evaluate_captioning(
                     args,
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
                     dataset_name="coco",
+                    cached_features=cached_features,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
@@ -428,15 +433,18 @@ def main():
 
     if args.eval_ok_vqa:
         print("Evaluating on OK-VQA...")
+        cached_features = None
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                ok_vqa_score = evaluate_vqa(
+                ok_vqa_score, cached_features = evaluate_vqa(
                     args=args,
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
                     dataset_name="ok_vqa",
+                    num_beams=5,
+                    cached_features=cached_features,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
@@ -450,15 +458,18 @@ def main():
 
     if args.eval_vqav2:
         print("Evaluating on VQAv2...")
+        cached_features = None
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vqa_score = evaluate_vqa(
+                vqa_score, cached_features = evaluate_vqa(
                     args=args,
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
                     dataset_name="vqav2",
+                    num_beams=5,
+                    cached_features=cached_features,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
@@ -472,15 +483,18 @@ def main():
 
     if args.eval_vizwiz:
         print("Evaluating on VizWiz...")
+        cached_features = None
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vizwiz_score = evaluate_vqa(
+                vizwiz_score, cached_features = evaluate_vqa(
                     args=args,
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
                     dataset_name="vizwiz",
+                    num_beams=5,
+                    cached_features=cached_features,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
@@ -494,16 +508,19 @@ def main():
 
     if args.eval_textvqa:
         print("Evaluating on TextVQA...")
+        cached_features = None
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                textvqa_score = evaluate_vqa(
+                textvqa_score, cached_features = evaluate_vqa(
                     args=args,
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
                     dataset_name="textvqa",
+                    num_beams=5,
                     max_generation_length=10,
+                    cached_features=cached_features,
                 )
                 if args.rank == 0:
                     print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
@@ -514,44 +531,6 @@ def main():
                 results["textvqa"].append(
                     {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
-
-    if args.eval_vizwiz:
-        print("Evaluating on VizWiz...")
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vizwiz_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="vizwiz",
-                )
-                print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
-                scores.append(vizwiz_score)
-            print(f"Shots {shot} Mean VizWiz score: {np.mean(scores)}")
-            results["vizwiz"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
-
-    if args.eval_textvqa:
-        print("Evaluating on TextVQA...")
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                textvqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="textvqa",
-                )
-                print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
-                scores.append(textvqa_score)
-            print(f"Shots {shot} Mean TextVQA score: {np.mean(scores)}")
-            results["textvqa"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
 
     if args.eval_imagenet:
         print("Evaluating on ImageNet...")
@@ -671,6 +650,7 @@ def evaluate_captioning(
     length_penalty: float = 0.0,
     num_shots: int = 8,
     dataset_name: str = "coco",
+    cached_features=None,
 ):
     """Evaluate a model on COCO dataset.
 
@@ -683,6 +663,7 @@ def evaluate_captioning(
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of in-context samples to use. Defaults to 8.
         dataset_name (str, optional): dataset to evaluate on. Can be "coco" or "flickr". Defaults to "coco".
+        cached_features (dict, optional): cached features for RICES. Defaults to None.
     Returns:
         float: CIDEr score
 
@@ -725,10 +706,8 @@ def evaluate_captioning(
         args.batch_size,
         seed,
     )
-
-    # in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
     
-    rices_dataset = RICES(train_dataset, eval_model.device, args.batch_size*16)
+    rices_dataset = RICES(train_dataset, eval_model.device, args.batch_size*32, cached_features=cached_features)
 
     predictions = defaultdict()
 
@@ -762,7 +741,7 @@ def evaluate_captioning(
 
             context_text = "".join(
                 [
-                    eval_model.get_caption_prompt(caption=x["caption"].strip())
+                    eval_model.get_caption_prompt(caption=x["caption"].strip())+"\n"
                     for x in batch_demo_samples[i]
                 ]
             )
@@ -786,6 +765,9 @@ def evaluate_captioning(
             postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
         
+        if args.rank == 0:
+            print('Context:', batch_text[0], '\n', 'Generated:', new_predictions[0])
+        
         for i, sample_id in enumerate(batch["image_id"]):
             predictions[sample_id] = {
                 "caption": new_predictions[i],
@@ -796,7 +778,7 @@ def evaluate_captioning(
     torch.distributed.all_gather_object(all_predictions, predictions)  # list of dicts
 
     if args.rank != 0:
-        return
+        return None, rices_dataset.features
 
     all_predictions = {
         k: v for d in all_predictions for k, v in d.items()
@@ -826,7 +808,7 @@ def evaluate_captioning(
     # delete the temporary file
     os.remove(results_path)
 
-    return metrics["CIDEr"] * 100.0
+    return metrics["CIDEr"] * 100.0, rices_dataset.features
 
 
 def evaluate_vqa(
@@ -839,6 +821,7 @@ def evaluate_vqa(
     length_penalty: float = 0.0,
     num_shots: int = 8,
     dataset_name: str = "vqav2",
+    cached_features = None,
 ):
     """
     Evaluate a model on VQA datasets. Currently supports VQA v2.0, OK-VQA, VizWiz and TextVQA.
@@ -852,6 +835,7 @@ def evaluate_vqa(
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of shots to use. Defaults to 8.
         dataset_name (string): type of vqa dataset: currently supports vqav2, ok_vqa. Defaults to vqav2.
+        cached_features (dict, optional): cached features for RICES. Defaults to None.
     Returns:
         float: accuracy score
     """
@@ -912,9 +896,9 @@ def evaluate_vqa(
         seed,
     )
 
-    # in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
+    # in_context_samples = get_query_set(train_dataset, args.query_set_size*4, seed)
     
-    rices_dataset = RICES(train_dataset, eval_model.device, args.batch_size*16)
+    rices_dataset = RICES(train_dataset, eval_model.device, args.batch_size*32, cached_features=cached_features)
     predictions = []
 
     np.random.seed(
@@ -949,7 +933,7 @@ def evaluate_vqa(
                 [
                     eval_model.get_vqa_prompt(
                         question=x["question"], answer=x["answers"][0]
-                    )
+                    )+"\n"
                     for x in batch_demo_samples[i]
                 ]
             )
@@ -957,7 +941,7 @@ def evaluate_vqa(
             # Keep the text but remove the image tags for the zero-shot case
             if num_shots == 0:
                 context_text = context_text.replace("<image>", "")
-
+                
             batch_text.append(
                 context_text + eval_model.get_vqa_prompt(question=batch["question"][i])
             )
@@ -970,6 +954,12 @@ def evaluate_vqa(
             num_beams=num_beams,
             length_penalty=length_penalty,
         )
+        
+        if args.rank == 0:
+            for i in range(len(batch["image"])):
+                print("Context:", batch_text[i])
+                print("Prediction:", outputs[i])
+                print()
 
         process_function = (
             postprocess_ok_vqa_generation
@@ -986,7 +976,7 @@ def evaluate_vqa(
     all_predictions = [None] * args.world_size
     torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
     if args.rank != 0:
-        return
+        return None, rices_dataset.features
 
     all_predictions = [
         item for sublist in all_predictions for item in sublist
@@ -1011,7 +1001,7 @@ def evaluate_vqa(
         print("Temporary file saved to:", f"{dataset_name}results_{random_uuid}.json")
         acc = None
 
-    return acc
+    return acc, rices_dataset.features
 
 
 def evaluate_classification(

@@ -5,7 +5,7 @@ from tqdm import tqdm
 import numpy as np
 
 class RICES:
-    def __init__(self, dataset, device, batch_size):
+    def __init__(self, dataset, device, batch_size, cached_features=None):
         self.dataset = dataset
         self.device = device
         self.batch_size = batch_size
@@ -18,7 +18,10 @@ class RICES:
         self.image_processor = image_processor
 
         # Precompute features
-        self.features = self._precompute_features()
+        if cached_features is None:
+            self.features = self._precompute_features()
+        else:
+            self.features = cached_features
 
     def _precompute_features(self):
         features = []
@@ -55,4 +58,4 @@ class RICES:
             # Get the indices of the 'num_examples' most similar images
             indices = similarity.argsort(descending=True)[:num_examples]
 
-            return [self.dataset[i] for i in indices.tolist()]
+        return [self.dataset[i] for i in indices.tolist()]

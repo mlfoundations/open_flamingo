@@ -152,7 +152,7 @@ class EvalModel(BaseEvalModel):
         unwrap_model(self.model).cache_media(input_ids=input_ids, vision_x=vision_x)
 
     def get_vqa_prompt(self, question, answer=None) -> str:
-        return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
+        return f"<image>Question:{question} Answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
 
     def get_caption_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
