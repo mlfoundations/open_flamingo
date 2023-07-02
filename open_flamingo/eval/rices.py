@@ -2,19 +2,52 @@ from PIL import Image
 import open_clip
 import torch
 from tqdm import tqdm
+import torch
 import numpy as np
+from torch.nn.parallel.distributed import DistributedDataParallel as DDP
+
+
+def custom_collate_fn(batch):
+    collated_batch = {}
+    for key in batch[0].keys():
+        collated_batch[key] = [item[key] for item in batch]
+    return collated_batch
+
+
+def get_indices_of_unique(x):
+    """
+    Return the indices of x that correspond to unique elements.
+    If value v is unique and two indices in x have value v, the first index is returned.
+    """
+    unique_elements = torch.unique(x)
+    first_indices = []
+    for v in unique_elements:
+        indices = torch.where(x == v)[0]
+        first_indices.append(indices[0])  # Take the first index for each unique element
+    return torch.tensor(first_indices)
+
 
 class RICES:
-    def __init__(self, dataset, device, batch_size, cached_features=None):
+    def __init__(
+        self, dataset, device, batch_size, world_size, rank, cached_features=None
+    ):
         self.dataset = dataset
         self.device = device
         self.batch_size = batch_size
+        self.world_size = world_size
+        self.rank = rank
 
         # Load the model and processor
         vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
-            "ViT-B-32", pretrained="openai", cache_dir="/mmfs1/gscratch/efml/anasa2/clip_cache"
+            "ViT-B-32",
+            pretrained="openai",
+            cache_dir="/mmfs1/gscratch/efml/anasa2/clip_cache",
         )
-        self.model = vision_encoder.to(self.device)
+        vision_encoder = vision_encoder.to(self.device)
+        self.model = DDP(
+            vision_encoder,
+            device_ids=[self.device],
+        )
         self.image_processor = image_processor
 
         # Precompute features
@@ -29,15 +62,47 @@ class RICES:
         # Switch to evaluation mode
         self.model.eval()
 
-        with torch.no_grad():
-            for i in tqdm(range(0, len(self.dataset), self.batch_size), desc="Precomputing features for RICES"):
-                batch = [self.dataset[j]["image"] for j in range(i, min(i + self.batch_size, len(self.dataset)))]
-                inputs = torch.stack([self.image_processor(image) for image in batch]).to(self.device)
-                image_features = self.model.encode_image(inputs)
-                image_features /= image_features.norm(dim=-1, keepdim=True)
-                features.append(image_features.detach().cpu())
+        # Set up dataset for distributed eval
+        sampler = torch.utils.data.distributed.DistributedSampler(
+            self.dataset,
+            shuffle=False,
+            drop_last=False,
+        )
+        rank_indices = torch.LongTensor([i for i in sampler]).to(self.device)
+        loader = torch.utils.data.DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            sampler=sampler,
+            collate_fn=custom_collate_fn,
+        )
 
-        return torch.cat(features)
+        with torch.no_grad():
+            for batch in tqdm(
+                loader, desc="Precomputing features for RICES", disable=self.rank != 0
+            ):
+                batch = batch["image"]
+                inputs = torch.stack(
+                    [self.image_processor(image) for image in batch]
+                ).to(self.device)
+                image_features = self.model.module.encode_image(inputs)
+                image_features /= image_features.norm(dim=-1, keepdim=True)
+                features.append(image_features.detach())
+
+        features = torch.cat(features)
+
+        # all gather
+        features_list = [torch.zeros_like(features) for _ in range(self.world_size)]
+        torch.distributed.all_gather(features_list, features)
+        indices_list = [torch.zeros_like(rank_indices) for _ in range(self.world_size)]
+        torch.distributed.all_gather(indices_list, rank_indices)
+
+        # concat, restore original order, and remove extra indices added by distributed sampler
+        all_features, all_indices = torch.cat(features_list), torch.cat(indices_list)
+        reindex = all_indices.argsort()[get_indices_of_unique(all_indices)]
+        all_features = all_features[reindex]
+
+        assert len(all_features) == len(self.dataset)
+        return all_features
 
     def find(self, pillow_image, num_examples):
         # Transform the input image
@@ -48,7 +113,7 @@ class RICES:
 
         with torch.no_grad():
             # Get the feature of the input image
-            query_feature = self.model.encode_image(image_input)
+            query_feature = self.model.module.encode_image(image_input)
             query_feature /= query_feature.norm(dim=-1, keepdim=True)
             query_feature = query_feature.detach().cpu()
 
