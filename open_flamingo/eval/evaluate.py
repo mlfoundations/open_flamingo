@@ -518,44 +518,6 @@ def main():
                     {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
                 )
 
-    if args.eval_vizwiz:
-        print("Evaluating on VizWiz...")
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vizwiz_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="vizwiz",
-                )
-                print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
-                scores.append(vizwiz_score)
-            print(f"Shots {shot} Mean VizWiz score: {np.mean(scores)}")
-            results["vizwiz"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
-
-    if args.eval_textvqa:
-        print("Evaluating on TextVQA...")
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                textvqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="textvqa",
-                )
-                print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
-                scores.append(textvqa_score)
-            print(f"Shots {shot} Mean TextVQA score: {np.mean(scores)}")
-            results["textvqa"].append(
-                {"shots": shot, "trials": scores, "mean": np.mean(scores)}
-            )
-
     if args.eval_imagenet:
         print("Evaluating on ImageNet...")
         for shot in args.shots:
