@@ -57,10 +57,11 @@ def main():
                                 buffered = BytesIO()
                                 img.save(buffered, format="JPEG")
                                 img_str = base64.b64encode(buffered.getvalue())
+
                                 # convert to base64
                                 sample_data["image_info"][img_idx][
                                     "image_base64"
-                                ] = str(img_str)
+                                ] = img_str.decode('utf-8')
                             except FileNotFoundError:
                                 print(
                                     f"Did not find {image_name} downloaded. This can happen if the url is now 404."
