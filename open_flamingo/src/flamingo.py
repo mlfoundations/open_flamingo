@@ -110,7 +110,7 @@ class Flamingo(nn.Module):
 
         output = self.lang_encoder(
             input_ids=lang_x,
-            attention_mask=attention_mask,
+            attention_mask=attention_mask > 0,
             labels=labels,
             past_key_values=past_key_values,
             use_cache=use_cache,
