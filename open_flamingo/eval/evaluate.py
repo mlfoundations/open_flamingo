@@ -82,7 +82,11 @@ parser.add_argument(
     action="store_true",
     help="Use key-value caching for classification evals to speed it up. Currently this doesn't underperforms for MPT models.",
 )
-
+parser.add_argument(
+    "--rices",
+    action="store_true",
+    help="Whether to use RICES for evaluation. If False, uses random demonstrations.",
+)
 parser.add_argument(
     "--cached_demonstration_features",
     default=None,
@@ -591,7 +595,7 @@ def main():
             )
         else:
             cached_features = None
-        
+
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
@@ -623,11 +627,12 @@ def main():
         # load cached demonstration features for RICES
         if args.cached_demonstration_features is not None:
             cached_features = torch.load(
-                f"{args.cached_demonstration_features}/hateful_memes.pkl", map_location="cpu"
+                f"{args.cached_demonstration_features}/hateful_memes.pkl",
+                map_location="cpu",
             )
         else:
             cached_features = None
-        
+
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
@@ -776,14 +781,17 @@ def evaluate_captioning(
         seed,
     )
 
-    rices_dataset = RICES(
-        train_dataset,
-        eval_model.device,
-        args.batch_size * 32,
-        args.world_size,
-        args.rank,
-        cached_features=cached_features,
-    )
+    if args.rices:
+        rices_dataset = RICES(
+            train_dataset,
+            eval_model.device,
+            args.batch_size * 32,
+            args.world_size,
+            args.rank,
+            cached_features=cached_features,
+        )
+    else:
+        in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
 
     predictions = defaultdict()
 
@@ -795,11 +803,12 @@ def evaluate_captioning(
         desc=f"Running inference {dataset_name.upper()}",
         disable=args.rank != 0,
     ):
-        # batch_demo_samples = sample_batch_demos_from_query_set(
-        #     in_context_samples, effective_num_shots, len(batch["image"])
-        # )
-
-        batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
+        if args.rices:
+            batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
+        else:
+            batch_demo_samples = sample_batch_demos_from_query_set(
+                in_context_samples, effective_num_shots, len(batch["image"])
+            )
 
         batch_images = []
         batch_text = []
@@ -967,16 +976,18 @@ def evaluate_vqa(
         seed,
     )
 
-    # in_context_samples = get_query_set(train_dataset, args.query_set_size*4, seed)
+    if args.rices:
+        rices_dataset = RICES(
+            train_dataset,
+            eval_model.device,
+            args.batch_size * 32,
+            args.world_size,
+            args.rank,
+            cached_features=cached_features,
+        )
+    else:
+        in_context_samples = get_query_set(train_dataset, args.query_set_size * 4, seed)
 
-    rices_dataset = RICES(
-        train_dataset,
-        eval_model.device,
-        args.batch_size * 32,
-        args.world_size,
-        args.rank,
-        cached_features=cached_features,
-    )
     predictions = []
 
     np.random.seed(
@@ -987,11 +998,12 @@ def evaluate_vqa(
         desc=f"Running inference {dataset_name}",
         disable=args.rank != 0,
     ):
-        batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
-
-        # batch_demo_samples = sample_batch_demos_from_query_set(
-        #     in_context_samples, effective_num_shots, len(batch["image"])
-        # )
+        if args.rices:
+            batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
+        else:
+            batch_demo_samples = sample_batch_demos_from_query_set(
+                in_context_samples, effective_num_shots, len(batch["image"])
+            )
 
         batch_images = []
         batch_text = []
@@ -1085,7 +1097,7 @@ def evaluate_classification(
     num_shots: int = 8,
     no_kv_caching=False,
     dataset_name: str = "imagenet",
-    cached_features = None,
+    cached_features=None,
 ):
     """
     Evaluate a model on classification dataset.
@@ -1125,23 +1137,26 @@ def evaluate_classification(
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
 
-    effective_num_shots = num_shots # Flamingo paper does not use 2 hidden shots for classification
-    
+    effective_num_shots = (
+        num_shots  # Flamingo paper does not use 2 hidden shots for classification
+    )
+
     test_dataloader = prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         batch_size,
         seed,
     )
-            
-    rices_dataset = RICES(
-        train_dataset,
-        eval_model.device,
-        args.batch_size * 32,
-        args.world_size,
-        args.rank,
-        cached_features=cached_features,
-    )
+
+    if args.rices:
+        rices_dataset = RICES(
+            train_dataset,
+            eval_model.device,
+            args.batch_size * 32,
+            args.world_size,
+            args.rank,
+            cached_features=cached_features,
+        )
 
     acc1 = 0
     acc5 = 0
@@ -1165,13 +1180,15 @@ def evaluate_classification(
         batch_text = []
 
         for idx in range(len(batch["image"])):
-            in_context_samples = rices_dataset.find([batch["image"][idx]], effective_num_shots)[0]
-            # Choose a different set of random context samples for each sample
-            # from the training set
-            # context_indices = np.random.choice(
-            #     len(train_dataset), effective_num_shots, replace=False
-            # )
-            # in_context_samples = [train_dataset[i] for i in context_indices]
+            if args.rices:
+                in_context_samples = rices_dataset.find(
+                    [batch["image"][idx]], effective_num_shots
+                )[0]
+            else:
+                context_indices = np.random.choice(
+                    len(train_dataset), effective_num_shots, replace=False
+                )
+                in_context_samples = [train_dataset[i] for i in context_indices]
 
             if num_shots > 0:
                 vision_x = [
@@ -1381,7 +1398,6 @@ def evaluate_classification(
             )
             if args.rank == 0 and i == 0:
                 print("Context:", text_x[0], "\n", "Generated:", top5[0])
-
 
     # all gather
     all_predictions = [None for _ in range(args.world_size)]
