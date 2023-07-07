@@ -4,7 +4,6 @@ import torch
 from tqdm import tqdm
 import torch
 import numpy as np
-from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 
 
 def custom_collate_fn(batch):
@@ -28,14 +27,10 @@ def get_indices_of_unique(x):
 
 
 class RICES:
-    def __init__(
-        self, dataset, device, batch_size, world_size, rank, cached_features=None
-    ):
+    def __init__(self, dataset, device, batch_size, cached_features=None):
         self.dataset = dataset
         self.device = device
         self.batch_size = batch_size
-        self.world_size = world_size
-        self.rank = rank
 
         # Load the model and processor
         vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
@@ -43,11 +38,7 @@ class RICES:
             pretrained="openai",
             cache_dir="/mmfs1/gscratch/efml/anasa2/clip_cache",
         )
-        vision_encoder = vision_encoder.to(self.device)
-        self.model = DDP(
-            vision_encoder,
-            device_ids=[self.device],
-        )
+        self.model = vision_encoder.to(self.device)
         self.image_processor = image_processor
 
         # Precompute features
@@ -62,47 +53,28 @@ class RICES:
         # Switch to evaluation mode
         self.model.eval()
 
-        # Set up dataset for distributed eval
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            self.dataset,
-            shuffle=False,
-            drop_last=False,
-        )
-        rank_indices = torch.LongTensor([i for i in sampler]).to(self.device)
+        # Set up loader
         loader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.batch_size,
-            sampler=sampler,
             collate_fn=custom_collate_fn,
         )
 
         with torch.no_grad():
             for batch in tqdm(
-                loader, desc="Precomputing features for RICES", disable=self.rank != 0
+                loader,
+                desc="Precomputing features for RICES",
             ):
                 batch = batch["image"]
                 inputs = torch.stack(
                     [self.image_processor(image) for image in batch]
                 ).to(self.device)
-                image_features = self.model.module.encode_image(inputs)
+                image_features = self.model.encode_image(inputs)
                 image_features /= image_features.norm(dim=-1, keepdim=True)
                 features.append(image_features.detach())
 
         features = torch.cat(features)
-
-        # all gather
-        features_list = [torch.zeros_like(features) for _ in range(self.world_size)]
-        torch.distributed.all_gather(features_list, features)
-        indices_list = [torch.zeros_like(rank_indices) for _ in range(self.world_size)]
-        torch.distributed.all_gather(indices_list, rank_indices)
-
-        # concat, restore original order, and remove extra indices added by distributed sampler
-        all_features, all_indices = torch.cat(features_list), torch.cat(indices_list)
-        reindex = all_indices.argsort()[get_indices_of_unique(all_indices)]
-        all_features = all_features[reindex]
-
-        assert len(all_features) == len(self.dataset)
-        return all_features
+        return features
 
     def find(self, batch, num_examples):
         """
@@ -112,17 +84,23 @@ class RICES:
         self.model.eval()
 
         with torch.no_grad():
-            inputs = torch.stack(
-                [self.image_processor(image) for image in batch]
-            ).to(self.device)
+            inputs = torch.stack([self.image_processor(image) for image in batch]).to(
+                self.device
+            )
 
             # Get the feature of the input image
-            query_feature = self.model.module.encode_image(inputs)
+            query_feature = self.model.encode_image(inputs)
             query_feature /= query_feature.norm(dim=-1, keepdim=True)
             query_feature = query_feature.detach().cpu()
 
+            if query_feature.ndim == 1:
+                query_feature = query_feature.unsqueeze(0)
+
             # Compute the similarity of the input image to the precomputed features
             similarity = (query_feature @ self.features.T).squeeze()
+
+            if similarity.ndim == 1:
+                similarity = similarity.unsqueeze(0)
 
             # Get the indices of the 'num_examples' most similar images
             indices = similarity.argsort(dim=-1, descending=True)[:, :num_examples]

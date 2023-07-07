@@ -3,7 +3,6 @@ Cache CLIP ViT-B/32 features for all images in training split in preparation for
 """
 import argparse
 from rices import RICES
-from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
 from eval_datasets import (
     CaptionDataset,
     VQADataset,
@@ -22,29 +21,6 @@ parser.add_argument(
 )
 
 parser.add_argument("--batch_size", default=256)
-
-# Distributed evaluation
-parser.add_argument(
-    "--dist-url",
-    default="env://",
-    type=str,
-    help="url used to set up distributed training",
-)
-parser.add_argument(
-    "--dist-backend", default="nccl", type=str, help="distributed backend"
-)
-parser.add_argument(
-    "--horovod",
-    default=False,
-    action="store_true",
-    help="Use horovod for distributed training.",
-)
-parser.add_argument(
-    "--no-set-device-rank",
-    default=False,
-    action="store_true",
-    help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
-)
 
 # Per-dataset flags
 parser.add_argument(
@@ -234,11 +210,7 @@ parser.add_argument(
 
 def main():
     args, leftovers = parser.parse_known_args()
-
-    # set up distributed evaluation
-    args.local_rank, args.rank, args.world_size = world_info_from_env()
-    device_id = init_distributed_device(args)
-
+    device_id = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
     if args.eval_flickr30:
         print("Caching Flickr30k...")
         train_dataset = CaptionDataset(
@@ -249,13 +221,14 @@ def main():
             dataset_name="flickr",
         )
         rices_dataset = RICES(
-            train_dataset, device_id, args.batch_size, args.world_size, args.rank
+            train_dataset,
+            device_id,
+            args.batch_size,
         )
-        if args.rank == 0:
-            torch.save(
-                rices_dataset.features,
-                os.path.join(args.output_dir, "flickr30.pkl"),
-            )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "flickr30.pkl"),
+        )
 
     if args.eval_coco:
         print("Caching COCO...")
@@ -267,13 +240,14 @@ def main():
             dataset_name="coco",
         )
         rices_dataset = RICES(
-            train_dataset, device_id, args.batch_size, args.world_size, args.rank
+            train_dataset,
+            device_id,
+            args.batch_size,
         )
-        if args.rank == 0:
-            torch.save(
-                rices_dataset.features,
-                os.path.join(args.output_dir, "coco.pkl"),
-            )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "coco.pkl"),
+        )
 
     if args.eval_ok_vqa:
         print("Caching OK-VQA...")
@@ -285,13 +259,14 @@ def main():
             dataset_name="ok_vqa",
         )
         rices_dataset = RICES(
-            train_dataset, device_id, args.batch_size, args.world_size, args.rank
+            train_dataset,
+            device_id,
+            args.batch_size,
         )
-        if args.rank == 0:
-            torch.save(
-                rices_dataset.features,
-                os.path.join(args.output_dir, "ok_vqa.pkl"),
-            )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "ok_vqa.pkl"),
+        )
 
     if args.eval_vizwiz:
         print("Caching VizWiz...")
@@ -303,13 +278,14 @@ def main():
             dataset_name="vizwiz",
         )
         rices_dataset = RICES(
-            train_dataset, device_id, args.batch_size, args.world_size, args.rank
+            train_dataset,
+            device_id,
+            args.batch_size,
         )
-        if args.rank == 0:
-            torch.save(
-                rices_dataset.features,
-                os.path.join(args.output_dir, "vizwiz.pkl"),
-            )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "vizwiz.pkl"),
+        )
 
     if args.eval_vqav2:
         print("Caching VQAv2...")
@@ -321,13 +297,14 @@ def main():
             dataset_name="vqav2",
         )
         rices_dataset = RICES(
-            train_dataset, device_id, args.batch_size, args.world_size, args.rank
+            train_dataset,
+            device_id,
+            args.batch_size,
         )
-        if args.rank == 0:
-            torch.save(
-                rices_dataset.features,
-                os.path.join(args.output_dir, "vqav2.pkl"),
-            )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "vqav2.pkl"),
+        )
 
     if args.eval_textvqa:
         print("Caching TextVQA...")
@@ -339,13 +316,14 @@ def main():
             dataset_name="textvqa",
         )
         rices_dataset = RICES(
-            train_dataset, device_id, args.batch_size, args.world_size, args.rank
+            train_dataset,
+            device_id,
+            args.batch_size,
         )
-        if args.rank == 0:
-            torch.save(
-                rices_dataset.features,
-                os.path.join(args.output_dir, "textvqa.pkl"),
-            )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "textvqa.pkl"),
+        )
 
     if args.eval_hateful_memes:
         print("Caching Hateful Memes...")
@@ -354,13 +332,14 @@ def main():
             annotations_path=args.hateful_memes_train_annotations_json_path,
         )
         rices_dataset = RICES(
-            train_dataset, device_id, args.batch_size, args.world_size, args.rank
+            train_dataset,
+            device_id,
+            args.batch_size,
         )
-        if args.rank == 0:
-            torch.save(
-                rices_dataset.features,
-                os.path.join(args.output_dir, "hateful_memes.pkl"),
-            )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "hateful_memes.pkl"),
+        )
 
 
 if __name__ == "__main__":
