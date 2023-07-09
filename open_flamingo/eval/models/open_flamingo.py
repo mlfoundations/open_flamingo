@@ -1,7 +1,8 @@
-from typing import List
+from typing import List, Dict
 
 from PIL import Image
 import torch
+from einops import repeat
 
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
@@ -59,29 +60,63 @@ class EvalModel(BaseEvalModel):
         self.autocast = get_autocast(model_args["precision"])
         self.cast_dtype = get_cast_dtype(model_args["precision"])
 
-    def _prepare_images(self, batch: List[List[torch.Tensor]]) -> torch.Tensor:
-        """Preprocess images and stack them.
-
+    def _prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
+        """
+        Convert images to tensors, reshape them, and stack them.
         Args:
             batch: A list of lists of images.
-
         Returns:
-            A Tensor of shape
-            (batch_size, images_per_example, frames, channels, height, width).
+            preprocessed images (tensors) or None
+                shape (B, T_img, F, C, H, W)
+                None if no images in batch
         """
         images_per_example = max(len(x) for x in batch)
         batch_images = None
         for iexample, example in enumerate(batch):
             for iimage, image in enumerate(example):
                 preprocessed = self.image_processor(image)
-
                 if batch_images is None:
                     batch_images = torch.zeros(
                         (len(batch), images_per_example, 1) + preprocessed.shape,
                         dtype=preprocessed.dtype,
                     )
                 batch_images[iexample, iimage, 0] = preprocessed
+        if batch_images is not None:
+            batch_images = batch_images.to(
+                self.device, dtype=self.cast_dtype, non_blocking=True
+            )
         return batch_images
+
+    def _prepare_text(
+        self,
+        batch: List[List[str]],
+        padding="longest",
+        truncation=True,
+        max_length=2000,
+    ):
+        """
+        Tokenize the text and stack them.
+        Args:
+            batch: A list of lists of strings.
+        Returns:
+            input_ids (tensor)
+                shape (B, T_txt)
+            attention_mask (tensor)
+                shape (B, T_txt)
+        """
+        encodings = self.tokenizer(
+            batch,
+            padding=padding,
+            truncation=truncation,
+            return_tensors="pt",
+            max_length=max_length,
+        )
+        input_ids, attention_mask = encodings["input_ids"], encodings["attention_mask"]
+        input_ids = input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True)
+        attention_mask = attention_mask.to(
+            self.device, dtype=self.cast_dtype, non_blocking=True
+        )
+        return input_ids, attention_mask.bool()
 
     def get_outputs(
         self,
@@ -92,35 +127,138 @@ class EvalModel(BaseEvalModel):
         num_beams: int,
         length_penalty: float,
     ) -> List[str]:
-        encodings = self.tokenizer(
-            batch_text,
-            padding="longest",
-            truncation=True,
-            return_tensors="pt",
-            max_length=2000,
-        )
-        input_ids = encodings["input_ids"]
-        attention_mask = encodings["attention_mask"]
+        """
+        Get generation outputs.
+        """
+        batch_images = self._prepare_images(batch_images)
+        input_ids, attention_mask = self._prepare_text(batch_text)
 
         with torch.inference_mode():
             with self.autocast():
                 outputs = unwrap_model(self.model).generate(
-                    self._prepare_images(batch_images).to(
-                        self.device, dtype=self.cast_dtype, non_blocking=True
-                    ),
-                    input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True),
-                    attention_mask=attention_mask.to(
-                        self.device, dtype=self.cast_dtype, non_blocking=True
-                    ),
+                    batch_images,
+                    input_ids,
+                    attention_mask,
                     min_new_tokens=min_generation_length,
                     max_new_tokens=max_generation_length,
                     num_beams=num_beams,
                     length_penalty=length_penalty,
                 )
 
+        # Extract only the new gnerated tokens
         outputs = outputs[:, len(input_ids[0]) :]
 
         return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+
+    def get_rank_classifications(
+        self,
+        batch_text: List[str],
+        batch_images: List[List[Image.Image]],
+        all_class_names: List[str],
+        class_id_to_name: Dict[int, str],
+        k: int,
+        use_cache: bool,
+        normalize_length: bool,
+    ):
+        """Get predicted labels using rank classification"""
+        batch_images = self._prepare_images(batch_images)
+        ctx_input_ids, ctx_attention_mask = self._prepare_text(batch_text)
+
+        # Cache the context
+        if use_cache:
+            self.cache_media(
+                input_ids=ctx_input_ids,
+                vision_x=batch_images,
+            )
+            precomputed = self.get_logits(
+                vision_x=None,
+                lang_x=ctx_input_ids,
+                attention_mask=ctx_attention_mask,
+                clear_conditioned_layers=False,
+                use_cache=True,
+            )
+            precomputed_pkvs = list(
+                [
+                    tuple([x.detach() for x in inner])
+                    for inner in precomputed.past_key_values
+                ]
+            )
+        else:
+            precomputed_pkvs = None
+
+        # Loop through labels and get log-likelihoods
+        overall_probs = []
+        for class_name in reversed(all_class_names):
+            # Tokenize only the class name
+            classname_tokens = self.tokenizer(
+                class_name, add_special_tokens=False, return_tensors="pt"
+            )["input_ids"].to(self.device)
+            if classname_tokens.ndim == 1:  # Case: classname is only 1 token
+                classname_tokens = torch.unsqueeze(classname_tokens, 1)
+            classname_tokens = repeat(
+                classname_tokens, "b s -> (repeat b) s", repeat=len(batch_text)
+            )
+            num_tokens_in_classname = classname_tokens.shape[1]
+
+            # Get logits
+            if not use_cache:
+                # Concatenate the class name tokens
+                _lang_x = torch.cat([ctx_input_ids, classname_tokens], dim=1)
+                _attention_mask = torch.cat(
+                    [
+                        ctx_attention_mask,
+                        torch.ones_like(classname_tokens).bool(),
+                    ],
+                    dim=1,
+                )
+                _vision_x = batch_images
+            else:
+                _lang_x = classname_tokens
+                _attention_mask = None
+                _vision_x = None
+
+            outputs = self.get_logits(
+                vision_x=_vision_x,
+                lang_x=_lang_x,
+                attention_mask=_attention_mask,
+                clear_conditioned_layers=(not use_cache),
+                past_key_values=precomputed_pkvs,
+            )
+            # logits shape is either (B, num_tokens_in_classname, vocab_len) with use_cache
+            # or (B, len(_lang_x), vocab_len) without use_cache
+            logits = outputs.logits.detach().float()
+            logprobs = torch.log(torch.softmax(logits, dim=-1))
+            gen_probs = logprobs[
+                :, -num_tokens_in_classname:, :
+            ]  # (B, num_tokens_in_classname, vocab_len)
+            gen_probs = (
+                torch.gather(gen_probs, 2, classname_tokens[:, :, None])
+                .squeeze(-1)
+                .cpu()
+            )
+
+            # aggregate over tokens
+            if normalize_length:
+                class_prob = torch.mean(gen_probs, dim=1)
+            else:
+                class_prob = torch.sum(gen_probs, dim=1)
+            overall_probs.append(class_prob)  # (B, 1)
+
+        overall_probs = torch.vstack(overall_probs).T  # shape (B, num_classes)
+        print(overall_probs)
+        assert overall_probs.shape == (len(batch_images), len(all_class_names))
+
+        self.uncache_media()
+
+        # convert indices to classnames
+        _, predictions = torch.topk(overall_probs, k=k, dim=1)  # shape (B, k)
+        predicted_classnames = [
+            [class_id_to_name[ix] for ix in item] for item in predictions.tolist()
+        ]
+        predicted_logprobs = torch.gather(
+            overall_probs, 1, predictions
+        )
+        return predicted_classnames, predicted_logprobs, overall_probs
 
     def get_logits(
         self,
@@ -129,6 +267,7 @@ class EvalModel(BaseEvalModel):
         attention_mask: torch.Tensor = None,
         past_key_values: torch.Tensor = None,
         clear_conditioned_layers: bool = False,
+        use_cache: bool = None,
     ):
         with torch.inference_mode():
             with self.autocast():
@@ -138,7 +277,9 @@ class EvalModel(BaseEvalModel):
                     attention_mask=attention_mask,
                     clear_conditioned_layers=clear_conditioned_layers,
                     past_key_values=past_key_values,
-                    use_cache=(past_key_values is not None),
+                    use_cache=use_cache
+                    if use_cache is not None
+                    else (past_key_values is not None),
                 )
         return outputs
 
@@ -156,6 +297,12 @@ class EvalModel(BaseEvalModel):
 
     def get_caption_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
+
+    def get_imagenet_prompt(self, label=None) -> str:
+        return f"<image>Output:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+
+    def get_hateful_memes_prompt(self, text, label=None) -> str:
+        return f"<image>is an image with: '{text}' written on it. Is it hateful? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
 
 
 def get_cast_dtype(precision: str):
@@ -175,3 +322,8 @@ def get_autocast(precision):
         return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
     else:
         return suppress
+
+
+def _detach_pkvs(pkvs):
+    """Detach a set of past key values."""
+    return list([tuple([x.detach() for x in inner]) for inner in pkvs])

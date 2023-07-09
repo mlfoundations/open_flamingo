@@ -2,15 +2,13 @@ import argparse
 import importlib
 import json
 import os
-import random
 import uuid
 from collections import defaultdict
 
-from einops import repeat
-import more_itertools
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
+import utils
 
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import (
@@ -80,7 +78,7 @@ parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument(
     "--no_caching_for_classification",
     action="store_true",
-    help="Use key-value caching for classification evals to speed it up. Currently this doesn't underperforms for MPT models.",
+    help="Whether to skip using key-value caching for classification evals, which usually speeds it up.",
 )
 parser.add_argument(
     "--rices",
@@ -663,57 +661,6 @@ def main():
             json.dump(results, f)
 
 
-def get_random_indices(num_samples, query_set_size, full_dataset, seed):
-    if num_samples + query_set_size > len(full_dataset):
-        raise ValueError(
-            f"num_samples + query_set_size must be less than {len(full_dataset)}"
-        )
-
-    # get a random subset of the dataset
-    np.random.seed(seed)
-    random_indices = np.random.choice(
-        len(full_dataset), num_samples + query_set_size, replace=False
-    )
-    return random_indices
-
-
-def get_query_set(train_dataset, query_set_size, seed):
-    np.random.seed(seed)
-    query_set = np.random.choice(len(train_dataset), query_set_size, replace=False)
-    return [train_dataset[i] for i in query_set]
-
-
-def prepare_eval_samples(test_dataset, num_samples, batch_size, seed):
-    np.random.seed(seed)
-    random_indices = np.random.choice(len(test_dataset), num_samples, replace=False)
-    dataset = torch.utils.data.Subset(test_dataset, random_indices)
-    sampler = torch.utils.data.distributed.DistributedSampler(dataset)
-    loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        sampler=sampler,
-        collate_fn=custom_collate_fn,
-    )
-    return loader
-
-
-def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
-    return [random.sample(query_set, num_samples) for _ in range(batch_size)]
-
-
-def compute_effective_num_shots(num_shots, model_type):
-    if model_type == "open_flamingo":
-        return num_shots if num_shots > 0 else 2
-    return num_shots
-
-
-def custom_collate_fn(batch):
-    collated_batch = {}
-    for key in batch[0].keys():
-        collated_batch[key] = [item[key] for item in batch]
-    return collated_batch
-
-
 def evaluate_captioning(
     args: argparse.Namespace,
     eval_model: BaseEvalModel,
@@ -772,9 +719,9 @@ def evaluate_captioning(
         dataset_name=dataset_name,
     )
 
-    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
+    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
-    test_dataloader = prepare_eval_samples(
+    test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
@@ -789,7 +736,8 @@ def evaluate_captioning(
             cached_features=cached_features,
         )
     else:
-        in_context_samples = get_query_set(train_dataset, args.query_set_size, seed)
+        # subset of the training set to sample context images from
+        query_set = utils.get_query_set(train_dataset, args.query_set_size, seed)
 
     predictions = defaultdict()
 
@@ -804,12 +752,11 @@ def evaluate_captioning(
         if args.rices:
             batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
         else:
-            batch_demo_samples = sample_batch_demos_from_query_set(
-                in_context_samples, effective_num_shots, len(batch["image"])
+            batch_demo_samples = utils.sample_batch_demos_from_query_set(
+                query_set, effective_num_shots, len(batch["image"])
             )
 
-        batch_images = []
-        batch_text = []
+        batch_images, batch_text = [], []
         for i in range(len(batch["image"])):
             if num_shots > 0:
                 context_images = [x["image"] for x in batch_demo_samples[i]]
@@ -965,9 +912,9 @@ def evaluate_vqa(
         dataset_name=dataset_name,
     )
 
-    effective_num_shots = compute_effective_num_shots(num_shots, args.model)
+    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
-    test_dataloader = prepare_eval_samples(
+    test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
@@ -982,7 +929,8 @@ def evaluate_vqa(
             cached_features=cached_features,
         )
     else:
-        in_context_samples = get_query_set(train_dataset, args.query_set_size * 4, seed)
+        # subset of the training set to sample context images from
+        query_set = utils.get_query_set(train_dataset, args.query_set_size * 4, seed)
 
     predictions = []
 
@@ -997,12 +945,11 @@ def evaluate_vqa(
         if args.rices:
             batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
         else:
-            batch_demo_samples = sample_batch_demos_from_query_set(
-                in_context_samples, effective_num_shots, len(batch["image"])
+            batch_demo_samples = utils.sample_batch_demos_from_query_set(
+                query_set, effective_num_shots, len(batch["image"])
             )
 
-        batch_images = []
-        batch_text = []
+        batch_images, batch_text = [], []
         for i in range(len(batch["image"])):
             if num_shots > 0:
                 context_images = [x["image"] for x in batch_demo_samples[i]]
@@ -1091,18 +1038,18 @@ def evaluate_classification(
     eval_model,
     seed: int = 42,
     num_shots: int = 8,
-    no_kv_caching=False,
     dataset_name: str = "imagenet",
     cached_features=None,
+    no_kv_caching=False,
 ):
     """
     Evaluate a model on classification dataset.
 
     Args:
         eval_model (BaseEvalModel): model to evaluate
-        imagenet_root (str): path to imagenet root for the specified split.
         seed (int, optional): random seed. Defaults to 42.
         num_shots (int, optional): number of shots to use. Defaults to 8.
+        no_kv_caching (bool): whether to disable key-value caching
         dataset_name (str, optional): dataset name. Defaults to "imagenet".
         cached_features (tensor, optional): cached demonstration features for RICES. Defaults to None.
 
@@ -1111,16 +1058,16 @@ def evaluate_classification(
     """
     if args.model != "open_flamingo":
         raise NotImplementedError(
-            "evaluate_classification is currently only supported for OpenFlamingo "
-            "models"
+            "evaluate_classification is currently only supported for OpenFlamingo"
         )
-    batch_size = args.batch_size
-    num_samples = args.num_samples
-    model, tokenizer = eval_model.model, eval_model.tokenizer
 
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
         test_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
+        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
+        all_class_names = IMAGENET_CLASSNAMES
+        class_id_to_name = IMAGENET_1K_CLASS_ID_TO_LABEL
+        k = 5
     elif dataset_name == "hateful_memes":
         train_dataset = HatefulMemesDataset(
             args.hateful_memes_image_dir_path,
@@ -1130,17 +1077,21 @@ def evaluate_classification(
             args.hateful_memes_image_dir_path,
             args.hateful_memes_test_annotations_json_path,
         )
+        prompt_fn = lambda x: eval_model.get_hateful_memes_prompt(
+            text=x["ocr"], label=x["class_name"]
+        )
+        all_class_names = HM_CLASSNAMES
+        class_id_to_name = HM_CLASS_ID_TO_LABEL
+        k = 1
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
 
-    effective_num_shots = (
-        num_shots  # Flamingo paper does not use 2 hidden shots for classification
-    )
+    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
-    test_dataloader = prepare_eval_samples(
+    test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
-        batch_size,
+        args.batch_size,
         seed,
     )
 
@@ -1151,247 +1102,68 @@ def evaluate_classification(
             args.batch_size * 32,
             cached_features=cached_features,
         )
-
-    acc1 = 0
-    acc5 = 0
-
-    if dataset_name == "imagenet":
-        prompt_text = "<image>Output:"
-    elif dataset_name == "hateful_memes":
-        prompt_text = "<image>is an image with: '{meme_text}' written on it. Is it hateful? Answer: "
+    else:
+        # subset of the training set to sample context images from
+        query_set = utils.get_query_set(train_dataset, args.query_set_size, seed)
 
     predictions = []
 
-    np.random.seed(
-        seed + args.rank
-    )  # make sure each worker has a different seed for the random context samples
     for batch_idx, batch in tqdm(
         enumerate(test_dataloader),
         desc=f"Running inference {dataset_name}",
         disable=args.rank != 0,
     ):
-        batch_images = []
-        batch_text = []
-
-        for idx in range(len(batch["image"])):
-            if args.rices:
-                in_context_samples = rices_dataset.find(
-                    [batch["image"][idx]], effective_num_shots
-                )[0]
-            else:
-                context_indices = np.random.choice(
-                    len(train_dataset), effective_num_shots, replace=False
-                )
-                in_context_samples = [train_dataset[i] for i in context_indices]
-
-            if num_shots > 0:
-                vision_x = [
-                    eval_model.image_processor(data["image"]).unsqueeze(0)
-                    for data in in_context_samples
-                ]
-            else:
-                vision_x = []
-
-            vision_x = vision_x + [
-                eval_model.image_processor(batch["image"][idx]).unsqueeze(0)
-            ]
-            batch_images.append(torch.cat(vision_x, dim=0))
-
-            def sample_to_prompt(sample):
-                if dataset_name == "hateful_memes":
-                    return prompt_text.replace("{meme_text}", sample["ocr"])
-                else:
-                    return prompt_text
-
-            context_text = "".join(
-                f"{sample_to_prompt(in_context_samples[i])}{in_context_samples[i]['class_name']}<|endofchunk|>"
-                for i in range(effective_num_shots)
+        if args.rices:
+            batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
+        else:
+            batch_demo_samples = utils.sample_batch_demos_from_query_set(
+                query_set, effective_num_shots, len(batch["image"])
             )
 
-            batch_text.append(context_text)
+        batch_images, batch_text = [], []
 
-        # shape [B, T_img, C, h, w]
-        vision_x = torch.stack(batch_images, dim=0)
-        # shape [B, T_img, 1, C, h, w] where 1 is the frame dimension
-        vision_x = vision_x.unsqueeze(2)
-
-        # Cache the context text: tokenize context and prompt,
-        # e.g. '<context> a picture of a '
-        text_x = [
-            context_text + sample_to_prompt({k: batch[k][idx] for k in batch.keys()})
-            for idx, context_text in enumerate(batch_text)
-        ]
-
-        ctx_and_prompt_tokenized = tokenizer(
-            text_x,
-            return_tensors="pt",
-            padding="longest",
-            max_length=2000,
-        )
-
-        ctx_and_prompt_input_ids = ctx_and_prompt_tokenized["input_ids"].to(
-            eval_model.device
-        )
-        ctx_and_prompt_attention_mask = (
-            ctx_and_prompt_tokenized["attention_mask"].to(eval_model.device).bool()
-        )
-
-        def _detach_pkvs(pkvs):
-            """Detach a set of past key values."""
-            return list([tuple([x.detach() for x in inner]) for inner in pkvs])
-
-        if not no_kv_caching:
-            eval_model.cache_media(
-                input_ids=ctx_and_prompt_input_ids,
-                vision_x=vision_x.to(eval_model.device),
-            )
-
-            with torch.no_grad():
-                precomputed = eval_model.model(
-                    vision_x=None,
-                    lang_x=ctx_and_prompt_input_ids,
-                    attention_mask=ctx_and_prompt_attention_mask,
-                    clear_conditioned_layers=False,
-                    use_cache=True,
-                )
-
-            precomputed_pkvs = _detach_pkvs(precomputed.past_key_values)
-            precomputed_logits = precomputed.logits.detach()
-        else:
-            precomputed_pkvs = None
-            precomputed_logits = None
-
-        if dataset_name == "imagenet":
-            all_class_names = IMAGENET_CLASSNAMES
-        else:
-            all_class_names = HM_CLASSNAMES
-
-        if dataset_name == "imagenet":
-            class_id_to_name = IMAGENET_1K_CLASS_ID_TO_LABEL
-        else:
-            class_id_to_name = HM_CLASS_ID_TO_LABEL
-
-        overall_probs = []
-        for class_name in all_class_names:
-            past_key_values = None
-            # Tokenize only the class name and iteratively decode the model's
-            # predictions for this class.
-            classname_tokens = tokenizer(
-                class_name, add_special_tokens=False, return_tensors="pt"
-            )["input_ids"].to(eval_model.device)
-
-            if classname_tokens.ndim == 1:  # Case: classname is only 1 token
-                classname_tokens = torch.unsqueeze(classname_tokens, 1)
-
-            classname_tokens = repeat(
-                classname_tokens, "b s -> (repeat b) s", repeat=len(batch_text)
-            )
-
-            if not no_kv_caching:
-                # Compute the outputs one token at a time, using cached
-                # activations.
-
-                # Initialize the elementwise predictions with the last set of
-                # logits from precomputed; this will correspond to the predicted
-                # probability of the first position/token in the imagenet
-                # classname. We will append the logits for each token to this
-                # list (each element has shape [B, 1, vocab_size]).
-                elementwise_logits = [precomputed_logits[:, -2:-1, :]]
-
-                for token_idx in range(classname_tokens.shape[1]):
-                    _lang_x = classname_tokens[:, token_idx].reshape((-1, 1))
-                    outputs = eval_model.get_logits(
-                        lang_x=_lang_x,
-                        past_key_values=(
-                            past_key_values if token_idx > 0 else precomputed_pkvs
-                        ),
-                        clear_conditioned_layers=False,
-                    )
-                    past_key_values = _detach_pkvs(outputs.past_key_values)
-                    elementwise_logits.append(outputs.logits.detach())
-
-                # logits/probs has shape [B, classname_tokens + 1, vocab_size]
-                logits = torch.concat(elementwise_logits, 1)
-                probs = torch.softmax(logits, dim=-1)
-
-                # collect the probability of the generated token -- probability
-                # at index 0 corresponds to the token at index 1.
-                probs = probs[:, :-1, :]  # shape [B, classname_tokens, vocab_size]
-
-                gen_probs = (
-                    torch.gather(probs, 2, classname_tokens[:, :, None])
-                    .squeeze(-1)
-                    .cpu()
-                )
-
-                class_prob = torch.prod(gen_probs, 1).numpy()
+        for i in range(len(batch["image"])):
+            if effective_num_shots > 0:
+                context_images = [x["image"] for x in batch_demo_samples[i]]
             else:
-                # Compute the outputs without using cached
-                # activations.
+                context_images = []
+            batch_images.append(context_images + [batch["image"][i]])
 
-                # contatenate the class name tokens to the end of the context
-                # tokens
-                _lang_x = torch.cat([ctx_and_prompt_input_ids, classname_tokens], dim=1)
-                _attention_mask = torch.cat(
-                    [
-                        ctx_and_prompt_attention_mask,
-                        torch.ones_like(classname_tokens).bool(),
-                    ],
-                    dim=1,
-                )
+            context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
 
-                outputs = eval_model.get_logits(
-                    vision_x=vision_x.to(eval_model.device),
-                    lang_x=_lang_x.to(eval_model.device),
-                    attention_mask=_attention_mask.to(eval_model.device),
-                    clear_conditioned_layers=True,
-                )
+            # Keep the text but remove the image tags for the zero-shot case
+            if num_shots == 0:
+                context_text = context_text.replace("<image>", "")
 
-                logits = outputs.logits.detach().float()
-                probs = torch.softmax(logits, dim=-1)
+            batch_text.append(
+                context_text + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
+            )
 
-                # get probability of the generated class name tokens
-                gen_probs = probs[
-                    :, ctx_and_prompt_input_ids.shape[1] - 1 : _lang_x.shape[1], :
-                ]
-                gen_probs = (
-                    torch.gather(gen_probs, 2, classname_tokens[:, :, None])
-                    .squeeze(-1)
-                    .cpu()
-                )
-                class_prob = torch.prod(gen_probs, 1).numpy()
+        # get predicted class names
+        predicted_classnames, predicted_logprobs, all_logprobs = eval_model.get_rank_classifications(
+            batch_text,
+            batch_images,
+            all_class_names,
+            class_id_to_name,
+            k=k,
+            use_cache=(not no_kv_caching),
+            normalize_length=True,
+        )
 
-            overall_probs.append(class_prob)
-
-        overall_probs = np.row_stack(overall_probs).T  # shape [B, num_classes]
-
-        eval_model.uncache_media()
-
-        def topk(probs_ary: np.ndarray, k: int) -> np.ndarray:
-            """Return the indices of the top k elements in probs_ary."""
-            return np.argsort(probs_ary)[::-1][:k]
-
-        for i in range(len(batch_text)):
-            highest_prob_idxs = topk(overall_probs[i], 5)
-
-            top5 = [class_id_to_name[pred] for pred in highest_prob_idxs]
-
+        # compute accuracy
+        for i, topk in enumerate(predicted_classnames):
             y_i = batch["class_name"][i]
-            acc5 += int(y_i in set(top5))
-            acc1 += int(y_i == top5[0])
-
+            score = torch.exp(predicted_logprobs[i][0] - torch.logsumexp(predicted_logprobs[i], dim=0))
             predictions.append(
                 {
                     "id": batch["id"][i],
                     "gt_label": y_i,
-                    "pred_label": top5[0],
-                    "pred_score": overall_probs[i][highest_prob_idxs[0]]
-                    if dataset_name == "hateful_memes"
-                    else None,  # only for hateful memes
+                    "pred_label": topk[0],
+                    "pred_score": score,
                 }
             )
             if args.rank == 0 and i == 0:
-                print("Context:", text_x[0], "\n", "Generated:", top5[0])
+                print("Context:", batch_text[0], "\n", "Generated:", topk[0])
 
     # all gather
     all_predictions = [None for _ in range(args.world_size)]
