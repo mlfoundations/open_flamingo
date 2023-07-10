@@ -3,6 +3,7 @@ import importlib
 import json
 import os
 import uuid
+import random
 from collections import defaultdict
 
 import numpy as np
@@ -79,6 +80,11 @@ parser.add_argument(
     "--no_caching_for_classification",
     action="store_true",
     help="Whether to skip using key-value caching for classification evals, which usually speeds it up.",
+)
+parser.add_argument(
+    "--classification_prompt_ensembling",
+    action="store_true",
+    help="Whether to use prompt ensembling (average log-likelihoods over permutations of in-context examples)"
 )
 parser.add_argument(
     "--rices",
@@ -605,6 +611,7 @@ def main():
                     no_kv_caching=args.no_caching_for_classification,
                     dataset_name="imagenet",
                     cached_features=cached_features,
+                    use_prompt_ensembling=args.classification_prompt_ensembling,
                 )
                 if args.rank == 0:
                     print(
@@ -689,6 +696,7 @@ def evaluate_captioning(
         float: CIDEr score
 
     """
+    utils.random_seed(seed, args.rank)
 
     if dataset_name == "coco":
         image_train_dir_path = args.coco_train_image_dir_path
@@ -725,7 +733,6 @@ def evaluate_captioning(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
-        seed,
     )
 
     if args.rices:
@@ -737,13 +744,9 @@ def evaluate_captioning(
         )
     else:
         # subset of the training set to sample context images from
-        query_set = utils.get_query_set(train_dataset, args.query_set_size, seed)
+        query_set = utils.get_query_set(train_dataset, args.query_set_size)
 
     predictions = defaultdict()
-
-    np.random.seed(
-        seed + args.rank
-    )  # make sure each worker has a different seed for the random context samples
     for batch in tqdm(
         test_dataloader,
         desc=f"Running inference {dataset_name.upper()}",
@@ -864,6 +867,7 @@ def evaluate_vqa(
     Returns:
         float: accuracy score
     """
+    utils.random_seed(seed, args.rank)
 
     if dataset_name == "ok_vqa":
         train_image_dir_path = args.ok_vqa_train_image_dir_path
@@ -918,7 +922,6 @@ def evaluate_vqa(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
-        seed,
     )
 
     if args.rices:
@@ -930,13 +933,9 @@ def evaluate_vqa(
         )
     else:
         # subset of the training set to sample context images from
-        query_set = utils.get_query_set(train_dataset, args.query_set_size * 4, seed)
+        query_set = utils.get_query_set(train_dataset, args.query_set_size * 4)
 
     predictions = []
-
-    np.random.seed(
-        seed + args.rank
-    )  # make sure each worker has a different seed for the random context samples
     for batch in tqdm(
         test_dataloader,
         desc=f"Running inference {dataset_name}",
@@ -1041,6 +1040,7 @@ def evaluate_classification(
     dataset_name: str = "imagenet",
     cached_features=None,
     no_kv_caching=False,
+    use_prompt_ensembling: bool = False
 ):
     """
     Evaluate a model on classification dataset.
@@ -1060,6 +1060,8 @@ def evaluate_classification(
         raise NotImplementedError(
             "evaluate_classification is currently only supported for OpenFlamingo"
         )
+
+    utils.random_seed(seed, args.rank)
 
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
@@ -1092,7 +1094,6 @@ def evaluate_classification(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
         args.batch_size,
-        seed,
     )
 
     if args.rices:
@@ -1104,7 +1105,7 @@ def evaluate_classification(
         )
     else:
         # subset of the training set to sample context images from
-        query_set = utils.get_query_set(train_dataset, args.query_set_size, seed)
+        query_set = utils.get_query_set(train_dataset, args.query_set_size)
 
     predictions = []
 
@@ -1120,40 +1121,55 @@ def evaluate_classification(
                 query_set, effective_num_shots, len(batch["image"])
             )
 
-        batch_images, batch_text = [], []
+        # set up prompt ensembling
+        num_permutations = 6 if use_prompt_ensembling else 1
+        logprobs = []
+        for _ in range(num_permutations):
 
-        for i in range(len(batch["image"])):
-            if effective_num_shots > 0:
-                context_images = [x["image"] for x in batch_demo_samples[i]]
-            else:
-                context_images = []
-            batch_images.append(context_images + [batch["image"][i]])
+            batch_images, batch_text = [], []
+            for i in range(len(batch["image"])):
 
-            context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
+                if use_prompt_ensembling:
+                    random.shuffle(batch_demo_samples[i])
 
-            # Keep the text but remove the image tags for the zero-shot case
-            if num_shots == 0:
-                context_text = context_text.replace("<image>", "")
+                if effective_num_shots > 0:
+                    context_images = [x["image"] for x in batch_demo_samples[i]]
+                else:
+                    context_images = []
+                batch_images.append(context_images + [batch["image"][i]])
 
-            batch_text.append(
-                context_text + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
-            )
+                context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
 
-        # get predicted class names
-        predicted_classnames, predicted_logprobs, all_logprobs = eval_model.get_rank_classifications(
-            batch_text,
-            batch_images,
-            all_class_names,
+                # Keep the text but remove the image tags for the zero-shot case
+                if num_shots == 0:
+                    context_text = context_text.replace("<image>", "")
+
+                batch_text.append(
+                    context_text + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
+                )
+
+            # get predicted class names
+            logprobs.append(eval_model.get_rank_classifications(
+                batch_text,
+                batch_images,
+                all_class_names,
+                use_cache=(not no_kv_caching),
+                normalize_length=True,
+            ))
+
+        # ensemble logprobs together
+        logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
+
+        predicted_classnames, predicted_logprobs = utils.get_predicted_classnames(
+            logprobs,
+            k,
             class_id_to_name,
-            k=k,
-            use_cache=(not no_kv_caching),
-            normalize_length=True,
         )
 
         # compute accuracy
         for i, topk in enumerate(predicted_classnames):
             y_i = batch["class_name"][i]
-            score = torch.exp(predicted_logprobs[i][0] - torch.logsumexp(predicted_logprobs[i], dim=0))
+            score = torch.exp(predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0))
             predictions.append(
                 {
                     "id": batch["id"][i],
