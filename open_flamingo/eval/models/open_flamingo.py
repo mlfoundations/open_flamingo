@@ -7,6 +7,8 @@ from einops import repeat
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
 from open_flamingo.eval.utils import unwrap_model, get_autocast, get_cast_dtype
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
 
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation.
@@ -157,22 +159,25 @@ class EvalModel(BaseEvalModel):
         normalize_length: bool,
     ):
         """
-        Returns a (B, |Y|) tensor containing the logprobabilities for each class
-        in all_class_names.
+        Returns a (B, |all_class_names|) tensor containing the logprobs for each class name.
         """
         batch_images = self._prepare_images(batch_images)
         ctx_input_ids, ctx_attention_mask = self._prepare_text(batch_text)
 
         # Cache the context
         if use_cache:
+            # reserve the last token in the context for the main forward pass
+            assert torch.all(
+                ctx_input_ids[:, -1] != unwrap_model(self.model).media_token_id
+            ), "Last token in context must not be <image> if caching"
             self.cache_media(
-                input_ids=ctx_input_ids,
+                input_ids=ctx_input_ids[:, :-1],
                 vision_x=batch_images,
             )
-            precomputed = self.get_logits(
+            precomputed = self.__call__(
                 vision_x=None,
-                lang_x=ctx_input_ids,
-                attention_mask=ctx_attention_mask,
+                lang_x=ctx_input_ids[:, :-1],
+                attention_mask=ctx_attention_mask[:, :-1],
                 clear_conditioned_layers=False,
                 use_cache=True,
             )
@@ -185,23 +190,25 @@ class EvalModel(BaseEvalModel):
         else:
             precomputed_pkvs = None
 
-        # Loop through labels and get log-likelihoods
+        # Loop through class names and get log-likelihoods
+        # Note: if all classnames are one token, this code is redundant, since we could
+        # get all logits after one pass. However, if there are multi-token classnames,
+        # we need to loop through each classname separately.
         overall_probs = []
         for class_name in all_class_names:
+
             # Tokenize only the class name
             classname_tokens = self.tokenizer(
                 class_name, add_special_tokens=False, return_tensors="pt"
             )["input_ids"].to(self.device)
-            if classname_tokens.ndim == 1:  # Case: classname is only 1 token
-                classname_tokens = torch.unsqueeze(classname_tokens, 1)
+            assert classname_tokens.ndim == 2
             classname_tokens = repeat(
                 classname_tokens, "b s -> (repeat b) s", repeat=len(batch_text)
             )
             num_tokens_in_classname = classname_tokens.shape[1]
 
-            # Get logits
+            # Concatenate the class name tokens
             if not use_cache:
-                # Concatenate the class name tokens
                 _lang_x = torch.cat([ctx_input_ids, classname_tokens], dim=1)
                 _attention_mask = torch.cat(
                     [
@@ -212,23 +219,35 @@ class EvalModel(BaseEvalModel):
                 )
                 _vision_x = batch_images
             else:
-                _lang_x = classname_tokens
-                _attention_mask = None
+                _lang_x = torch.cat(
+                    [ctx_input_ids[:, -1].view(-1, 1), classname_tokens], dim=1
+                )
+                _attention_mask = torch.cat(
+                    [
+                        ctx_attention_mask[:, -1].view(-1, 1),
+                        torch.ones_like(classname_tokens).bool(),
+                    ],
+                    dim=1,
+                )
                 _vision_x = None
 
-            outputs = self.get_logits(
+            # Call forward to get the logits
+            outputs = self.__call__(
                 vision_x=_vision_x,
                 lang_x=_lang_x,
                 attention_mask=_attention_mask,
                 clear_conditioned_layers=(not use_cache),
                 past_key_values=precomputed_pkvs,
             )
+
+            # Get the logits of the classname
             # logits shape is either (B, num_tokens_in_classname, vocab_len) with use_cache
             # or (B, len(_lang_x), vocab_len) without use_cache
+            # remember that the logits at index t on dim 1 correspond to predictions for the t+1st token
             logits = outputs.logits.detach().float()
-            logprobs = torch.log(torch.softmax(logits, dim=-1))
+            logprobs = torch.log_softmax(logits, dim=-1)
             gen_probs = logprobs[
-                :, -num_tokens_in_classname:, :
+                :, -num_tokens_in_classname - 1 : -1, :
             ]  # (B, num_tokens_in_classname, vocab_len)
             gen_probs = (
                 torch.gather(gen_probs, 2, classname_tokens[:, :, None])
@@ -236,7 +255,7 @@ class EvalModel(BaseEvalModel):
                 .cpu()
             )
 
-            # aggregate over tokens
+            # Aggregate over tokens in the classname
             if normalize_length:
                 class_prob = torch.mean(gen_probs, dim=1)
             else:
@@ -244,35 +263,77 @@ class EvalModel(BaseEvalModel):
             overall_probs.append(class_prob)  # (B, 1)
 
         overall_probs = torch.vstack(overall_probs).T  # shape (B, num_classes)
-        print(overall_probs)
         assert overall_probs.shape == (len(batch_images), len(all_class_names))
+
+        print(overall_probs)
 
         self.uncache_media()
 
         return overall_probs
 
-    def get_logits(
+    def __call__(
         self,
         lang_x: torch.Tensor,
-        vision_x: torch.Tensor = None,
-        attention_mask: torch.Tensor = None,
+        vision_x: torch.Tensor,
+        attention_mask: torch.Tensor,
         past_key_values: torch.Tensor = None,
         clear_conditioned_layers: bool = False,
-        use_cache: bool = None,
+        use_cache: bool = False,
     ):
-        with torch.inference_mode():
-            with self.autocast():
-                outputs = self.model(
-                    vision_x=vision_x,
-                    lang_x=lang_x,
-                    attention_mask=attention_mask,
-                    clear_conditioned_layers=clear_conditioned_layers,
-                    past_key_values=past_key_values,
-                    use_cache=use_cache
-                    if use_cache is not None
-                    else (past_key_values is not None),
-                )
-        return outputs
+        """
+        Calls the forward function of the model.
+        Special logic to handle the case if past_key_values is not None:
+            then lang_x is assumed to contain the tokens to be generated
+            *excluding* the tokens already in past_key_values.
+            We then repeatedly call forward, updating the past_key_values.
+        """
+        # standard forward pass
+        if past_key_values is None:
+            with torch.inference_mode():
+                with self.autocast():
+                    outputs = self.model(
+                        vision_x=vision_x,
+                        lang_x=lang_x,
+                        attention_mask=attention_mask,
+                        clear_conditioned_layers=clear_conditioned_layers,
+                        past_key_values=past_key_values,
+                        use_cache=use_cache,
+                    )
+            return outputs
+
+        # loop to handle updating past_key_values
+        logits = []
+        for token_idx in range(lang_x.shape[1]):
+            _lang_x = lang_x[:, token_idx].reshape((-1, 1))
+            if attention_mask is not None:
+                _attention_mask = attention_mask[:, token_idx].reshape((-1, 1))
+            else:
+                _attention_mask = None
+
+            with torch.inference_mode():
+                with self.autocast():
+                    outputs = self.model(
+                        vision_x=vision_x,
+                        lang_x=_lang_x,
+                        attention_mask=_attention_mask,
+                        clear_conditioned_layers=False,
+                        past_key_values=past_key_values,
+                        use_cache=True,
+                    )
+
+            past_key_values = list(
+                [
+                    tuple([x.detach() for x in inner])
+                    for inner in outputs.past_key_values
+                ]
+            )
+            logits.append(outputs.logits.detach())
+
+        logits = torch.cat(logits, dim=1)
+        return CausalLMOutputWithPast(
+            logits=logits,
+            past_key_values=past_key_values,
+        )
 
     def encode_vision_x(self, image_tensor: torch.Tensor):
         unwrap_model(self.model)._encode_vision_x(image_tensor.to(self.device))
