@@ -94,4 +94,4 @@ def get_predicted_classnames(logprobs, k, class_id_to_name):
     predicted_logprobs = torch.gather(
         logprobs, 1, predictions
     )
-    return predicted_classnames, predicted_logprobs
+    return predicted_classnames, predicted_logprobs, predictions

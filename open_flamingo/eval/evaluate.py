@@ -17,17 +17,13 @@ from eval_datasets import (
     VQADataset,
     ImageNetDataset,
     HatefulMemesDataset,
+    WILDSDataset,
 )
 from rices import RICES
 from tqdm import tqdm
 
 
-from classification_utils import (
-    IMAGENET_CLASSNAMES,
-    IMAGENET_1K_CLASS_ID_TO_LABEL,
-    HM_CLASSNAMES,
-    HM_CLASS_ID_TO_LABEL,
-)
+import classification_utils
 
 from eval_model import BaseEvalModel
 
@@ -84,7 +80,7 @@ parser.add_argument(
 parser.add_argument(
     "--classification_prompt_ensembling",
     action="store_true",
-    help="Whether to use prompt ensembling (average log-likelihoods over permutations of in-context examples)"
+    help="Whether to use prompt ensembling (average log-likelihoods over permutations of in-context examples)",
 )
 parser.add_argument(
     "--rices",
@@ -97,58 +93,50 @@ parser.add_argument(
     help="Directory where CLIP ViT-B/32 features for all choices of in-context examples are stored as a pkl file with the dataset name. If None, features are re-computed by script.",
 )
 
+# Distributed evaluation
+parser.add_argument(
+    "--dist-url",
+    default="env://",
+    type=str,
+    help="url used to set up distributed training",
+)
+parser.add_argument(
+    "--dist-backend", default="nccl", type=str, help="distributed backend"
+)
+parser.add_argument(
+    "--horovod",
+    default=False,
+    action="store_true",
+    help="Use horovod for distributed training.",
+)
+parser.add_argument(
+    "--no-set-device-rank",
+    default=False,
+    action="store_true",
+    help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
+)
+
 # Per-dataset evaluation flags
-parser.add_argument(
-    "--eval_coco",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on COCO.",
-)
-parser.add_argument(
-    "--eval_vqav2",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on VQAV2.",
-)
-parser.add_argument(
-    "--eval_ok_vqa",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on OK-VQA.",
-)
-parser.add_argument(
-    "--eval_vizwiz",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on VizWiz.",
-)
-parser.add_argument(
-    "--eval_textvqa",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on TextVQA.",
-)
-parser.add_argument(
-    "--eval_imagenet",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on ImageNet.",
-)
-parser.add_argument(
-    "--eval_flickr30",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on Flickr30.",
-)
-parser.add_argument(
-    "--eval_hateful_memes",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on Hateful Memes.",
-)
+for ds in [
+    "coco",
+    "vqav2",
+    "ok_vqa",
+    "vizwiz",
+    "textvqa",
+    "imagenet",
+    "flickr30",
+    "hateful_memes",
+    "waterbirds",
+    "celebA",
+]:
+    parser.add_argument(
+        f"--eval_{ds}",
+        action="store_true",
+        default=False,
+        help=f"Whether to evaluate on {ds}.",
+    )
 
 # Dataset arguments
-
 ## Flickr30 Dataset
 parser.add_argument(
     "--flickr_image_dir_path",
@@ -349,28 +337,13 @@ parser.add_argument(
     default=None,
 )
 
-# Distributed evaluation
+## WILDS datasets
 parser.add_argument(
-    "--dist-url",
-    default="env://",
+    "--wilds_root",
     type=str,
-    help="url used to set up distributed training",
+    default=".",
 )
-parser.add_argument(
-    "--dist-backend", default="nccl", type=str, help="distributed backend"
-)
-parser.add_argument(
-    "--horovod",
-    default=False,
-    action="store_true",
-    help="Use horovod for distributed training.",
-)
-parser.add_argument(
-    "--no-set-device-rank",
-    default=False,
-    action="store_true",
-    help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
-)
+parser.add_argument("--wilds_split_scheme", type=str, choices=["ID", "OOD"])
 
 
 def main():
@@ -396,243 +369,14 @@ def main():
 
     results = defaultdict(list)
 
-    if args.eval_flickr30:
-        print("Evaluating on Flickr30k...")
+    # Helper function to run the evaluation
+    def eval_dataset(dataset_name, eval_fn, **eval_kwargs):
+        print(f"Evaluating on {dataset_name}...")
 
         # load cached demonstration features for RICES
         if args.cached_demonstration_features is not None:
             cached_features = torch.load(
-                f"{args.cached_demonstration_features}/flickr30.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_captioning(
-                    args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="flickr",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
-                    scores.append(cider_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
-                results["flickr30"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
-                )
-
-    if args.eval_coco:
-        print("Evaluating on COCO...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/coco.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_captioning(
-                    args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="coco",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
-                    scores.append(cider_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
-                results["coco"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
-                )
-
-    if args.eval_ok_vqa:
-        print("Evaluating on OK-VQA...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/ok_vqa.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                ok_vqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="ok_vqa",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
-                    scores.append(ok_vqa_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean OK-VQA score: {np.nanmean(scores)}")
-                results["ok_vqa"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
-                )
-
-    if args.eval_vqav2:
-        print("Evaluating on VQAv2...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/vqav2.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="vqav2",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
-                    scores.append(vqa_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean VQA score: {np.nanmean(scores)}")
-                results["vqav2"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
-                )
-
-    if args.eval_vizwiz:
-        print("Evaluating on VizWiz...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/vizwiz.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vizwiz_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="vizwiz",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
-                    scores.append(vizwiz_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean VizWiz score: {np.nanmean(scores)}")
-                results["vizwiz"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
-                )
-
-    if args.eval_textvqa:
-        print("Evaluating on TextVQA...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/textvqa.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                textvqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="textvqa",
-                    max_generation_length=10,
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
-                    scores.append(textvqa_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean TextVQA score: {np.nanmean(scores)}")
-                results["textvqa"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
-                )
-
-    if args.eval_imagenet:
-        print("Evaluating on ImageNet...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/imagenet.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                imagenet_score = evaluate_classification(
-                    args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    no_kv_caching=args.no_caching_for_classification,
-                    dataset_name="imagenet",
-                    cached_features=cached_features,
-                    use_prompt_ensembling=args.classification_prompt_ensembling,
-                )
-                if args.rank == 0:
-                    print(
-                        f"Shots {shot} Trial {trial} "
-                        f"ImageNet score: {imagenet_score}"
-                    )
-                    scores.append(imagenet_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean ImageNet score: {np.nanmean(scores)}")
-                results["imagenet"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
-                )
-
-    if args.eval_hateful_memes:
-        print("Evaluating on Hateful Memes...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/hateful_memes.pkl",
+                f"{args.cached_demonstration_features}/{dataset_name}.pkl",
                 map_location="cpu",
             )
         else:
@@ -641,28 +385,93 @@ def main():
         for shot in args.shots:
             scores = []
             for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                hateful_memes_score = evaluate_classification(
+                score = eval_fn(
                     args,
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
-                    no_kv_caching=args.no_caching_for_classification,
-                    dataset_name="hateful_memes",
+                    dataset_name=dataset_name,
                     cached_features=cached_features,
+                    **eval_kwargs,
                 )
                 if args.rank == 0:
-                    print(
-                        f"Shots {shot} Trial {trial} "
-                        f"Hateful Memes score: {hateful_memes_score}"
-                    )
-                    scores.append(hateful_memes_score)
+                    print(f"Shots {shot} Trial {trial} score: {score}")
+                    scores.append(score)
 
             if args.rank == 0:
-                print(f"Shots {shot} Mean Hateful Memes score: {np.nanmean(scores)}")
-                results["hateful_memes"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                if type(scores[0]) == tuple:
+                    mean = (np.nanmean([s[i] for s in scores]) for i in range(len(scores[0])))
+                    stddev = (np.nanstd([s[i] for s in scores]) for i in range(len(scores[0])))
+                else:
+                    mean = np.nanmean(scores)
+                    stddev = np.nanstd(scores)
+                print(f"Shots {shot} Mean score: {mean}")
+                results[dataset_name].append(
+                    {"shots": shot, "trials": scores, "mean": mean, "stddev": stddev}
                 )
 
+    # Run through dataset flags
+    if args.eval_flickr30:
+        eval_dataset(
+            "flickr30",
+            evaluate_captioning,
+        )
+    if args.eval_coco:
+        eval_dataset(
+            "coco",
+            evaluate_captioning,
+        )
+    if args.eval_ok_vqa:
+        eval_dataset(
+            "ok_vqa",
+            evaluate_vqa,
+        )
+    if args.eval_vqav2:
+        eval_dataset(
+            "vqav2",
+            evaluate_vqa,
+        )
+    if args.eval_vizwiz:
+        eval_dataset(
+            "vizwiz",
+            evaluate_vqa,
+        )
+    if args.eval_textvqa:
+        eval_dataset(
+            "textvqa",
+            evaluate_vqa,
+            max_generation_length=10,
+        )
+    if args.eval_imagenet:
+        eval_dataset(
+            "imagenet",
+            evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+    if args.eval_hateful_memes:
+        eval_dataset(
+            "hateful_memes",
+            evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+    if args.eval_waterbirds:
+        eval_dataset(
+            f"waterbirds",
+            evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+    if args.eval_celebA:
+        eval_dataset(
+            f"celebA",
+            evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+
+    # Write all results to a json
     if args.rank == 0 and args.results_file is not None:
         with open(args.results_file, "w") as f:
             json.dump(results, f)
@@ -690,7 +499,7 @@ def evaluate_captioning(
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of in-context samples to use. Defaults to 8.
-        dataset_name (str, optional): dataset to evaluate on. Can be "coco" or "flickr". Defaults to "coco".
+        dataset_name (str, optional): dataset to evaluate on. Can be "coco" or "flickr30". Defaults to "coco".
         cached_features (tensor, optional): cached demonstration features for RICES. Defaults to None.
     Returns:
         float: CIDEr score
@@ -702,7 +511,7 @@ def evaluate_captioning(
         image_train_dir_path = args.coco_train_image_dir_path
         image_val_dir_path = args.coco_val_image_dir_path
         annotations_path = args.coco_karpathy_json_path
-    elif dataset_name == "flickr":
+    elif dataset_name == "flickr30":
         image_train_dir_path = (
             args.flickr_image_dir_path
         )  # Note: calling this "train" for consistency with COCO but Flickr only has one split for images
@@ -1040,7 +849,7 @@ def evaluate_classification(
     dataset_name: str = "imagenet",
     cached_features=None,
     no_kv_caching=False,
-    use_prompt_ensembling: bool = False
+    use_prompt_ensembling: bool = False,
 ):
     """
     Evaluate a model on classification dataset.
@@ -1067,7 +876,7 @@ def evaluate_classification(
         train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
         test_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
         prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
-        all_class_names = IMAGENET_CLASSNAMES
+        all_class_names = classification_utils.IMAGENET_CLASSNAMES
         class_id_to_name = IMAGENET_1K_CLASS_ID_TO_LABEL
         k = 5
     elif dataset_name == "hateful_memes":
@@ -1082,8 +891,34 @@ def evaluate_classification(
         prompt_fn = lambda x: eval_model.get_hateful_memes_prompt(
             text=x["ocr"], label=x["class_name"]
         )
-        all_class_names = HM_CLASSNAMES
+        all_class_names = classification_utils.HM_CLASSNAMES
         class_id_to_name = HM_CLASS_ID_TO_LABEL
+        k = 1
+    elif dataset_name == "waterbirds":
+        train_dataset = WILDSDataset(
+            "waterbirds",
+            "train",
+            args.wilds_root,
+        )
+        test_dataset = WILDSDataset(
+            "waterbirds",
+            "test",
+            args.wilds_root,
+        )
+        all_class_names = classification_utils.WATERBIRDS_CLASSNAMES
+        k = 1
+    elif dataset_name == "celebA":
+        train_dataset = WILDSDataset(
+            "celebA",
+            "train",
+            args.wilds_root,
+        )
+        test_dataset = WILDSDataset(
+            "celebA",
+            "test",
+            args.wilds_root,
+        )
+        all_class_names =classification_utils.CELEBA_CLASSNAMES
         k = 1
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
@@ -1125,10 +960,8 @@ def evaluate_classification(
         num_permutations = 6 if use_prompt_ensembling else 1
         logprobs = []
         for _ in range(num_permutations):
-
             batch_images, batch_text = [], []
             for i in range(len(batch["image"])):
-
                 if use_prompt_ensembling:
                     random.shuffle(batch_demo_samples[i])
 
@@ -1145,22 +978,25 @@ def evaluate_classification(
                     context_text = context_text.replace("<image>", "")
 
                 batch_text.append(
-                    context_text + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
+                    context_text
+                    + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
                 )
 
             # get predicted class names
-            logprobs.append(eval_model.get_rank_classifications(
-                batch_text,
-                batch_images,
-                all_class_names,
-                use_cache=(not no_kv_caching),
-                normalize_length=True,
-            ))
+            logprobs.append(
+                eval_model.get_rank_classifications(
+                    batch_text,
+                    batch_images,
+                    all_class_names,
+                    use_cache=(not no_kv_caching),
+                    normalize_length=True,
+                )
+            )
 
         # ensemble logprobs together
         logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
 
-        predicted_classnames, predicted_logprobs = utils.get_predicted_classnames(
+        predicted_classnames, predicted_logprobs, predicted_class_ids = utils.get_predicted_classnames(
             logprobs,
             k,
             class_id_to_name,
@@ -1168,14 +1004,18 @@ def evaluate_classification(
 
         # compute accuracy
         for i, topk in enumerate(predicted_classnames):
-            y_i = batch["class_name"][i]
-            score = torch.exp(predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0))
+            score = torch.exp(
+                predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0)
+            )
             predictions.append(
                 {
                     "id": batch["id"][i],
-                    "gt_label": y_i,
+                    "gt_label": batch["class_name"][i],
+                    "gt_id": batch["class_id"][i],
                     "pred_label": topk[0],
                     "pred_score": score,
+                    "pred_class_id": predicted_class_ids[i][0],
+                    "metadata": batch["metadata"][i] if "metadata" in batch else None,
                 }
             )
             if args.rank == 0 and i == 0:
@@ -1198,9 +1038,18 @@ def evaluate_classification(
 
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
-        gts = [pred["gt_label"] for pred in all_predictions]
-        pred_scores = [pred["pred_score"] for pred in all_predictions]
+        gts = torch.stack([pred["gt_label"] for pred in all_predictions])
+        pred_scores = torch.stack([pred["pred_score"] for pred in all_predictions])
         return roc_auc_score(gts, pred_scores)
+    elif dataset_name in ("waterbirds", "celebA"):
+        # return avg and worst group accuracies
+        y_pred = [pred["pred_class_id"] for pred in all_predictions]
+        y_true = [pred["gt_id"] for pred in all_predictions]
+        metadata = torch.stack([pred["metadata"] for pred in all_predictions])
+        all_results = test_dataset.eval(
+            y_pred, y_true, metadata
+        )[0]
+        return all_results["acc_avg"], all_results["acc_wg"]
     else:
         # return top-1 accuracy
         acc1 = sum(

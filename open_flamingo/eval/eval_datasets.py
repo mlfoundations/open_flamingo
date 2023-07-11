@@ -5,7 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
-from open_flamingo.eval.classification_utils import IMAGENET_1K_CLASS_ID_TO_LABEL
+from open_flamingo.eval.classification_utils import IMAGENET_1K_CLASS_ID_TO_LABEL, WATERBIRDS_CLASSNAMES, CELEBA_CLASSNAMES
 
 
 class CaptionDataset(Dataset):
@@ -47,7 +47,7 @@ class CaptionDataset(Dataset):
                     self.image_val_dir_path, self.annotations[idx]["filename"]
                 )
             )
-        elif self.dataset_name == "flickr":
+        elif self.dataset_name == "flickr30":
             image = Image.open(
                 os.path.join(
                     self.image_train_dir_path, self.annotations[idx]["filename"]
@@ -151,4 +151,39 @@ class HatefulMemesDataset(Dataset):
             "ocr": annotation["text"],
             "class_name": "yes" if annotation["label"] == 1 else "no",
             "class_id": annotation["label"],
+        }
+
+class WILDSDataset(Dataset):
+    def __init__(self, dataset_name, split, root_dir):
+        import wilds
+        self.full_dataset = wilds.get_dataset(
+            dataset_name,
+            root_dir=root_dir,
+            download=True,
+        )
+        self.dataset = self.full_dataset.get_subset(split)
+        if dataset_name == "waterbirds":
+            self.class_id_to_name = {i: s for i, s in enumerate(WATERBIRDS_CLASSNAMES)}
+            self.grouper = wilds.common.grouper.CombinatorialGrouper(
+                dataset=self.full_dataset,
+                groupby_fields=["background"],
+            )
+        elif dataset_name == "celebA":
+            self.class_id_to_name = {i: s for i, s in enumerate(CELEBA_CLASSNAMES)}
+            self.grouper = wilds.common.grouper.CombinatorialGrouper(
+                dataset=self.full_dataset,
+                groupby_fields=["Male"],
+            )
+        else:
+            raise Exception(f"Unimplemented WILDS dataset {dataset_name}")
+    
+    def __getitem__(self, idx):
+        x, y, m = self.dataset[idx]
+        return {
+            "id": idx,
+            "image": x,
+            "class_id": y,
+            "class_name": self.class_id_to_name[y],
+            "train_domain_id": self.grouper.metadata_to_group(m).item(),
+            "metadata": m,
         }

@@ -1010,3 +1010,5 @@ HM_CLASSNAMES = [
     "yes",
 ]
 HM_CLASS_ID_TO_LABEL = {0: "no", 1: "yes"}
+WATERBIRDS_CLASSNAMES = ["landbird", "waterbird"]
+CELEBA_CLASSNAMES = ["not blonde", "blonde"]

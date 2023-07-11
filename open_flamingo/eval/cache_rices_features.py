@@ -218,7 +218,7 @@ def main():
             image_val_dir_path=None,
             annotations_path=args.flickr_karpathy_json_path,
             is_train=True,
-            dataset_name="flickr",
+            dataset_name="flickr30",
         )
         rices_dataset = RICES(
             train_dataset,
