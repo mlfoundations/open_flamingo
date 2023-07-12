@@ -104,23 +104,28 @@ class RICES:
         assert len(all_features) == len(self.dataset)
         return all_features
 
-    def find(self, pillow_image, num_examples):
-        # Transform the input image
-        image_input = self.image_processor(pillow_image).unsqueeze(0).to(self.device)
-
+    def find(self, batch, num_examples):
+        """
+        Get the top num_examples most similar examples to the images.
+        """
         # Switch to evaluation mode
         self.model.eval()
 
         with torch.no_grad():
+            inputs = torch.stack(
+                [self.image_processor(image) for image in batch]
+            ).to(self.device)
+
             # Get the feature of the input image
-            query_feature = self.model.module.encode_image(image_input)
+            query_feature = self.model.module.encode_image(inputs)
             query_feature /= query_feature.norm(dim=-1, keepdim=True)
             query_feature = query_feature.detach().cpu()
 
             # Compute the similarity of the input image to the precomputed features
-            similarity = (self.features @ query_feature.T).squeeze(1)
+            similarity = (query_feature @ self.features.T).squeeze()
 
             # Get the indices of the 'num_examples' most similar images
-            indices = similarity.argsort(descending=True)[:num_examples]
+            indices = similarity.argsort(dim=-1, descending=True)[:, :num_examples]
 
-        return [self.dataset[i] for i in indices.tolist()]
+        # Return with the most similar images last
+        return [[self.dataset[i] for i in reversed(row)] for row in indices]
