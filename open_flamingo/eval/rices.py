@@ -4,16 +4,25 @@ from tqdm import tqdm
 import torch
 from utils import custom_collate_fn
 
+
 class RICES:
-    def __init__(self, dataset, device, batch_size, cached_features=None):
+    def __init__(
+        self,
+        dataset,
+        device,
+        batch_size,
+        vision_encoder_path="ViT-B-32",
+        vision_encoder_pretrained="openai",
+        cached_features=None,
+    ):
         self.dataset = dataset
         self.device = device
         self.batch_size = batch_size
 
         # Load the model and processor
         vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
-            "ViT-B-32",
-            pretrained="openai",
+            vision_encoder_path,
+            pretrained=vision_encoder_pretrained,
             cache_dir="/mmfs1/gscratch/efml/anasa2/clip_cache",
         )
         self.model = vision_encoder.to(self.device)

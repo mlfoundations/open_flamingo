@@ -91,9 +91,21 @@ parser.add_argument(
     help="Whether to use RICES for evaluation. If False, uses random demonstrations.",
 )
 parser.add_argument(
+    "--rices_vision_encoder_path",
+    default="ViT-L-14",
+    type=str,
+    help="CLIP vision encoder to use for RICES if cached_demonstration_features is None.",
+)
+parser.add_argument(
+    "--rices_vision_encoder_pretrained",
+    default="openai",
+    type=str,
+    help="CLIP vision encoder to use for RICES if cached_demonstration_features is None.",
+)
+parser.add_argument(
     "--cached_demonstration_features",
     default=None,
-    help="Directory where CLIP ViT-B/32 features for all choices of in-context examples are stored as a pkl file with the dataset name. If None, features are re-computed by script.",
+    help="Directory where rices features for all choices of in-context examples are stored as a pkl file with the dataset name. If None, features are re-computed by script.",
 )
 
 # Per-dataset evaluation flags
@@ -738,8 +750,10 @@ def evaluate_captioning(
         rices_dataset = RICES(
             train_dataset,
             eval_model.device,
-            args.batch_size * 32,
+            args.batch_size,
             cached_features=cached_features,
+            vision_encoder_path=args.rices_vision_encoder_path,
+            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
         )
     else:
         # subset of the training set to sample context images from
@@ -927,8 +941,10 @@ def evaluate_vqa(
         rices_dataset = RICES(
             train_dataset,
             eval_model.device,
-            args.batch_size * 32,
+            args.batch_size,
             cached_features=cached_features,
+            vision_encoder_path=args.rices_vision_encoder_path,
+            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
         )
     else:
         # subset of the training set to sample context images from
@@ -1099,8 +1115,10 @@ def evaluate_classification(
         rices_dataset = RICES(
             train_dataset,
             eval_model.device,
-            args.batch_size * 32,
+            args.batch_size,
             cached_features=cached_features,
+            vision_encoder_path=args.rices_vision_encoder_path,
+            vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
         )
     else:
         # subset of the training set to sample context images from

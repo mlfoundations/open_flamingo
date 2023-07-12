@@ -19,7 +19,8 @@ parser.add_argument(
     required=True,
     help="Directory to save the cached features.",
 )
-
+parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
+parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
 parser.add_argument("--batch_size", default=256)
 
 # Per-dataset flags
@@ -224,6 +225,8 @@ def main():
             train_dataset,
             device_id,
             args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,
         )
         torch.save(
             rices_dataset.features,
@@ -243,6 +246,8 @@ def main():
             train_dataset,
             device_id,
             args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,
         )
         torch.save(
             rices_dataset.features,
@@ -262,6 +267,8 @@ def main():
             train_dataset,
             device_id,
             args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,
         )
         torch.save(
             rices_dataset.features,
@@ -281,6 +288,8 @@ def main():
             train_dataset,
             device_id,
             args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,
         )
         torch.save(
             rices_dataset.features,
@@ -300,6 +309,8 @@ def main():
             train_dataset,
             device_id,
             args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,
         )
         torch.save(
             rices_dataset.features,
@@ -319,6 +330,8 @@ def main():
             train_dataset,
             device_id,
             args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,
         )
         torch.save(
             rices_dataset.features,
@@ -335,6 +348,8 @@ def main():
             train_dataset,
             device_id,
             args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,
         )
         torch.save(
             rices_dataset.features,
