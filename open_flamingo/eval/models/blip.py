@@ -110,5 +110,14 @@ class EvalModel(BaseEvalModel):
     def get_caption_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
 
-    def get_classification_prompt(self, class_str=None) -> str:
-        raise NotImplementedError
+    def get_rank_classifications(
+        self,
+        batch_text: List[str],
+        batch_images: List[List[Image.Image]],
+        all_class_names: List[str],
+        use_cache: bool,
+        normalize_length: bool,
+    ):
+        raise NotImplementedError(
+            "BLIP-2 classification-based evaluation not implemented"
+        )

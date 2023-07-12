@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
 import utils
+import math
 
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import (
@@ -877,7 +878,6 @@ def evaluate_classification(
         test_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
         prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
         all_class_names = classification_utils.IMAGENET_CLASSNAMES
-        class_id_to_name = IMAGENET_1K_CLASS_ID_TO_LABEL
         k = 5
     elif dataset_name == "hateful_memes":
         train_dataset = HatefulMemesDataset(
@@ -892,7 +892,6 @@ def evaluate_classification(
             text=x["ocr"], label=x["class_name"]
         )
         all_class_names = classification_utils.HM_CLASSNAMES
-        class_id_to_name = HM_CLASS_ID_TO_LABEL
         k = 1
     elif dataset_name == "waterbirds":
         train_dataset = WILDSDataset(
@@ -922,6 +921,8 @@ def evaluate_classification(
         k = 1
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
+
+    class_id_to_name = dict(zip(range(len(all_class_names)), all_class_names))
 
     effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
@@ -957,7 +958,9 @@ def evaluate_classification(
             )
 
         # set up prompt ensembling
-        num_permutations = 6 if use_prompt_ensembling else 1
+        num_permutations = (
+            min(6, math.factorial(effective_num_shots)) if use_prompt_ensembling else 1
+        )
         logprobs = []
         for _ in range(num_permutations):
             batch_images, batch_text = [], []
@@ -1006,7 +1009,7 @@ def evaluate_classification(
         for i, topk in enumerate(predicted_classnames):
             score = torch.exp(
                 predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0)
-            )
+            ).item()
             predictions.append(
                 {
                     "id": batch["id"][i],
@@ -1038,8 +1041,14 @@ def evaluate_classification(
 
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
-        gts = torch.stack([pred["gt_label"] for pred in all_predictions])
-        pred_scores = torch.stack([pred["pred_score"] for pred in all_predictions])
+        greater_label = max(all_class_names)
+        gts = [pred["gt_label"] for pred in all_predictions]
+        pred_scores = [
+            pred["pred_score"]
+            if pred["pred_label"] == greater_label
+            else 1 - pred["pred_score"]
+            for pred in all_predictions
+        ]
         return roc_auc_score(gts, pred_scores)
     elif dataset_name in ("waterbirds", "celebA"):
         # return avg and worst group accuracies
