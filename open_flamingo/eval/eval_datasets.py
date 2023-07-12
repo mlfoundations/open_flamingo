@@ -123,7 +123,6 @@ class ImageNetDataset(ImageFolder):
             zip(range(len(IMAGENET_CLASSNAMES)), IMAGENET_CLASSNAMES)
         )
 
-
     def __getitem__(self, idx):
         sample, target = super().__getitem__(idx)
         target_label = self.class_id_to_name[target]

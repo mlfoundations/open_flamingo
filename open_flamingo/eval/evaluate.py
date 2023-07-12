@@ -436,7 +436,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
                 results["flickr30"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.eval_coco:
@@ -468,7 +473,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
                 results["coco"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.eval_ok_vqa:
@@ -500,7 +510,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean OK-VQA score: {np.nanmean(scores)}")
                 results["ok_vqa"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.eval_vqav2:
@@ -532,7 +547,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean VQA score: {np.nanmean(scores)}")
                 results["vqav2"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.eval_vizwiz:
@@ -564,7 +584,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean VizWiz score: {np.nanmean(scores)}")
                 results["vizwiz"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.eval_textvqa:
@@ -597,7 +622,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean TextVQA score: {np.nanmean(scores)}")
                 results["textvqa"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.eval_imagenet:
@@ -634,7 +664,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean ImageNet score: {np.nanmean(scores)}")
                 results["imagenet"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.eval_hateful_memes:
@@ -671,7 +706,12 @@ def main():
             if args.rank == 0:
                 print(f"Shots {shot} Mean Hateful Memes score: {np.nanmean(scores)}")
                 results["hateful_memes"].append(
-                    {"shots": shot, "trials": scores, "mean": np.nanmean(scores)}
+                    {
+                        "shots": shot,
+                        "trials": scores,
+                        "mean": np.nanmean(scores),
+                        "stddev": np.nanstd(scores),
+                    }
                 )
 
     if args.rank == 0 and args.results_file is not None:
@@ -1041,8 +1081,18 @@ def evaluate_vqa(
 
     else:
         print("No annotations provided, skipping accuracy computation.")
-        print("Temporary file saved to:", f"{dataset_name}results_{random_uuid}.json")
         acc = None
+
+        from open_flamingo.scripts.fill_vqav2_testdev_results import (
+            fill_vqav2_test_json,
+        )
+
+        fill_vqav2_test_json(
+            f"{dataset_name}results_{random_uuid}.json",
+            f"VQA-testdev_{eval_model.lm_name}_{num_shots}_eval_{seed}.json",
+        )
+        print("Temporary file saved to:", f"{dataset_name}results_{random_uuid}.json")
+        os.remove(f"{dataset_name}results_{random_uuid}.json")
 
     return acc
 
@@ -1212,11 +1262,6 @@ def evaluate_classification(
     all_predictions = [
         item for sublist in all_predictions for item in sublist
     ]  # flatten
-
-    # Hack to remove samples with duplicate ids (only necessary for multi-GPU evaluation)
-    all_predictions = {pred["id"]: pred for pred in all_predictions}.values()
-
-    assert len(all_predictions) == len(test_dataset)  # sanity check
 
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
