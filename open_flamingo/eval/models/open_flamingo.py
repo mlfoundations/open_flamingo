@@ -167,26 +167,19 @@ class EvalModel(BaseEvalModel):
         # Cache the context
         if use_cache:
             # reserve the last token in the context for the main forward pass
-            assert torch.all(
-                ctx_input_ids[:, -1] != unwrap_model(self.model).media_token_id
-            ), "Last token in context must not be <image> if caching"
             self.cache_media(
-                input_ids=ctx_input_ids[:, :-1],
+                input_ids=ctx_input_ids,
                 vision_x=batch_images,
             )
             precomputed = self.__call__(
                 vision_x=None,
-                lang_x=ctx_input_ids[:, :-1],
-                attention_mask=ctx_attention_mask[:, :-1],
+                lang_x=ctx_input_ids,
+                attention_mask=ctx_attention_mask,
                 clear_conditioned_layers=False,
                 use_cache=True,
             )
-            precomputed_pkvs = list(
-                [
-                    tuple([x.detach() for x in inner])
-                    for inner in precomputed.past_key_values
-                ]
-            )
+            precomputed_logits = precomputed.logits
+            precomputed_pkvs = precomputed.past_key_values
         else:
             precomputed_pkvs = None
 
@@ -196,7 +189,6 @@ class EvalModel(BaseEvalModel):
         # we need to loop through each classname separately.
         overall_probs = []
         for class_name in all_class_names:
-
             # Tokenize only the class name
             classname_tokens = self.tokenizer(
                 class_name, add_special_tokens=False, return_tensors="pt"
@@ -219,16 +211,8 @@ class EvalModel(BaseEvalModel):
                 )
                 _vision_x = batch_images
             else:
-                _lang_x = torch.cat(
-                    [ctx_input_ids[:, -1].view(-1, 1), classname_tokens], dim=1
-                )
-                _attention_mask = torch.cat(
-                    [
-                        ctx_attention_mask[:, -1].view(-1, 1),
-                        torch.ones_like(classname_tokens).bool(),
-                    ],
-                    dim=1,
-                )
+                _lang_x = classname_tokens
+                _attention_mask = None
                 _vision_x = None
 
             # Call forward to get the logits
@@ -244,16 +228,17 @@ class EvalModel(BaseEvalModel):
             # logits shape is either (B, num_tokens_in_classname, vocab_len) with use_cache
             # or (B, len(_lang_x), vocab_len) without use_cache
             # remember that the logits at index t on dim 1 correspond to predictions for the t+1st token
-            logits = outputs.logits.detach().float()
+            logits = outputs.logits
+            if use_cache:
+                logits = torch.cat([precomputed_logits, logits], dim=1)
+
             logprobs = torch.log_softmax(logits, dim=-1)
             gen_probs = logprobs[
                 :, -num_tokens_in_classname - 1 : -1, :
             ]  # (B, num_tokens_in_classname, vocab_len)
-            gen_probs = (
-                torch.gather(gen_probs, 2, classname_tokens[:, :, None])
-                .squeeze(-1)
-                .cpu()
-            )
+            gen_probs = torch.gather(
+                gen_probs, 2, classname_tokens[:, :, None]
+            ).squeeze(-1)
 
             # Aggregate over tokens in the classname
             if normalize_length:
@@ -262,13 +247,8 @@ class EvalModel(BaseEvalModel):
                 class_prob = torch.sum(gen_probs, dim=1)
             overall_probs.append(class_prob)  # (B, 1)
 
-        overall_probs = torch.vstack(overall_probs).T  # shape (B, num_classes)
-        assert overall_probs.shape == (len(batch_images), len(all_class_names))
-
-        print(overall_probs)
-
         self.uncache_media()
-
+        overall_probs = torch.vstack(overall_probs).T.cpu()  # shape (B, num_classes)
         return overall_probs
 
     def __call__(
@@ -321,13 +301,8 @@ class EvalModel(BaseEvalModel):
                         use_cache=True,
                     )
 
-            past_key_values = list(
-                [
-                    tuple([x.detach() for x in inner])
-                    for inner in outputs.past_key_values
-                ]
-            )
-            logits.append(outputs.logits.detach())
+            past_key_values = outputs.past_key_values
+            logits.append(outputs.logits)
 
         logits = torch.cat(logits, dim=1)
         return CausalLMOutputWithPast(
