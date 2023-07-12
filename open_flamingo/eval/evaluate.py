@@ -786,8 +786,6 @@ def evaluate_captioning(
             train_dataset,
             eval_model.device,
             args.batch_size * 32,
-            args.world_size,
-            args.rank,
             cached_features=cached_features,
         )
     else:
@@ -981,8 +979,6 @@ def evaluate_vqa(
             train_dataset,
             eval_model.device,
             args.batch_size * 32,
-            args.world_size,
-            args.rank,
             cached_features=cached_features,
         )
     else:
@@ -1153,8 +1149,6 @@ def evaluate_classification(
             train_dataset,
             eval_model.device,
             args.batch_size * 32,
-            args.world_size,
-            args.rank,
             cached_features=cached_features,
         )
 
