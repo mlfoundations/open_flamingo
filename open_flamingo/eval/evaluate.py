@@ -83,7 +83,7 @@ parser.add_argument(
 parser.add_argument(
     "--classification_prompt_ensembling",
     action="store_true",
-    help="Whether to use prompt ensembling (average log-likelihoods over permutations of in-context examples)"
+    help="Whether to use prompt ensembling (average log-likelihoods over permutations of in-context examples)",
 )
 parser.add_argument(
     "--rices",
@@ -1039,7 +1039,7 @@ def evaluate_classification(
     dataset_name: str = "imagenet",
     cached_features=None,
     no_kv_caching=False,
-    use_prompt_ensembling: bool = False
+    use_prompt_ensembling: bool = False,
 ):
     """
     Evaluate a model on classification dataset.
@@ -1085,9 +1085,7 @@ def evaluate_classification(
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
 
-    class_id_to_name = dict(
-        zip(range(len(all_class_names)), all_class_names)
-    )
+    class_id_to_name = dict(zip(range(len(all_class_names)), all_class_names))
 
     effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
@@ -1121,15 +1119,15 @@ def evaluate_classification(
             batch_demo_samples = utils.sample_batch_demos_from_query_set(
                 query_set, effective_num_shots, len(batch["image"])
             )
-        
+
         # set up prompt ensembling
-        num_permutations = min(6, math.factorial(effective_num_shots)) if use_prompt_ensembling else 1
+        num_permutations = (
+            min(6, math.factorial(effective_num_shots)) if use_prompt_ensembling else 1
+        )
         logprobs = []
         for _ in range(num_permutations):
-
             batch_images, batch_text = [], []
             for i in range(len(batch["image"])):
-
                 if use_prompt_ensembling:
                     random.shuffle(batch_demo_samples[i])
 
@@ -1146,17 +1144,20 @@ def evaluate_classification(
                     context_text = context_text.replace("<image>", "")
 
                 batch_text.append(
-                    context_text + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
+                    context_text
+                    + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
                 )
 
             # get predicted class names
-            logprobs.append(eval_model.get_rank_classifications(
-                batch_text,
-                batch_images,
-                all_class_names,
-                use_cache=(not no_kv_caching),
-                normalize_length=True,
-            ))
+            logprobs.append(
+                eval_model.get_rank_classifications(
+                    batch_text,
+                    batch_images,
+                    all_class_names,
+                    use_cache=(not no_kv_caching),
+                    normalize_length=True,
+                )
+            )
 
         # ensemble logprobs together
         logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
@@ -1170,7 +1171,9 @@ def evaluate_classification(
         # compute accuracy
         for i, topk in enumerate(predicted_classnames):
             y_i = batch["class_name"][i]
-            score = torch.exp(predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0)).item()
+            score = torch.exp(
+                predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0)
+            ).item()
             predictions.append(
                 {
                     "id": batch["id"][i],
@@ -1199,8 +1202,14 @@ def evaluate_classification(
 
     if dataset_name == "hateful_memes":
         # return ROC-AUC score
+        greater_label = max(all_class_names)
         gts = [pred["gt_label"] for pred in all_predictions]
-        pred_scores = [pred["pred_score"] for pred in all_predictions]
+        pred_scores = [
+            pred["pred_score"]
+            if pred["pred_label"] == greater_label
+            else 1 - pred["pred_score"]
+            for pred in all_predictions
+        ]
         return roc_auc_score(gts, pred_scores)
     else:
         # return top-1 accuracy
