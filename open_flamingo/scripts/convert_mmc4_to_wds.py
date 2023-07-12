@@ -26,6 +26,11 @@ arg_parser.add_argument(
     type=str,
     help="Pass in the directory where the images have been downloaded to.",
 )
+arg_parser.add_argument(
+    "--num_files_per_shard",
+    type=int,
+    default=1000,
+)
 args = arg_parser.parse_args()
 
 
@@ -61,7 +66,7 @@ def main():
                                 # convert to base64
                                 sample_data["image_info"][img_idx][
                                     "image_base64"
-                                ] = img_str.decode('utf-8')
+                                ] = img_str.decode("utf-8")
                             except FileNotFoundError:
                                 print(
                                     f"Did not find {image_name} downloaded. This can happen if the url is now 404."
@@ -71,6 +76,9 @@ def main():
 
                         key_str = uuid.uuid4().hex
                         sink.write({"__key__": key_str, "json": sample_data})
+
+            if (idx + 1) % args.num_files_per_shard == 0:
+                sink.next_stream()
 
 
 if __name__ == "__main__":
