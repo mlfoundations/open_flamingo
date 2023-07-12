@@ -6,8 +6,7 @@ from einops import repeat
 
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
-from contextlib import suppress
-from open_flamingo.eval.utils import unwrap_model, get_predicted_classnames
+from open_flamingo.eval.utils import unwrap_model, get_autocast, get_cast_dtype
 
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation.
@@ -188,7 +187,7 @@ class EvalModel(BaseEvalModel):
 
         # Loop through labels and get log-likelihoods
         overall_probs = []
-        for class_name in reversed(all_class_names):
+        for class_name in all_class_names:
             # Tokenize only the class name
             classname_tokens = self.tokenizer(
                 class_name, add_special_tokens=False, return_tensors="pt"
@@ -295,27 +294,3 @@ class EvalModel(BaseEvalModel):
 
     def get_hateful_memes_prompt(self, text, label=None) -> str:
         return f"<image>is an image with: '{text}' written on it. Is it hateful? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
-
-
-def get_cast_dtype(precision: str):
-    cast_dtype = None
-    if precision == "bf16":
-        cast_dtype = torch.bfloat16
-    elif precision == "fp16":
-        cast_dtype = torch.float16
-    return cast_dtype
-
-
-def get_autocast(precision):
-    if precision == "amp":
-        return torch.cuda.amp.autocast
-    elif precision == "amp_bfloat16" or precision == "amp_bf16":
-        # amp_bfloat16 is more stable than amp float16 for clip training
-        return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
-    else:
-        return suppress
-
-
-def _detach_pkvs(pkvs):
-    """Detach a set of past key values."""
-    return list([tuple([x.detach() for x in inner]) for inner in pkvs])

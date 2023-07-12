@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import random
 import torch.nn as nn
+from contextlib import suppress
 
 def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
@@ -95,3 +96,22 @@ def get_predicted_classnames(logprobs, k, class_id_to_name):
         logprobs, 1, predictions
     )
     return predicted_classnames, predicted_logprobs
+
+
+def get_cast_dtype(precision: str):
+    cast_dtype = None
+    if precision == "bf16":
+        cast_dtype = torch.bfloat16
+    elif precision == "fp16":
+        cast_dtype = torch.float16
+    return cast_dtype
+
+
+def get_autocast(precision):
+    if precision == "amp":
+        return torch.cuda.amp.autocast
+    elif precision == "amp_bfloat16" or precision == "amp_bf16":
+        # amp_bfloat16 is more stable than amp float16 for clip training
+        return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
+    else:
+        return suppress
