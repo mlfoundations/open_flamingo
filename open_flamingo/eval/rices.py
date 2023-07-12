@@ -1,30 +1,8 @@
-from PIL import Image
 import open_clip
 import torch
 from tqdm import tqdm
 import torch
-import numpy as np
-
-
-def custom_collate_fn(batch):
-    collated_batch = {}
-    for key in batch[0].keys():
-        collated_batch[key] = [item[key] for item in batch]
-    return collated_batch
-
-
-def get_indices_of_unique(x):
-    """
-    Return the indices of x that correspond to unique elements.
-    If value v is unique and two indices in x have value v, the first index is returned.
-    """
-    unique_elements = torch.unique(x)
-    first_indices = []
-    for v in unique_elements:
-        indices = torch.where(x == v)[0]
-        first_indices.append(indices[0])  # Take the first index for each unique element
-    return torch.tensor(first_indices)
-
+from utils import custom_collate_fn
 
 class RICES:
     def __init__(self, dataset, device, batch_size, cached_features=None):
