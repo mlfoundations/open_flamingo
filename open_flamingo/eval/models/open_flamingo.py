@@ -7,8 +7,7 @@ from einops import repeat
 from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
 from contextlib import suppress
-from open_flamingo.eval.models.utils import unwrap_model
-
+from open_flamingo.eval.utils import unwrap_model, get_predicted_classnames
 
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation.
@@ -155,12 +154,13 @@ class EvalModel(BaseEvalModel):
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
         all_class_names: List[str],
-        class_id_to_name: Dict[int, str],
-        k: int,
         use_cache: bool,
         normalize_length: bool,
     ):
-        """Get predicted labels using rank classification"""
+        """
+        Returns a (B, |Y|) tensor containing the logprobabilities for each class
+        in all_class_names.
+        """
         batch_images = self._prepare_images(batch_images)
         ctx_input_ids, ctx_attention_mask = self._prepare_text(batch_text)
 
@@ -250,15 +250,7 @@ class EvalModel(BaseEvalModel):
 
         self.uncache_media()
 
-        # convert indices to classnames
-        _, predictions = torch.topk(overall_probs, k=k, dim=1)  # shape (B, k)
-        predicted_classnames = [
-            [class_id_to_name[ix] for ix in item] for item in predictions.tolist()
-        ]
-        predicted_logprobs = torch.gather(
-            overall_probs, 1, predictions
-        )
-        return predicted_classnames, predicted_logprobs, overall_probs
+        return overall_probs
 
     def get_logits(
         self,
