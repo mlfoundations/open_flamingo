@@ -1,9 +1,18 @@
 """
-Cache CLIP ViT-B/32 features for all images in training split in preparation for RICES
+Cache CLIP features for all images in training split in preparation for RICES
 """
 import argparse
-from rices import RICES
-from eval_datasets import (
+import sys
+import os
+
+sys.path.append(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+    )
+)
+from eval.rices import RICES
+from eval.eval_datasets import (
     CaptionDataset,
     VQADataset,
     ImageNetDataset,
