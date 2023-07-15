@@ -1082,18 +1082,23 @@ def evaluate_vqa(
     else:
         print("No annotations provided, skipping accuracy computation.")
         acc = None
-
-        from open_flamingo.scripts.fill_vqav2_testdev_results import (
-            fill_vqav2_test_json,
-        )
-
-        fill_vqav2_test_json(
+        if dataset_name == "vqav2":
+            from open_flamingo.scripts.fill_vqa_testdev_results import fill_vqav2_test_json
+            fill_fn = fill_vqav2_test_json
+        elif dataset_name == "vizwiz":
+            from open_flamingo.scripts.fill_vqa_testdev_results import fill_vizwiz_test_json
+            fill_fn = fill_vizwiz_test_json
+        else: 
+            print("Temporary file saved to ", f"{dataset_name}results_{random_uuid}.json")
+            return
+        
+        fill_fn(
             f"{dataset_name}results_{random_uuid}.json",
-            f"VQA-testdev_{eval_model.lm_name}_{num_shots}_eval_{seed}.json",
+            f"{dataset_name}-testdev_{eval_model.lm_name}_{num_shots}_{'rices' if args.rices else 'random'}_{seed}.json",
         )
-        print("Temporary file saved to:", f"{dataset_name}results_{random_uuid}.json")
+        print("Test-dev results saved to ", f"{dataset_name}-testdev_{eval_model.lm_name}_{num_shots}_{'rices' if args.rices else 'random'}_{seed}.json")
         os.remove(f"{dataset_name}results_{random_uuid}.json")
-
+    
     return acc
 
 
