@@ -60,7 +60,7 @@ def fill_vizwiz_test_json(
 def fill_vqav2_test_json(
     input_path,
     output_path,
-    vqa_test_questions_json_path="/mmfs1/gscratch/efml/anasa2/eval_data/vqav2/v2_OpenEnded_mscoco_test-dev2015_questions.json",
+    vqa_test_questions_json_path="/mmfs1/gscratch/efml/anasa2/eval_data/vqav2/v2_OpenEnded_mscoco_test2015_questions.json",
 ):
     # read the input json and build a set with all question_ids
     with open(input_path, "r") as f:
@@ -106,7 +106,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "dataset",
+        "--dataset",
         type=str,
         choices=["vqav2", "vizwiz"],
     )

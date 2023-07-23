@@ -540,11 +540,11 @@ def main():
                     dataset_name="vqav2",
                     cached_features=cached_features,
                 )
-                if args.rank == 0:
+                if args.rank == 0 and vqa_score is not None:
                     print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
                     scores.append(vqa_score)
 
-            if args.rank == 0:
+            if args.rank == 0 and len(scores) > 0:
                 print(f"Shots {shot} Mean VQA score: {np.nanmean(scores)}")
                 results["vqav2"].append(
                     {
@@ -577,11 +577,11 @@ def main():
                     dataset_name="vizwiz",
                     cached_features=cached_features,
                 )
-                if args.rank == 0:
+                if args.rank == 0 and vizwiz_score is not None:
                     print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
                     scores.append(vizwiz_score)
 
-            if args.rank == 0:
+            if args.rank == 0 and len(scores) > 0:
                 print(f"Shots {shot} Mean VizWiz score: {np.nanmean(scores)}")
                 results["vizwiz"].append(
                     {
@@ -747,8 +747,7 @@ def evaluate_captioning(
         float: CIDEr score
 
     """
-    utils.random_seed(seed, args.rank)
-
+    
     if dataset_name == "coco":
         image_train_dir_path = args.coco_train_image_dir_path
         image_val_dir_path = args.coco_val_image_dir_path
@@ -779,7 +778,8 @@ def evaluate_captioning(
     )
 
     effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
-
+    
+    np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
@@ -799,6 +799,7 @@ def evaluate_captioning(
         # subset of the training set to sample context images from
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
 
+    utils.random_seed(seed, args.rank)
     predictions = defaultdict()
     for batch in tqdm(
         test_dataloader,
@@ -845,9 +846,6 @@ def evaluate_captioning(
         new_predictions = [
             postprocess_captioning_generation(out).replace('"', "") for out in outputs
         ]
-
-        if args.rank == 0:
-            print("Context:", batch_text[0], "\n", "Generated:", new_predictions[0])
 
         for i, sample_id in enumerate(batch["image_id"]):
             predictions[sample_id] = {
@@ -920,8 +918,7 @@ def evaluate_vqa(
     Returns:
         float: accuracy score
     """
-    utils.random_seed(seed, args.rank)
-
+    
     if dataset_name == "ok_vqa":
         train_image_dir_path = args.ok_vqa_train_image_dir_path
         train_questions_json_path = args.ok_vqa_train_questions_json_path
@@ -971,10 +968,11 @@ def evaluate_vqa(
 
     effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
+    np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
-        args.batch_size,
+        args.batch_size
     )
 
     if args.rices:
@@ -987,9 +985,10 @@ def evaluate_vqa(
             vision_encoder_pretrained=args.rices_vision_encoder_pretrained,
         )
     else:
-        # subset of the training set to sample context images from
-        query_set = utils.get_query_set(train_dataset, args.query_set_size * 4)
+        query_set = utils.get_query_set(train_dataset, args.query_set_size)
 
+
+    utils.random_seed(seed, args.rank)
     predictions = []
     for batch in tqdm(
         test_dataloader,
@@ -1038,12 +1037,6 @@ def evaluate_vqa(
             length_penalty=length_penalty,
         )
 
-        if args.rank == 0:
-            for i in range(len(batch["image"])):
-                print("Context:", batch_text[i])
-                print("Prediction:", outputs[i])
-                print()
-
         process_function = (
             postprocess_ok_vqa_generation
             if dataset_name == "ok_vqa"
@@ -1058,6 +1051,7 @@ def evaluate_vqa(
     # all gather
     all_predictions = [None for _ in range(args.world_size)]
     torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
+    
     if args.rank != 0:
         return None
 
@@ -1131,8 +1125,6 @@ def evaluate_classification(
             "evaluate_classification is currently only supported for OpenFlamingo"
         )
 
-    utils.random_seed(seed, args.rank)
-
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
         test_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
@@ -1160,6 +1152,7 @@ def evaluate_classification(
 
     effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
 
+    np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
@@ -1179,8 +1172,8 @@ def evaluate_classification(
         # subset of the training set to sample context images from
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
 
+    utils.random_seed(seed, args.rank)
     predictions = []
-
     for batch_idx, batch in tqdm(
         enumerate(test_dataloader),
         desc=f"Running inference {dataset_name}",
@@ -1255,8 +1248,6 @@ def evaluate_classification(
                     "pred_score": score,
                 }
             )
-            if args.rank == 0 and i == 0:
-                print("Context:", batch_text[0], "\n", "Generated:", topk[0])
 
     # all gather
     all_predictions = [None for _ in range(args.world_size)]

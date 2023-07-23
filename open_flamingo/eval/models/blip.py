@@ -21,21 +21,15 @@ class EvalModel(BaseEvalModel):
         assert (
             "processor_path" in model_args
             and "lm_path" in model_args
-            and "device" in model_args
         ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
 
-        self.device = (
-            int(model_args["device"])
-            if ("device" in model_args and model_args["device"] >= 0)
-            else "cpu"
-        )
         self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
         self.model = Blip2ForConditionalGeneration.from_pretrained(
             model_args["lm_path"]
         )
-        self.model.to(self.device)
         self.model.eval()
         self.processor.tokenizer.padding_side = "left"
+        self.lm_name = model_args["lm_path"].split("/")[-1]
 
     def _prepare_images(self, batch: List[List[torch.Tensor]]) -> torch.Tensor:
         """Preprocess images and stack them.
@@ -75,6 +69,7 @@ class EvalModel(BaseEvalModel):
         self,
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
+        min_generation_length: int, 
         max_generation_length: int,
         num_beams: int,
         length_penalty: float,
@@ -95,7 +90,7 @@ class EvalModel(BaseEvalModel):
                 input_ids.to(self.device),
                 attention_mask=attention_mask.to(self.device),
                 max_new_tokens=max_generation_length,
-                min_new_tokens=8,
+                min_new_tokens=min_generation_length,
                 num_beams=num_beams,
                 length_penalty=length_penalty,
             )
