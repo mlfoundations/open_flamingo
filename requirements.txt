@@ -1,6 +1,6 @@
 einops
 einops-exts
-transformers==4.28
+transformers>=4.28.1
 torch==2.0.1
 torchvision
 pillow
