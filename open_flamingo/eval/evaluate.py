@@ -753,7 +753,7 @@ def evaluate_captioning(
         float: CIDEr score
 
     """
-    
+
     if dataset_name == "coco":
         image_train_dir_path = args.coco_train_image_dir_path
         image_val_dir_path = args.coco_val_image_dir_path
@@ -784,7 +784,7 @@ def evaluate_captioning(
     )
 
     effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
-    
+
     np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
@@ -924,7 +924,7 @@ def evaluate_vqa(
     Returns:
         float: accuracy score
     """
-    
+
     if dataset_name == "ok_vqa":
         train_image_dir_path = args.ok_vqa_train_image_dir_path
         train_questions_json_path = args.ok_vqa_train_questions_json_path
@@ -978,7 +978,7 @@ def evaluate_vqa(
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
         args.num_samples if args.num_samples > 0 else len(test_dataset),
-        args.batch_size
+        args.batch_size,
     )
 
     if args.rices:
@@ -992,7 +992,6 @@ def evaluate_vqa(
         )
     else:
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
-
 
     utils.random_seed(seed, args.rank)
     predictions = []
@@ -1057,7 +1056,7 @@ def evaluate_vqa(
     # all gather
     all_predictions = [None for _ in range(args.world_size)]
     torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
-    
+
     if args.rank != 0:
         return None
 
@@ -1083,23 +1082,36 @@ def evaluate_vqa(
         print("No annotations provided, skipping accuracy computation.")
         acc = None
         if dataset_name == "vqav2":
-            from open_flamingo.scripts.fill_vqa_testdev_results import fill_vqav2_test_json
+            from open_flamingo.scripts.fill_vqa_testdev_results import (
+                fill_vqav2_test_json,
+            )
+
             fill_fn = fill_vqav2_test_json
         elif dataset_name == "vizwiz":
-            from open_flamingo.scripts.fill_vqa_testdev_results import fill_vizwiz_test_json
+            from open_flamingo.scripts.fill_vqa_testdev_results import (
+                fill_vizwiz_test_json,
+            )
+
             fill_fn = fill_vizwiz_test_json
-        else: 
-            print("Temporary file saved to ", f"{dataset_name}results_{random_uuid}.json")
+        else:
+            print(
+                "Temporary file saved to ", f"{dataset_name}results_{random_uuid}.json"
+            )
             return
-        
+
         fill_fn(
             f"{dataset_name}results_{random_uuid}.json",
             f"{dataset_name}-testdev_{eval_model.lm_name}_{num_shots}_{'rices' if args.rices else 'random'}_{seed}.json",
-            args.vqav2_final_test_questions_json_path if dataset_name == "vqav2" else args.vizwiz_test_questions_json_path
+            args.vqav2_final_test_questions_json_path
+            if dataset_name == "vqav2"
+            else args.vizwiz_test_questions_json_path,
         )
-        print("Test-dev results saved to ", f"{dataset_name}-testdev_{eval_model.lm_name}_{num_shots}_{'rices' if args.rices else 'random'}_{seed}.json")
+        print(
+            "Test-dev results saved to ",
+            f"{dataset_name}-testdev_{eval_model.lm_name}_{num_shots}_{'rices' if args.rices else 'random'}_{seed}.json",
+        )
         os.remove(f"{dataset_name}results_{random_uuid}.json")
-    
+
     return acc
 
 

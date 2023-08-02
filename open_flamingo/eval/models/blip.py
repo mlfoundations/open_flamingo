@@ -19,8 +19,7 @@ class EvalModel(BaseEvalModel):
 
     def __init__(self, model_args):
         assert (
-            "processor_path" in model_args
-            and "lm_path" in model_args
+            "processor_path" in model_args and "lm_path" in model_args
         ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
 
         self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
@@ -69,7 +68,7 @@ class EvalModel(BaseEvalModel):
         self,
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
-        min_generation_length: int, 
+        min_generation_length: int,
         max_generation_length: int,
         num_beams: int,
         length_penalty: float,

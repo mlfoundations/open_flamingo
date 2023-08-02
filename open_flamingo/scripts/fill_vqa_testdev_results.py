@@ -17,6 +17,7 @@ from eval.vqa_metric import VQAEval
 
 postprocessor = VQAEval(None, None)
 
+
 def fill_vizwiz_test_json(
     input_path,
     output_path,
@@ -25,7 +26,7 @@ def fill_vizwiz_test_json(
     # read the input json and build a set with all question_ids
     with open(input_path, "r") as f:
         input_json = json.load(f)
-    
+
     # postprocess answers
     question_id_to_answer = {}
     for q in input_json:
@@ -48,7 +49,7 @@ def fill_vizwiz_test_json(
         output_json.append(
             {
                 "image": q["image_id"],
-                "answer": question_id_to_answer.get(q["question_id"], "")
+                "answer": question_id_to_answer.get(q["question_id"], ""),
             }
         )
 
@@ -118,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--vqa_test_questions_json_path",
         type=str,
-        help="Path to the json file with all the vqa test questions."
+        help="Path to the json file with all the vqa test questions.",
     )
     parser.add_argument(
         "--output_path",

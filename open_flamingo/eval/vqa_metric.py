@@ -445,7 +445,7 @@ class VQAEval:
 
         self.setAccuracy(accQA, accQuesType, accAnsType)
         print("Done computing accuracy")
-    
+
     def processPunctuation(self, inText):
         outText = inText
         for p in self.punct:
@@ -535,7 +535,7 @@ def compute_vqa_accuracy(result_json_path, question_json_path, annotation_json_p
     Returns:
         float: VQA accuracy
     """
-    
+
     # create vqa object and vqaRes object
     vqa = VQA(annotation_json_path, question_json_path)
     vqaRes = vqa.loadRes(result_json_path, question_json_path)
