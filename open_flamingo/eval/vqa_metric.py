@@ -535,29 +535,6 @@ def compute_vqa_accuracy(result_json_path, question_json_path, annotation_json_p
     Returns:
         float: VQA accuracy
     """
-    # coding: utf-8
-    # dataDir = data_dir
-
-    # set up file names and paths
-    # versionType = 'v2_'  # this should be '' when using VQA v2.0 dataset
-    # 'OpenEnded' only for v2.0. 'OpenEnded' or 'MultipleChoice' for v1.0
-    # taskType = 'OpenEnded'
-    # 'mscoco' only for v1.0. 'mscoco' for real and 'abstract_v002' for abstract for v1.0.
-    # dataType = 'mscoco'
-    # dataSubType = 'train2014'
-    # annFile = '%s/%s%s_%s_annotations.json' % (
-    # dataDir, versionType, dataType, dataSubType)
-    # quesFile = '%s/%s%s_%s_%s_questions.json' % (
-    # dataDir, versionType, taskType, dataType, dataSubType)
-    # imgDir = '%s/%s/%s/' % (dataDir, dataType, dataSubType)
-    # resultType = res_file_name
-    # fileTypes = ['results', 'accuracy',
-    #              'evalQA', 'evalQuesType', 'evalAnsType']
-
-    # An example result json file has been provided in './Results' folder.
-
-    # [resFile, accuracyFile, evalQAFile, evalQuesTypeFile, evalAnsTypeFile] = ['%s/%s%s_%s_%s_%s_%s.json' % (dataDir, versionType, taskType, dataType, dataSubType,
-    # resultType, fileType) for fileType in fileTypes]
 
     # create vqa object and vqaRes object
     vqa = VQA(annotation_json_path, question_json_path)

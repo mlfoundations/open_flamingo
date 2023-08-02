@@ -139,3 +139,5 @@ wandb
 
 # Pyre type checker
 .pyre/
+
+__*.sh
