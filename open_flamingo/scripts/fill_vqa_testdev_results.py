@@ -20,7 +20,7 @@ postprocessor = VQAEval(None, None)
 def fill_vizwiz_test_json(
     input_path,
     output_path,
-    vqa_test_questions_json_path="/mmfs1/gscratch/efml/anasa2/eval_data/v7w/test_questions_vqa_format.json",
+    vqa_test_questions_json_path,
 ):
     # read the input json and build a set with all question_ids
     with open(input_path, "r") as f:
@@ -60,7 +60,7 @@ def fill_vizwiz_test_json(
 def fill_vqav2_test_json(
     input_path,
     output_path,
-    vqa_test_questions_json_path="/mmfs1/gscratch/efml/anasa2/eval_data/vqav2/v2_OpenEnded_mscoco_test2015_questions.json",
+    vqa_test_questions_json_path,
 ):
     # read the input json and build a set with all question_ids
     with open(input_path, "r") as f:
@@ -116,6 +116,11 @@ if __name__ == "__main__":
         help="Path to the json file with the subset of the vqa test-dev questions.",
     )
     parser.add_argument(
+        "--vqa_test_questions_json_path",
+        type=str,
+        help="Path to the json file with all the vqa test questions."
+    )
+    parser.add_argument(
         "--output_path",
         type=str,
         help="Path to store the filled json.",
@@ -126,9 +131,11 @@ if __name__ == "__main__":
         fill_vqav2_test_json(
             args.input_path,
             args.output_path,
+            args.vqa_test_questions_json_path,
         )
     else:
         fill_vizwiz_test_json(
             args.input_path,
             args.output_path,
+            args.vqa_test_questions_json_path,
         )

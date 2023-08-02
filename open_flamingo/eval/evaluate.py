@@ -231,6 +231,12 @@ parser.add_argument(
     type=str,
     default=None,
 )
+parser.add_argument(
+    "--vqav2_final_test_questions_json_path",
+    type=str,
+    help="Path to the v2_OpenEnded_mscoco_test2015_questions.json file containing all test questions. This is required to format the predictions for EvalAI.",
+    default=None,
+)
 
 ## OK-VQA Dataset
 parser.add_argument(
@@ -1089,6 +1095,7 @@ def evaluate_vqa(
         fill_fn(
             f"{dataset_name}results_{random_uuid}.json",
             f"{dataset_name}-testdev_{eval_model.lm_name}_{num_shots}_{'rices' if args.rices else 'random'}_{seed}.json",
+            args.vqav2_final_test_questions_json_path if dataset_name == "vqav2" else args.vizwiz_test_questions_json_path
         )
         print("Test-dev results saved to ", f"{dataset_name}-testdev_{eval_model.lm_name}_{num_shots}_{'rices' if args.rices else 'random'}_{seed}.json")
         os.remove(f"{dataset_name}results_{random_uuid}.json")
