@@ -154,14 +154,14 @@ class Flamingo(nn.Module):
         Returns:
             torch.Tensor: lang_x with generated tokens appended to it
         """
-        num_beams = kwargs.pop('num_beams', 1)
+        num_beams = kwargs.pop("num_beams", 1)
         if num_beams > 1:
             vision_x = vision_x.repeat_interleave(num_beams, dim=0)
 
         self.lang_encoder._use_cached_vision_x = True
         self._encode_vision_x(vision_x=vision_x)
 
-        eos_token_id = kwargs.pop('eos_token_id', self.eoc_token_id)
+        eos_token_id = kwargs.pop("eos_token_id", self.eoc_token_id)
         output = self.lang_encoder.generate(
             input_ids=lang_x,
             attention_mask=attention_mask,
