@@ -2,7 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/open_flamingo.svg)](https://badge.fury.io/py/open_flamingo)
 
-Blog posts: [1](https://laion.ai/blog/open-flamingo/), [2](https://laion.ai/blog/open-flamingo-v2/) | Paper (coming soon) | [Demo](https://huggingface.co/spaces/openflamingo/OpenFlamingo)
+[Paper](https://arxiv.org/abs/2308.01390) | Blog posts: [1](https://laion.ai/blog/open-flamingo/), [2](https://laion.ai/blog/open-flamingo-v2/) | [Demo](https://huggingface.co/spaces/openflamingo/OpenFlamingo)
 
 Welcome to our open source implementation of DeepMind's [Flamingo](https://www.deepmind.com/blog/tackling-multiple-tasks-with-a-single-visual-language-model)! 
 
