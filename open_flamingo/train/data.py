@@ -14,7 +14,7 @@ import torchvision
 import webdataset as wds
 from PIL import Image
 import base64
-from scipy import linear_sum_assignment
+from scipy.optimize import linear_sum_assignment
 
 from data_utils import *
 
