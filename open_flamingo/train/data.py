@@ -171,16 +171,16 @@ def preprocess_interleaved(
 
         image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
         valid_images.append(image)
-        valid_image_indices.append(i)        
+        valid_image_indices.append(i)
 
     if len(valid_image_indices) == 0:
         raise ValueError("No images in sample")
 
-    sim_matrix = np.array(sim_matrix) # of shape images x sentences
+    sim_matrix = np.array(sim_matrix)  # of shape images x sentences
     sim_matrix = sim_matrix[valid_image_indices]
 
     # negate the similarities to turn then into costs
-    cost_matrix = - sim_matrix
+    cost_matrix = -sim_matrix
     # find one to one assignements
     image_indices, sentence_indices = linear_sum_assignment(cost_matrix)
 
