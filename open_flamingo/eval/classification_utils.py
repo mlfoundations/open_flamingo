@@ -1006,3 +1006,8 @@ HM_CLASSNAMES = [
     "no",
     "yes",
 ]
+
+WATERBIRDS_CLASSNAMES = [
+    "landbird",
+    "waterbird",
+]

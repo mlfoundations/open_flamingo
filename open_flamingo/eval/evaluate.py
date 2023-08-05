@@ -27,6 +27,7 @@ from tqdm import tqdm
 from classification_utils import (
     IMAGENET_CLASSNAMES,
     HM_CLASSNAMES,
+    WATERBIRDS_CLASSNAMES,
 )
 
 from eval_model import BaseEvalModel
@@ -109,6 +110,29 @@ parser.add_argument(
     help="Directory where rices features for all choices of in-context examples are stored as a pkl file with the dataset name. If None, features are re-computed by script.",
 )
 
+# Distributed evaluation
+parser.add_argument(
+    "--dist-url",
+    default="env://",
+    type=str,
+    help="url used to set up distributed training",
+)
+parser.add_argument(
+    "--dist-backend", default="nccl", type=str, help="distributed backend"
+)
+parser.add_argument(
+    "--horovod",
+    default=False,
+    action="store_true",
+    help="Use horovod for distributed training.",
+)
+parser.add_argument(
+    "--no-set-device-rank",
+    default=False,
+    action="store_true",
+    help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
+)
+
 # Per-dataset evaluation flags
 for ds in [
     "coco",
@@ -120,7 +144,6 @@ for ds in [
     "flickr30",
     "hateful_memes",
     "waterbirds",
-    "celebA",
 ]:
     parser.add_argument(
         f"--eval_{ds}",
@@ -342,7 +365,6 @@ parser.add_argument(
     type=str,
     default=".",
 )
-parser.add_argument("--wilds_split_scheme", type=str, choices=["ID", "OOD"])
 
 
 def main():
@@ -399,8 +421,13 @@ def main():
 
             if args.rank == 0:
                 if type(scores[0]) == tuple:
-                    mean = (np.nanmean([s[i] for s in scores]) for i in range(len(scores[0])))
-                    stddev = (np.nanstd([s[i] for s in scores]) for i in range(len(scores[0])))
+                    mean = (
+                        np.nanmean([s[i] for s in scores])
+                        for i in range(len(scores[0]))
+                    )
+                    stddev = (
+                        np.nanstd([s[i] for s in scores]) for i in range(len(scores[0]))
+                    )
                 else:
                     mean = np.nanmean(scores)
                     stddev = np.nanstd(scores)
@@ -714,6 +741,55 @@ def main():
                         "trials": scores,
                         "mean": np.nanmean(scores),
                         "stddev": np.nanstd(scores),
+                    }
+                )
+
+    if args.eval_waterbirds:
+        print("Evaluating on Waterbirds...")
+
+        # load cached demonstration features for RICES
+        if args.cached_demonstration_features is not None:
+            cached_features = torch.load(
+                f"{args.cached_demonstration_features}/waterbirds.pkl",
+                map_location="cpu",
+            )
+        else:
+            cached_features = None
+
+        for shot in args.shots:
+            avg_scores, wg_scores = [], []
+            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                waterbirds_avg, waterbirds_wg = evaluate_classification(
+                    args,
+                    eval_model=eval_model,
+                    num_shots=shot,
+                    seed=seed,
+                    no_kv_caching=args.no_caching_for_classification,
+                    dataset_name="waterbirds",
+                    cached_features=cached_features,
+                )
+                if args.rank == 0:
+                    print(
+                        f"Shots {shot} Trial {trial} "
+                        f"Waterbirds avg acc: {waterbirds_avg} "
+                        f"Waterbirds wg acc: {waterbirds_wg}"
+                    )
+                    avg_scores.append(waterbirds_avg)
+                    wg_scores.append(waterbirds_wg)
+
+            if args.rank == 0:
+                print(
+                    f"Shots {shot} Mean Waterbirds avg score: {np.nanmean(avg_scores)} wg score: {np.nanmean(wg_scores)}"
+                )
+                results["waterbirds"].append(
+                    {
+                        "shots": shot,
+                        "trials_avg": avg_scores,
+                        "trials_wg": wg_scores,
+                        "avg_mean": np.nanmean(avg_scores),
+                        "avg_stddev": np.nanstd(avg_scores),
+                        "wg_mean": np.nanmean(wg_scores),
+                        "wg_stddev": np.nanstd(wg_scores),
                     }
                 )
 
@@ -1156,7 +1232,9 @@ def evaluate_classification(
     if dataset_name == "imagenet":
         train_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "train"))
         test_dataset = ImageNetDataset(os.path.join(args.imagenet_root, "val"))
-        prompt_fn = lambda x: eval_model.get_imagenet_prompt(label=x["class_name"])
+        prompt_fn = lambda x, test: eval_model.get_imagenet_prompt(
+            label=x["class_name"] if not test else None
+        )
         all_class_names = IMAGENET_CLASSNAMES
         k = 5
     elif dataset_name == "hateful_memes":
@@ -1168,10 +1246,26 @@ def evaluate_classification(
             args.hateful_memes_image_dir_path,
             args.hateful_memes_test_annotations_json_path,
         )
-        prompt_fn = lambda x: eval_model.get_hateful_memes_prompt(
-            text=x["ocr"], label=x["class_name"]
+        prompt_fn = lambda x, test: eval_model.get_hateful_memes_prompt(
+            text=x["ocr"], label=x["class_name"] if not test else None
         )
         all_class_names = HM_CLASSNAMES
+        k = 1
+    elif dataset_name in ("waterbirds",):  # subpopulation shift datasets
+        train_dataset = WILDSDataset(
+            dataset_name=dataset_name,
+            split="train",
+            root_dir=args.wilds_root,
+        )
+        test_dataset = WILDSDataset(
+            dataset_name=dataset_name,
+            split="test",
+            root_dir=args.wilds_root,
+        )
+        prompt_fn = lambda x, test: eval_model.get_waterbirds_prompt(
+            label=x["class_name"] if not test else None
+        )
+        all_class_names = WATERBIRDS_CLASSNAMES
         k = 1
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
@@ -1231,15 +1325,14 @@ def evaluate_classification(
                     context_images = []
                 batch_images.append(context_images + [batch["image"][i]])
 
-                context_text = "".join([prompt_fn(x) for x in batch_demo_samples[i]])
+                context_text = "".join([prompt_fn(x, test=False) for x in batch_demo_samples[i]])
 
                 # Keep the text but remove the image tags for the zero-shot case
                 if num_shots == 0:
                     context_text = context_text.replace("<image>", "")
 
                 batch_text.append(
-                    context_text
-                    + prompt_fn({"ocr": batch["ocr"][i], "class_name": None})
+                    context_text + prompt_fn({k: batch[k][i] for k in batch}, test=True)
                 )
 
             # get predicted class names
@@ -1256,7 +1349,7 @@ def evaluate_classification(
         # ensemble logprobs together
         logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
 
-        predicted_classnames, predicted_logprobs = utils.get_predicted_classnames(
+        predicted_class_ixs, predicted_classnames, predicted_logprobs = utils.get_predicted_classnames(
             logprobs,
             k,
             class_id_to_name,
@@ -1268,16 +1361,17 @@ def evaluate_classification(
             score = torch.exp(
                 predicted_logprobs[i][0] - torch.logsumexp(logprobs[i], dim=0)
             ).item()
-            predictions.append(
-                {
-                    "id": batch["id"][i],
-                    "gt_label": y_i,
-                    "pred_label": topk[0],
-                    "pred_score": score,
-                }
-            )
-            if args.rank == 0 and i == 0:
-                print("Context:", batch_text[0], "\n", "Generated:", topk[0])
+            pred_info = {
+                "id": batch["id"][i],
+                "gt_label": y_i,
+                "gt_id": batch["class_id"][i],
+                "pred_label": topk[0],
+                "pred_score": score,
+                "pred_class_id": predicted_class_ixs[i][0],
+            }
+            if "metadata" in batch:
+                pred_info["metadata"] = batch["metadata"][i]
+            predictions.append(pred_info)
 
     # all gather
     all_predictions = [None for _ in range(args.world_size)]
@@ -1300,15 +1394,14 @@ def evaluate_classification(
             for pred in all_predictions
         ]
         return roc_auc_score(gts, pred_scores)
-    elif dataset_name in ("waterbirds", "celebA"):
+    elif dataset_name == "waterbirds":
         # return avg and worst group accuracies
-        y_pred = [pred["pred_class_id"] for pred in all_predictions]
-        y_true = [pred["gt_id"] for pred in all_predictions]
+        y_pred = torch.Tensor([pred["pred_class_id"] for pred in all_predictions])
+        y_true = torch.Tensor([pred["gt_id"] for pred in all_predictions])
         metadata = torch.stack([pred["metadata"] for pred in all_predictions])
-        all_results = test_dataset.eval(
-            y_pred, y_true, metadata
-        )[0]
-        return all_results["acc_avg"], all_results["acc_wg"]
+        all_results = test_dataset.dataset.eval(y_pred, y_true, metadata)[0]
+        print(all_results)
+        return all_results["adj_acc_avg"], all_results["acc_wg"]
     else:
         # return top-1 accuracy
         acc1 = sum(

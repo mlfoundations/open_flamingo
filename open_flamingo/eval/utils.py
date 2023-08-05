@@ -93,6 +93,7 @@ def get_predicted_classnames(logprobs, k, class_id_to_name):
         - class_id_to_name: dict mapping class index to classname
 
     Returns:
+        - top-k predicted class ixs (B, k) type int
         - top-k predicted classnames shape (B, k) type str
         - top-k logprobs shape (B, k) type float
     """
@@ -102,7 +103,7 @@ def get_predicted_classnames(logprobs, k, class_id_to_name):
         [class_id_to_name[ix] for ix in item] for item in predictions.tolist()
     ]
     predicted_logprobs = torch.gather(logprobs, 1, predictions)
-    return predicted_classnames, predicted_logprobs
+    return predictions, predicted_classnames, predicted_logprobs
 
 
 def get_cast_dtype(precision: str):

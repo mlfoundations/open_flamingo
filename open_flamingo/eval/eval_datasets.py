@@ -5,7 +5,10 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
-from open_flamingo.eval.classification_utils import IMAGENET_CLASSNAMES
+from open_flamingo.eval.classification_utils import (
+    IMAGENET_CLASSNAMES,
+    WATERBIRDS_CLASSNAMES,
+)
 
 
 class CaptionDataset(Dataset):
@@ -156,9 +159,11 @@ class HatefulMemesDataset(Dataset):
             "class_id": annotation["label"],
         }
 
+
 class WILDSDataset(Dataset):
-    def __init__(self, dataset_name, split, root_dir):
+    def __init__(self, dataset_name: str, split: str, root_dir: str):
         import wilds
+
         self.full_dataset = wilds.get_dataset(
             dataset_name,
             root_dir=root_dir,
@@ -169,24 +174,24 @@ class WILDSDataset(Dataset):
             self.class_id_to_name = {i: s for i, s in enumerate(WATERBIRDS_CLASSNAMES)}
             self.grouper = wilds.common.grouper.CombinatorialGrouper(
                 dataset=self.full_dataset,
-                groupby_fields=["background"],
-            )
-        elif dataset_name == "celebA":
-            self.class_id_to_name = {i: s for i, s in enumerate(CELEBA_CLASSNAMES)}
-            self.grouper = wilds.common.grouper.CombinatorialGrouper(
-                dataset=self.full_dataset,
-                groupby_fields=["Male"],
+                groupby_fields=["background", "y"],
             )
         else:
             raise Exception(f"Unimplemented WILDS dataset {dataset_name}")
-    
+        
+    def __len__(self):
+        return len(self.dataset)
+
     def __getitem__(self, idx):
         x, y, m = self.dataset[idx]
+        y = y.item()
         return {
             "id": idx,
             "image": x,
             "class_id": y,
             "class_name": self.class_id_to_name[y],
-            "train_domain_id": self.grouper.metadata_to_group(m).item(),
+            "domain": self.grouper.group_str(
+                self.grouper.metadata_to_group(m.unsqueeze(0)).item()
+            ),
             "metadata": m,
         }

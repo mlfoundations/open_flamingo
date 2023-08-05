@@ -87,16 +87,3 @@ class BaseEvalModel(abc.ABC):
         Returns:
             (B, |all_class_names|) tensor containing the logprobs for each class name.
         """
-        Returns a (B, |all_class_names|) tensor containing the logprobs for each class name.
-        Args:
-            batch_text: list of text strings, with the text "<image>" in place
-                of any images to be included.
-            batch_images: images to provide to model. Should be a list of lists,
-                where each list contains the images for a single example.
-            all_class_names: list of all class names.
-            use_cache: whether to cache the context to speed up evaluations.
-            normalize_length: whether to normalize logprobs by the length of the
-                class name
-        Returns:
-            (B, |all_class_names|) tensor containing the logprobs for each class name.
-        """

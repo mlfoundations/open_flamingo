@@ -328,7 +328,10 @@ class EvalModel(BaseEvalModel):
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
 
     def get_imagenet_prompt(self, label=None) -> str:
-        return f"<image>Output:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+        return f"<image>An image of a {label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
 
     def get_hateful_memes_prompt(self, text, label=None) -> str:
         return f"<image>is an image with: '{text}' written on it. Is it hateful? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+
+    def get_waterbirds_prompt(self, label=None) -> str:
+        return f"<image>Question: Is this a landbird or waterbird? Answer: {label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
