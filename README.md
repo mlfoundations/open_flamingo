@@ -82,7 +82,7 @@ Note: as part of our v2 release, we have deprecated a previous LLaMA-based check
 To instantiate an OpenFlamingo model with one of our released weights, initialize the model as above and use the following code.
 
 ```python
-# grab model checkpoint from huggingface hub
+# grab model checkpoint from Hugging Face hub
 from huggingface_hub import hf_hub_download
 import torch
 
