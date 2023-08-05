@@ -56,6 +56,8 @@ class EvalModel(BaseEvalModel):
         self.model.eval()
         self.tokenizer.padding_side = "left"
 
+        self.lm_name = model_args["lm_path"].split("/")[-1]
+
         # autocast
         self.autocast = get_autocast(model_args["precision"])
         self.cast_dtype = get_cast_dtype(model_args["precision"])

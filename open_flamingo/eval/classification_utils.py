@@ -1001,9 +1001,8 @@ IMAGENET_CLASSNAMES = [
     "corn cob",
     "toilet paper",
 ]
+
 HM_CLASSNAMES = [
     "no",
     "yes",
 ]
-WATERBIRDS_CLASSNAMES = ["landbird", "waterbird"]
-CELEBA_CLASSNAMES = ["not blonde", "blonde"]

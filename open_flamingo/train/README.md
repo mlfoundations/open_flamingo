@@ -19,7 +19,9 @@ We provide scripts to convert MMC4 to this format:
 2. Run `scripts/convert_mmc4_to_wds.py` to convert the downloaded items into the expected tar files.
 
 ### ChatGPT-generated sequences
-A subset of our models (listed below) were also trained on experimental ChatGPT-generated (image, text) sequences, where images are pulled from LAION. We are working to release these sequences soon.
+A subset of our models (listed below) were also trained on experimental ChatGPT-generated (image, text) sequences, where images are pulled from LAION. The shards containing these sequences can be found at [this CodaLab worksheet](https://worksheets.codalab.org/worksheets/0xdcd888ff7c754ae680c5e038f6ed1d9b). We are unable to distribute raw images in the released shards; images must be pre-downloaded from the urls in the json files and converted to base64 before using this data for training in our codebase.
+
+Models trained with ChatGPT-generated sequences:
 
 * OpenFlamingo-4B-vitl-rpj3b
 * OpenFlamingo-4B-vitl-rpj3b-langinstruct

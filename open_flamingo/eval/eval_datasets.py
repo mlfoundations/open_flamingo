@@ -5,7 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
-from open_flamingo.eval.classification_utils import IMAGENET_CLASSNAMES, WATERBIRDS_CLASSNAMES, CELEBA_CLASSNAMES
+from open_flamingo.eval.classification_utils import IMAGENET_CLASSNAMES
 
 
 class CaptionDataset(Dataset):
@@ -122,7 +122,6 @@ class ImageNetDataset(ImageFolder):
         self.class_id_to_name = dict(
             zip(range(len(IMAGENET_CLASSNAMES)), IMAGENET_CLASSNAMES)
         )
-
 
     def __getitem__(self, idx):
         sample, target = super().__getitem__(idx)
