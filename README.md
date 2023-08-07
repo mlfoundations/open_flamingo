@@ -219,6 +219,15 @@ We would also like to thank [Jean-Baptiste Alayrac](https://www.jbalayrac.com) a
 If you found this repository useful, please consider citing:
 
 ```
+@article{awadalla2023openflamingo,
+  title={OpenFlamingo: An Open-Source Framework for Training Large Autoregressive Vision-Language Models},
+  author={Anas Awadalla and Irena Gao and Josh Gardner and Jack Hessel and Yusuf Hanafy and Wanrong Zhu and Kalyani Marathe and Yonatan Bitton and Samir Gadre and Shiori Sagawa and Jenia Jitsev and Simon Kornblith and Pang Wei Koh and Gabriel Ilharco and Mitchell Wortsman and Ludwig Schmidt},
+  journal={arXiv preprint arXiv:2308.01390},
+  year={2023}
+}
+```
+
+```
 @software{anas_awadalla_2023_7733589,
   author = {Awadalla, Anas and Gao, Irena and Gardner, Joshua and Hessel, Jack and Hanafy, Yusuf and Zhu, Wanrong and Marathe, Kalyani and Bitton, Yonatan and Gadre, Samir and Jitsev, Jenia and Kornblith, Simon and Koh, Pang Wei and Ilharco, Gabriel and Wortsman, Mitchell and Schmidt, Ludwig},
   title = {OpenFlamingo},
