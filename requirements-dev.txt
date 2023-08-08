@@ -3,3 +3,13 @@ mypy
 pylint
 pytest
 requests
+wandb
+
+torchvision  # only used in train/data.py and eval/eval_datasets.py
+braceexpand  # only used in train/data_utils.py
+webdataset  # only used in train/data_utils.py
+nltk  # used in eval/ok_vqa_utils.py
+inflection  # only used in eval/ok_vqa_utils.py
+pycocoevalcap  # used in eval/coco_metric.py
+pycocotoolsa  # used in eval/coco_metric.py
+tqdm  # used in train/train_utils.py
