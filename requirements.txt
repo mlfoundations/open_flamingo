@@ -5,6 +5,7 @@ torch==2.0.1
 pillow
 open_clip_torch>=2.16.0 
 sentencepiece==0.1.98 
+scipy
 
 # more-itertools  # not used anywhere
 # datasets  # doesn't appear to be used anywhere

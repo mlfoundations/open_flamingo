@@ -16,8 +16,9 @@ if __name__ == "__main__":
         "sentencepiece==0.1.98",
     ]
 
-    DEV = [
+    EVAL = [
         "wandb",
+        "scipy",
         "torchvision",
         "nltk",
         "inflection",
@@ -45,9 +46,9 @@ if __name__ == "__main__":
         keywords=["machine learning"],
         install_requires=REQUIREMENTS,
         extras_require={
-            "dev": DEV,
+            "eval": EVAL,
             "training": TRAINING,
-            "all": list(set(REQUIREMENTS + DEV + TRAINING)),
+            "all": list(set(REQUIREMENTS + EVAL + TRAINING)),
         },
         classifiers=[
             "Development Status :: 4 - Beta",
