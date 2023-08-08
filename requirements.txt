@@ -4,8 +4,8 @@ transformers>=4.28.1
 torch==2.0.1
 pillow
 open_clip_torch>=2.16.0 
+sentencepiece==0.1.98 
 
 # more-itertools  # not used anywhere
 # datasets  # doesn't appear to be used anywhere
 # scipy  # scipy does not appear to be used in this package
-# sentencepiece==0.1.98  # does not appear to be used
