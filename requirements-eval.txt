@@ -4,7 +4,7 @@ torchvision
 nltk
 inflection
 pycocoevalcap
-pycocotoolsa
+pycocotools
 
 black
 mypy
