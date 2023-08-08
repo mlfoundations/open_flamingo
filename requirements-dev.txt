@@ -4,6 +4,7 @@ pylint
 pytest
 requests
 wandb
+scipy
 
 torchvision  # only used in train/data.py and eval/eval_datasets.py
 braceexpand  # only used in train/data_utils.py
