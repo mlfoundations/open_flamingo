@@ -13,7 +13,7 @@ if __name__ == "__main__":
         "torch==2.0.1",
         "pillow",
         "open_clip_torch>=2.16.0",
-        "sentencepiece==0.1.98"
+        "sentencepiece==0.1.98",
     ]
 
     DEV = [
