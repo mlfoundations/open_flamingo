@@ -44,7 +44,7 @@ print(checkpoint_path)
 
 This should place the OpenFlamingo model at the expected location in the evaluation script.
 
-For TextVQA and VizWiz we expect annotations to be formatted differently than the original datasets. We provide the custom annotations in `open_flamingo/open_flamingo/eval/data/`.
+For TextVQA and VizWiz we expect annotations to be formatted differently than the original datasets. We provide the custom annotations in `open_flamingo/open_flamingo/eval/data/`. We have also uploaded all the annotation files in a [huggingface dataset](https://huggingface.co/datasets/openflamingo/eval_benchmark/tree/main) for easy access.
 
 # Evaluating using RICES (Retrieval-based In-Context Example Selection)
 
