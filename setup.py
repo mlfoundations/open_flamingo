@@ -23,7 +23,7 @@ if __name__ == "__main__":
         "inflection",
         "pycocoevalcap",
         "pycocotools",
-        "tqdm"
+        "tqdm",
     ]
 
     TRAINING = [
