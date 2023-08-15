@@ -1,10 +1,10 @@
-wandb
 scipy
 torchvision
 nltk
 inflection
 pycocoevalcap
 pycocotools
+tqdm
 
 black
 mypy

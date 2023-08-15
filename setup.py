@@ -17,20 +17,21 @@ if __name__ == "__main__":
     ]
 
     EVAL = [
-        "wandb",
         "scipy",
         "torchvision",
         "nltk",
         "inflection",
         "pycocoevalcap",
         "pycocotools",
+        "tqdm"
     ]
 
     TRAINING = [
+        "wandb",
         "torchvision",
         "braceexpand",
-        "tqdm",
         "webdataset",
+        "tqdm",
     ]
 
     setup(
