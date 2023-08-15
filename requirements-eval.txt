@@ -1,0 +1,13 @@
+scipy
+torchvision
+nltk
+inflection
+pycocoevalcap
+pycocotools
+tqdm
+
+black
+mypy
+pylint
+pytest
+requests

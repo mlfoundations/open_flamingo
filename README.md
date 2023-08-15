@@ -36,6 +36,20 @@ or to create a conda environment for running OpenFlamingo, run
 conda env create -f environment.yml
 ```
 
+To install training or eval dependencies, run one of the first two commands. To install everything, run the third command.
+```
+pip install open-flamingo[training]
+pip install open-flamingo[eval]
+pip install open-flamingo[all]
+```
+
+There are three `requirements.txt` files: 
+- `requirements.txt` 
+- `requirements-training.txt`
+- `requirements-eval.txt`
+
+Depending on your use case, you can install any of these with `pip install -r <requirements-file.txt>`. The base file contains only the dependencies needed for running the model.
+
 # Approach
 OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. Multimodal C4) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context learning.
 
