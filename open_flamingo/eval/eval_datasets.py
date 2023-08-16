@@ -8,6 +8,7 @@ from torchvision.datasets import ImageFolder
 from open_flamingo.eval.classification_utils import (
     IMAGENET_CLASSNAMES,
     WATERBIRDS_CLASSNAMES,
+    CAMELYON17_CLASSNAMES,
 )
 
 
@@ -176,9 +177,15 @@ class WILDSDataset(Dataset):
                 dataset=self.full_dataset,
                 groupby_fields=["background", "y"],
             )
+        elif dataset_name == "camelyon17":
+            self.class_id_to_name = {i: s for i, s in enumerate(CAMELYON17_CLASSNAMES)}
+            self.grouper = wilds.common.grouper.CombinatorialGrouper(
+                dataset=self.full_dataset,
+                groupby_fields=["hospital"],
+            )
         else:
             raise Exception(f"Unimplemented WILDS dataset {dataset_name}")
-        
+
     def __len__(self):
         return len(self.dataset)
 

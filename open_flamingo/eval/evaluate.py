@@ -30,6 +30,7 @@ from classification_utils import (
     IMAGENET_CLASSNAMES,
     HM_CLASSNAMES,
     WATERBIRDS_CLASSNAMES,
+    CAMELYON17_CLASSNAMES,
 )
 
 from eval_model import BaseEvalModel
@@ -50,6 +51,7 @@ SUPPORTED_DATASETS = [
     "flickr30",
     "hateful_memes",
     "waterbirds",
+    "camelyon17",
 ]
 
 parser = argparse.ArgumentParser()
@@ -449,18 +451,24 @@ def eval_dataset(
                         f"std_{metric_name}": stds[metric_name],
                     }
                 )
-            results[dataset_name].append({"shots": shot, "seeds": args.trial_seeds, **setting_results})
+            results[dataset_name].append(
+                {"shots": shot, "seeds": args.trial_seeds, **setting_results}
+            )
 
             # log to wandb
             if args.report_to_wandb:
-                setting_results = {f"{dataset_name}/{k}": v for k, v in setting_results.items() if "trials" not in k}
+                setting_results = {
+                    f"{dataset_name}/{k}": v
+                    for k, v in setting_results.items()
+                    if "trials" not in k
+                }
                 wandb.log(
                     {
                         f"{dataset_name}/results": wandb_table,
                         **setting_results,
                     },
                     step=shot,
-                    commit=True
+                    commit=True,
                 )
 
 
@@ -578,6 +586,17 @@ def main():
         eval_dataset(
             args,
             dataset_name="waterbirds",
+            eval_model=eval_model,
+            results=results,
+            eval_fn=evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+
+    if args.eval_camelyon17:
+        eval_dataset(
+            args,
+            dataset_name="camelyon17",
             eval_model=eval_model,
             results=results,
             eval_fn=evaluate_classification,
@@ -1058,6 +1077,22 @@ def evaluate_classification(
             label=x["class_name"] if not test else None
         )
         all_class_names = WATERBIRDS_CLASSNAMES
+        k = 1
+    elif dataset_name == "camelyon17":
+        train_dataset = WILDSDataset(
+            dataset_name=dataset_name,
+            split="train",
+            root_dir=args.wilds_root,
+        )
+        test_dataset = WILDSDataset(
+            dataset_name=dataset_name,
+            split="test",
+            root_dir=args.wilds_root,
+        )
+        prompt_fn = lambda x, test: eval_model.get_camelyon17_prompt(
+            label=x["class_name"] if not test else None
+        )
+        all_class_names = CAMELYON17_CLASSNAMES
         k = 1
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")

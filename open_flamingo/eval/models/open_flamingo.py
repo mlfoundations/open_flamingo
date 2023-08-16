@@ -335,3 +335,6 @@ class EvalModel(BaseEvalModel):
 
     def get_waterbirds_prompt(self, label=None) -> str:
         return f"<image>Question: Is this a landbird or waterbird? Answer: {label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+
+    def get_camelyon17_prompt(self, label=None) -> str:
+        return f"<image>Question: Is this a normal tissue or cancer tissue? Answer: {label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"

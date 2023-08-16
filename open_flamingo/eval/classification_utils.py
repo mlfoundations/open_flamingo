@@ -1011,3 +1011,8 @@ WATERBIRDS_CLASSNAMES = [
     "landbird",
     "waterbird",
 ]
+
+CAMELYON17_CLASSNAMES = [
+    "normal tissue",
+    "tumor tissue",
+]
