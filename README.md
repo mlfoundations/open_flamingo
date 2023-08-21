@@ -72,7 +72,8 @@ model, image_processor, tokenizer = create_model_and_transforms(
     clip_vision_encoder_pretrained="openai",
     lang_encoder_path="anas-awadalla/mpt-1b-redpajama-200b",
     tokenizer_path="anas-awadalla/mpt-1b-redpajama-200b",
-    cross_attn_every_n_layers=1
+    cross_attn_every_n_layers=1,
+    cache_dir="PATH/TO/CACHE/DIR"  # Defaults to ~/.cache
 )
 ```
 

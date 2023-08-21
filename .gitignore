@@ -140,4 +140,7 @@ wandb
 # Pyre type checker
 .pyre/
 
+# Cache
+cache/
+
 __*.sh
