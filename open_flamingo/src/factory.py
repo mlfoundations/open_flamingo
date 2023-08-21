@@ -1,3 +1,5 @@
+from typing import Optional
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import open_clip
 
@@ -15,6 +17,7 @@ def create_model_and_transforms(
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
     freeze_lm_embeddings: bool = False,
+    cache_dir: Optional[str] = None,
     **flamingo_kwargs,
 ):
     """
@@ -29,13 +32,17 @@ def create_model_and_transforms(
         cross_attn_every_n_layers (int, optional): determines how often to add a cross-attention layer. Defaults to 1.
         use_local_files (bool, optional): whether to use local files. Defaults to False.
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
+        freeze_lm_embeddings (bool, optional): whether to freeze LM input embeddings when configuring Perceiver.
+        cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
         Image processor: Pipeline to preprocess input images
         Tokenizer: A tokenizer for the language model
     """
     vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
-        clip_vision_encoder_path, pretrained=clip_vision_encoder_pretrained
+        clip_vision_encoder_path,
+        pretrained=clip_vision_encoder_pretrained,
+        cache_dir=cache_dir,
     )
     # set the vision encoder to output the visual features
     vision_encoder.visual.output_tokens = True
@@ -44,6 +51,7 @@ def create_model_and_transforms(
         tokenizer_path,
         local_files_only=use_local_files,
         trust_remote_code=True,
+        cache_dir=cache_dir,
     )
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens(
@@ -58,6 +66,7 @@ def create_model_and_transforms(
         lang_encoder_path,
         local_files_only=use_local_files,
         trust_remote_code=True,
+        cache_dir=cache_dir,
     )
 
     # hacks for MPT-1B, which doesn't have a get_input_embeddings method
