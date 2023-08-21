@@ -40,16 +40,23 @@ def create_model_and_transforms(
         Tokenizer: A tokenizer for the language model
     """
     vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
-        clip_vision_encoder_path, pretrained=clip_vision_encoder_pretrained, cache_dir=cache_dir
+        clip_vision_encoder_path,
+        pretrained=clip_vision_encoder_pretrained,
+        cache_dir=cache_dir,
     )
     # set the vision encoder to output the visual features
     vision_encoder.visual.output_tokens = True
 
     text_tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path, local_files_only=use_local_files, trust_remote_code=True, cache_dir=cache_dir
+        tokenizer_path,
+        local_files_only=use_local_files,
+        trust_remote_code=True,
+        cache_dir=cache_dir,
     )
     # add Flamingo special tokens to the tokenizer
-    text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>"]})
+    text_tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["<|endofchunk|>", "<image>"]}
+    )
     if text_tokenizer.pad_token is None:
         # Issue: GPT models don't have a pad token, which we use to
         # modify labels for the loss.
@@ -87,7 +94,9 @@ def create_model_and_transforms(
         lang_encoder,
         text_tokenizer.encode("<|endofchunk|>")[-1],
         text_tokenizer.encode("<image>")[-1],
-        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"]["width"],
+        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+            "width"
+        ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
         **flamingo_kwargs,
     )
