@@ -2,6 +2,7 @@ import json
 import os
 
 from PIL import Image
+import torch
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
@@ -125,6 +126,7 @@ class ImageNetDataset(ImageFolder):
         self.class_id_to_name = dict(
             zip(range(len(IMAGENET_CLASSNAMES)), IMAGENET_CLASSNAMES)
         )
+        self.class_id_array = torch.tensor([y for _, y in self.samples])
 
     def __getitem__(self, idx):
         sample, target = super().__getitem__(idx)
@@ -142,6 +144,7 @@ class HatefulMemesDataset(Dataset):
         self.image_dir_path = image_dir_path
         with open(annotations_path, "r") as f:
             self.annotations = [json.loads(line) for line in f]
+        self.class_id_array = torch.tensor([y["label"] for y in self.annotations])
 
     def __len__(self):
         return len(self.annotations)
@@ -178,10 +181,11 @@ class WILDSDataset(Dataset):
             )
         else:
             raise Exception(f"Unimplemented WILDS dataset {dataset_name}")
+        self.class_id_array = self.dataset.y_array
         
     def __len__(self):
         return len(self.dataset)
-
+    
     def __getitem__(self, idx):
         x, y, m = self.dataset[idx]
         y = y.item()

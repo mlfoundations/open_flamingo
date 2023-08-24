@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 import random
+import time
 from collections import defaultdict
 
 import numpy as np
@@ -78,6 +79,7 @@ parser.add_argument(
 
 # Trial arguments
 parser.add_argument("--shots", nargs="+", default=[0, 4, 8, 16, 32], type=int)
+parser.add_argument("--true_zero_shot", action="store_true")
 parser.add_argument(
     "--num_trials",
     type=int,
@@ -98,7 +100,7 @@ parser.add_argument(
     help="Number of samples to evaluate on. -1 for all samples.",
 )
 parser.add_argument(
-    "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
+    "--query_set_size", type=int, default=-1, help="Size of demonstration query set. -1 for all samples."
 )
 
 parser.add_argument("--batch_size", type=int, default=8)
@@ -112,6 +114,12 @@ parser.add_argument(
     "--classification_prompt_ensembling",
     action="store_true",
     help="Whether to use prompt ensembling (average log-likelihoods over permutations of in-context examples)",
+)
+parser.add_argument(
+    "--classification_num_classes_in_demos",
+    type=int,
+    default=None,
+    help="If set, demonstrations use class-conditional sampling with this many classes. Otherwise, random sampling.",
 )
 parser.add_argument(
     "--rices",
@@ -485,6 +493,9 @@ def main():
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
 
+    if args.rices and args.classification_num_classes_in_demos is not None:
+        raise NotImplementedError("RICES + class conditional sampling not yet implemented.")
+
     # set up wandb
     if args.rank == 0 and args.report_to_wandb:
         cfg_dict = vars(args)
@@ -650,12 +661,12 @@ def evaluate_captioning(
         dataset_name=dataset_name,
     )
 
-    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
+    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model, args.true_zero_shot)
 
     np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
-        args.num_samples if args.num_samples > 0 else len(test_dataset),
+        args.num_samples,
         args.batch_size,
     )
 
@@ -843,12 +854,12 @@ def evaluate_vqa(
         dataset_name=dataset_name,
     )
 
-    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
+    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model, args.true_zero_shot)
 
     np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
-        args.num_samples if args.num_samples > 0 else len(test_dataset),
+        args.num_samples,
         args.batch_size,
     )
 
@@ -1064,12 +1075,12 @@ def evaluate_classification(
 
     class_id_to_name = dict(zip(range(len(all_class_names)), all_class_names))
 
-    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
+    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model, args.true_zero_shot)
 
     np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
         test_dataset,
-        args.num_samples if args.num_samples > 0 else len(test_dataset),
+        args.num_samples,
         args.batch_size,
     )
 
@@ -1085,20 +1096,33 @@ def evaluate_classification(
     else:
         # subset of the training set to sample context images from
         query_set = utils.get_query_set(train_dataset, args.query_set_size)
+        assert hasattr(query_set, 'class_id_array')
 
     utils.random_seed(seed, args.rank)
     predictions = []
+    prompt_time_m = utils.AverageMeter()
+    rank_time_m = utils.AverageMeter()
+
     for batch_idx, batch in tqdm(
         enumerate(test_dataloader),
         desc=f"Running inference {dataset_name}",
         disable=args.rank != 0,
     ):
+
+        end = time.time()
         if args.rices:
             batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
+        elif args.classification_num_classes_in_demos is not None:
+            _, batch_demo_samples = utils.sample_class_conditional_batch_demos_from_query_set(
+                batch["class_id"], args.classification_num_classes_in_demos, query_set, effective_num_shots,
+            )
         else:
             batch_demo_samples = utils.sample_batch_demos_from_query_set(
                 query_set, effective_num_shots, len(batch["image"])
             )
+
+        prompt_time_m.update(time.time() - end)
+        end = time.time()
 
         # set up prompt ensembling
         num_permutations = (
@@ -1141,7 +1165,8 @@ def evaluate_classification(
             )
 
         # ensemble logprobs together
-        logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1)
+        logprobs = torch.mean(torch.stack(logprobs, dim=-1), dim=-1).to(dtype=torch.float32)
+        rank_time_m.update(time.time() - end)
 
         (
             predicted_class_ixs,
@@ -1152,6 +1177,10 @@ def evaluate_classification(
             k,
             class_id_to_name,
         )
+
+        # dev: print some results
+        if batch_idx == 0:
+            print(list(zip(batch_text, predicted_classnames[:1]))[:5])
 
         # compute accuracy
         for i, topk in enumerate(predicted_classnames):
@@ -1170,6 +1199,12 @@ def evaluate_classification(
             if "metadata" in batch:
                 pred_info["metadata"] = batch["metadata"][i]
             predictions.append(pred_info)
+
+        if args.rank == 0:
+            print(f"Avg prompt loading time: {prompt_time_m.avg}")
+            print(f"Avg rank classification w/ ensembling time: {rank_time_m.avg}")
+        
+        end = time.time()
 
     # all gather
     all_predictions = [None for _ in range(args.world_size)]
