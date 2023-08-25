@@ -116,14 +116,18 @@ def sample_examples_from_class(dataset, y, num_samples, replace_if_insufficient=
 def get_query_set(train_dataset, query_set_size):
     """
     Get a subset of the training dataset to use as the query set. Returns a torch Subset.
+    Adds the "indices" attribute containing the indices of each example in the original set.
     """
-    if query_set_size == -1: return train_dataset
+    if query_set_size == -1: 
+        train_dataset.indices = np.arange(len(train_dataset))
+        return train_dataset
     query_set_indices = np.random.choice(len(train_dataset), query_set_size, replace=False)
     query_set = Subset(train_dataset, query_set_indices)
     if hasattr(train_dataset, "class_id_array"):
         query_set.class_id_array = train_dataset.class_id_array[query_set_indices]
         if len(np.unique(query_set.class_id_array)) != len(np.unique(train_dataset.class_id_array)):
             print(f"Warning: query set does not contain examples from all classes; {len(np.unique(query_set.class_id_array))} remaining classes.")
+    query_set.indices = query_set_indices
     return query_set
 
 
