@@ -35,6 +35,9 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     CheckpointImpl,
     apply_activation_checkpointing,
 )
+
+import deepspeed
+
 from torch.distributed.fsdp._init_utils import _init_intra_and_inter_node_groups
 from torch.distributed.distributed_c10d import _get_default_group
 import functools
@@ -183,6 +186,8 @@ def main():
         action="store_true",
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
     )
+
+    # fsdp args
     parser.add_argument(
         "--fsdp",
         default=False,
@@ -197,6 +202,27 @@ def main():
     )
     parser.add_argument(
         "--fsdp_sharding_strategy", default="full", type=str, choices=["full", "hybrid"]
+    )
+
+    # deepspeed args
+    parser.add_argument(
+        "--deepspeed",
+        default=False,
+        action="store_true",
+        help="Use deepspeed for distributed training.",
+    )
+    parser.add_argument(
+        "--deepspeed_stage",
+        default=2,
+        type=int,
+        options=[1, 2, 3],
+        help="DeepSpeed distributed training stage. 1: ZeRO-1 (optimizer sharding), 2: ZeRO-2 (optimizer + gradient sharding), 3: ZeRO-3 (optimizer + gradient + model sharding)",
+    )
+    parser.add_argument(
+        "--local_rank",
+        type=int,
+        default=-1,
+        help="local rank passed from deepspeed distributed launcher",
     )
 
     # wandb args
@@ -252,8 +278,50 @@ def main():
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
     args.local_rank, args.rank, args.world_size = world_info_from_env()
-    device_id = init_distributed_device(args)
+    if args.deepspeed:
+        torch.cuda.set_device(args.local_rank)
+        device = torch.device("cuda", args.local_rank)
+        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+        deepspeed.init_distributed()
+
+        zero_opt_dict = {
+            "stage": args.deepspeed_stage,
+            "offload_param": {"device": "none"},  # TODO: Support CPU offload
+            "offload_optimizer": {"device": "none"},
+            "stage3_param_persistence_threshold": 1e4,
+            "stage3_max_live_parameters": 3e7,
+            "stage3_prefetch_bucket_size": 3e7,
+            "memory_efficient_linear": False,
+        }
+        ds_config = {
+            "train_batch_size": (args.batch_size_mmc4 + args.batch_size_laion)
+            * args.world_size
+            * args.gradient_accumulation_steps,
+            "train_micro_batch_size_per_gpu": (
+                args.batch_size_mmc4 + args.batch_size_laion
+            )
+            * args.gradient_accumulation_steps,
+            "steps_per_print": 10,
+            "zero_optimization": zero_opt_dict,
+            "fp16": {"enabled": True, "loss_scale_window": 100},
+            "gradient_clipping": 1.0,
+            "prescale_gradients": False,
+            "wall_clock_breakdown": False,
+            "hybrid_engine": {  # TODO: investigate
+                "enabled": False,
+                "max_out_tokens": 512,
+                "inference_tp_size": 1,
+                "release_inference_cache": False,
+                "pin_parameters": True,
+                "tp_gather_partition_size": 8,
+            },
+        }
+
+    else:
+        device_id = init_distributed_device(args)
+
     random_seed(args.seed)
 
     # Initialize model
@@ -361,27 +429,27 @@ def main():
             f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
         )
 
-    else:
+    elif not args.deepspeed:
         model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
 
     # Initialize gradient checkpointing
-    if args.gradient_checkpointing:
-        non_reentrant_wrapper = functools.partial(
-            checkpoint_wrapper,
-            offload_to_cpu=True,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        )
-        apply_activation_checkpointing(
-            ddp_model,
-            checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
-            and not isinstance(m, FSDP)
-            and not isinstance(m, CheckpointWrapper),
-        )
+    # if args.gradient_checkpointing:
+    #     non_reentrant_wrapper = functools.partial(
+    #         checkpoint_wrapper,
+    #         offload_to_cpu=True,
+    #         checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+    #     )
+    #     apply_activation_checkpointing(
+    #         ddp_model,
+    #         checkpoint_wrapper_fn=non_reentrant_wrapper,
+    #         check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
+    #         and not isinstance(m, FSDP)
+    #         and not isinstance(m, CheckpointWrapper),
+    #     )
 
     # Initialize optimizer
-    params_to_optimize = ddp_model.named_parameters()
+    params_to_optimize = model.named_parameters()
     params_to_optimize = list(
         filter(
             lambda x: x[1].requires_grad
@@ -453,8 +521,32 @@ def main():
     if args.resume_from_checkpoint is not None:
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
-    # Start training!
-    ddp_model.train()
+    if args.deepspeed:
+        print(
+            f"Before deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
+        )
+        print(
+            f"Before deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
+        ddp_model, optimizer, _, lr_scheduler = deepspeed.initialize(
+            model=model,
+            optimizer=optimizer,
+            args=args,
+            config=ds_config,
+            lr_scheduler=lr_scheduler,
+            dist_init_required=True,
+        )
+        print(
+            f"After deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
+        )
+        print(
+            f"DeepSpeed Engine parameters: {sum(p.numel() for p in ddp_model.parameters())}"
+        )
+        print(
+            f"After deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
+        # Start training!
+        ddp_model.train()
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
@@ -471,7 +563,7 @@ def main():
             lr_scheduler=lr_scheduler,
             laion_loader=laion_loader,
             mmc4_loader=mmc4_loader,
-            device_id=device_id,
+            device_id=args.local_rank if args.deepspeed else device_id,
             wandb=wandb,
         )
         save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)

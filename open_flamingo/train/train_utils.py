@@ -92,7 +92,7 @@ def train_one_epoch(
         global_step = num_steps + epoch * num_batches_per_epoch
 
         #### LAION FORWARD PASS ####
-        images = batch_laion[0].to(device_id, dtype=cast_dtype, non_blocking=True)
+        images = batch_laion[0].to(device_id, dtype=torch.float16, non_blocking=True)
         images = rearrange(images, "(b t f) c h w -> b t f c h w", t=1, f=1)
         input_ids = batch_laion[1][0].to(device_id, dtype=cast_dtype, non_blocking=True)
         attention_mask = batch_laion[1][1].to(
@@ -116,38 +116,29 @@ def train_one_epoch(
             )[0]
 
         divided_loss_laion = loss_laion / args.gradient_accumulation_steps
-        (divided_loss_laion * args.loss_multiplier_laion).backward()
+        if args.deepspeed:
+            model.backward(divided_loss_laion * args.loss_multiplier_laion)
+        else:
+            (divided_loss_laion * args.loss_multiplier_laion).backward()
 
         #### MMC4 FORWARD PASS ####
-        images = batch_mmc4[0].to(device_id, dtype=cast_dtype, non_blocking=True)
+        images = batch_mmc4[0].to(device_id, dtype=torch.float16, non_blocking=True)
         images = rearrange(images, "b (t f) c h w -> b t f c h w", f=1)
-        input_ids = torch.stack([x[0] for x in batch_mmc4[1]]).squeeze(1)
-        attention_mask = torch.stack([x[1] for x in batch_mmc4[1]]).squeeze(1)
+        input_ids = (
+            torch.stack([x[0] for x in batch_mmc4[1]])
+            .squeeze(1)
+            .to(device_id, dtype=cast_dtype, non_blocking=True)
+        )
+        attention_mask = (
+            torch.stack([x[1] for x in batch_mmc4[1]])
+            .squeeze(1)
+            .to(device_id, dtype=cast_dtype, non_blocking=True)
+        )
 
         # set up labels; language model is expected to handle shifting
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
         labels[labels == tokenizer.eos_token] = -100
-        for i in range(labels.shape[0]):
-            # remove loss for any token before the first <image> token
-            label_idx = 0
-            while (
-                label_idx < labels.shape[1] and labels[i][label_idx] != media_token_id
-            ):
-                labels[i][label_idx] = -100
-                label_idx += 1
-
-            # get index of all endofchunk tokens in the sequence
-            endofchunk_idxs = torch.where(labels[i] == endofchunk_token_id)[0]
-            for endofchunk_idx in endofchunk_idxs:
-                token_idx = endofchunk_idx + 1
-                while (
-                    token_idx < labels.shape[1]
-                    and labels[i][token_idx] != media_token_id
-                ):
-                    labels[i][token_idx] = -100
-                    token_idx += 1
-
         labels[labels == media_token_id] = -100
         labels = labels.to(device_id)
 
@@ -171,31 +162,35 @@ def train_one_epoch(
                 continue
 
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
-        (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
+        if args.deepspeed:
+            model.backward(divided_loss_mmc4 * args.loss_multiplier_mmc4)
+        else:
+            (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
 
-        if (not args.freeze_lm_embeddings) and (
-            not args.fsdp or args.fsdp_use_orig_params
-        ):
-            # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
-            if args.fsdp:
-                embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
-            else:
-                embed_grad = (
-                    model.module.lang_encoder.get_input_embeddings().weight.grad
-                )
-            zero_mask = torch.zeros_like(embed_grad)
-            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-            zero_mask[endofchunk_token_id] = torch.ones_like(
-                zero_mask[endofchunk_token_id]
-            )
-            if args.fsdp:
-                model.lang_encoder.get_input_embeddings().weight.grad = (
-                    embed_grad * zero_mask
-                )
-            else:
-                model.module.lang_encoder.get_input_embeddings().weight.grad = (
-                    embed_grad * zero_mask
-                )
+        # TODO: investigate whether this is necessary
+        # if (not args.freeze_lm_embeddings) and (
+        #     not args.fsdp or args.fsdp_use_orig_params
+        # ):
+        #     # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
+        #     if args.fsdp:
+        #         embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+        #     else:
+        #         embed_grad = (
+        #             model.module.lang_encoder.get_input_embeddings().weight.grad
+        #         )
+        #     zero_mask = torch.zeros_like(embed_grad)
+        #     zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+        #     zero_mask[endofchunk_token_id] = torch.ones_like(
+        #         zero_mask[endofchunk_token_id]
+        #     )
+        #     if args.fsdp:
+        #         model.lang_encoder.get_input_embeddings().weight.grad = (
+        #             embed_grad * zero_mask
+        #         )
+        #     else:
+        #         model.module.lang_encoder.get_input_embeddings().weight.grad = (
+        #             embed_grad * zero_mask
+        #         )
 
         # clip gradient norm
         if args.fsdp:
@@ -206,16 +201,19 @@ def train_one_epoch(
             At least for OPT-125M, this didn't seem to make a difference in performance.
             """
             model.clip_grad_norm_(1.0)
-        else:
+        elif not args.deepspeed:  # deepspeed handles clipping internally
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         # step optimizer and log
         if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
             num_steps == num_batches_per_epoch - 1
         ):
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad(set_to_none=True)
+            if args.deepspeed:
+                model.step()
+            else:
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
 
             # step time and reset end outside of rank 0
             step_time_m.update(time.time() - end)
