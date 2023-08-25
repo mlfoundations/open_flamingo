@@ -35,7 +35,8 @@ class EvalModel(BaseEvalModel):
             if ("device" in model_args and model_args["device"] >= 0)
             else "cpu"
         )
-
+        self.autocast = get_autocast(model_args["precision"])
+        self.cast_dtype = get_cast_dtype(model_args["precision"])
         (
             self.model,
             self.image_processor,
@@ -52,15 +53,10 @@ class EvalModel(BaseEvalModel):
             checkpoint = checkpoint["model_state_dict"]
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
         self.model.load_state_dict(checkpoint, strict=False)
-        self.model.to(self.device)
+        self.model.to(self.device, dtype=self.cast_dtype)
         self.model.eval()
         self.tokenizer.padding_side = "left"
-
         self.lm_name = model_args["lm_path"].split("/")[-1]
-
-        # autocast
-        self.autocast = get_autocast(model_args["precision"])
-        self.cast_dtype = get_cast_dtype(model_args["precision"])
 
     def _prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
         """
@@ -114,9 +110,9 @@ class EvalModel(BaseEvalModel):
             max_length=max_length,
         )
         input_ids, attention_mask = encodings["input_ids"], encodings["attention_mask"]
-        input_ids = input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True)
+        input_ids = input_ids.to(self.device, non_blocking=True)
         attention_mask = attention_mask.to(
-            self.device, dtype=self.cast_dtype, non_blocking=True
+            self.device, non_blocking=True
         )
         return input_ids, attention_mask.bool()
 
@@ -334,7 +330,7 @@ class EvalModel(BaseEvalModel):
         return f"<image>is an image with: '{text}' written on it. Is it hateful? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
 
     def get_waterbirds_prompt(self, label=None) -> str:
-        return f"<image>Question: Is this a landbird or waterbird? Answer: {label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+        return f"<image>Question: Is this a landbird or waterbird? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
 
     def get_camelyon17_prompt(self, label=None) -> str:
-        return f"<image>Question: Is this a normal tissue or cancer tissue? Answer: {label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+        return f"<image>Question: Is this a normal tissue or cancer tissue? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
