@@ -9,6 +9,7 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.fsdp.api import FullOptimStateDictConfig
 import os
+import shutil
 import wandb
 from einops import rearrange
 
@@ -170,7 +171,7 @@ def train_one_epoch(
             not args.fsdp or args.fsdp_use_orig_params
         ):
             # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
-            if args.fsdp:
+            if args.fsdp or args.deepspeed:
                 embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
             else:
                 embed_grad = (
@@ -181,7 +182,7 @@ def train_one_epoch(
             zero_mask[endofchunk_token_id] = torch.ones_like(
                 zero_mask[endofchunk_token_id]
             )
-            if args.fsdp:
+            if args.fsdp or args.deepspeed:
                 model.lang_encoder.get_input_embeddings().weight.grad = (
                     embed_grad * zero_mask
                 )
@@ -344,7 +345,6 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
         )
         model_state = model.state_dict()
         optim_state = FSDP.optim_state_dict(model, optimizer, group=args.my_group)
-
     else:
         model_state = model.state_dict()
         optim_state = optimizer.state_dict()
@@ -371,3 +371,24 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
         if args.delete_previous_checkpoint:
             if epoch > 0:
                 os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
+
+
+def ds_save_checkpoint(model, epoch, args):
+    """
+    Save training checkpoint for deepspeed.
+    """
+    print(f"Saving checkpoint to {args.run_name}")
+    model.save_checkpoint(
+        save_dir=args.run_name,
+        save_latest=True,
+        tag=f"epoch_{epoch}",
+        exclude_frozen_parameters=True,
+    )
+
+    if args.rank == 0:
+        if args.report_to_wandb and args.save_checkpoints_to_wandb:
+            wandb.save(f"{args.run_name}/epoch_{epoch}/mp_rank_00_model_states.pt")
+
+        if args.delete_previous_checkpoint:
+            if epoch > 0:  # remove checkpoint dir epoch_{epoch-1}
+                shutil.rmtree(f"{args.run_name}/epoch_{epoch-1}")

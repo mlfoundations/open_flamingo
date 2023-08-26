@@ -16,6 +16,7 @@ from train_utils import (
     train_one_epoch,
     get_mp_policy_dtype,
     save_checkpoint,
+    ds_save_checkpoint,
 )
 from transformers import (
     get_constant_schedule_with_warmup,
@@ -80,7 +81,7 @@ def main():
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
-        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states. if there exists a checkpoint in the dir named run_name, we will resume from that checkpoint by default",
+        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states. if there exists a checkpoint in the dir named run_name, we will resume from that checkpoint by default. If using deepspeed this should be a directory, not a file.",
         default=None,
     )
     parser.add_argument(
@@ -217,12 +218,6 @@ def main():
         type=int,
         help="DeepSpeed distributed training stage. 1: ZeRO-1 (optimizer sharding), 2: ZeRO-2 (optimizer + gradient sharding), 3: ZeRO-3 (optimizer + gradient + model sharding)",
     )
-    parser.add_argument(
-        "--local_rank",
-        type=int,
-        default=-1,
-        help="local rank passed from deepspeed distributed launcher",
-    )
 
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
@@ -242,6 +237,8 @@ def main():
     )
 
     args = parser.parse_args()
+    
+    args.local_rank = int(os.environ.get('LOCAL_RANK', -1)) # for deepspeed
 
     # Validate args
     if args.laion_shards.startswith("s3"):
@@ -319,6 +316,8 @@ def main():
         elif "amp" in args.precision:
             raise ValueError("amp not supported with DeepSpeed")
 
+        device_id = args.local_rank
+
     else:
         device_id = init_distributed_device(args)
 
@@ -351,19 +350,28 @@ def main():
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
         # if args do not specify a checkpoint to resume from, check if checkpoints exist for this run
         # and automatically resume from the latest checkpoint
-        checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
-        if len(checkpoint_list) == 0:
-            print(f"Found no checkpoints for run {args.run_name}.")
+        if args.deepspeed:
+            if os.path.exists(f"{args.run_name}/latest"):
+                args.resume_from_checkpoint = args.run_name
+                print(
+                    f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
+                )
+            else:
+                print(f"Found no checkpoints for run {args.run_name}.")
         else:
-            args.resume_from_checkpoint = sorted(
-                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
-            )[-1]
-            print(
-                f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
-            )
+            checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
+            if len(checkpoint_list) == 0:
+                print(f"Found no checkpoints for run {args.run_name}.")
+            else:
+                args.resume_from_checkpoint = sorted(
+                    checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
+                )[-1]
+                print(
+                    f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
+                )
 
     resume_from_epoch = 0
-    if args.resume_from_checkpoint is not None:
+    if args.resume_from_checkpoint is not None and not args.deepspeed:
         if args.rank == 0:
             print(f"Loading checkpoint from {args.resume_from_checkpoint}")
         checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
@@ -468,7 +476,7 @@ def main():
         )
 
     # load optimizer checkpoint
-    if args.resume_from_checkpoint is not None:
+    if args.resume_from_checkpoint is not None and not args.deepspeed:
         osd = checkpoint["optimizer_state_dict"]
         if args.fsdp:
             osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
@@ -503,7 +511,7 @@ def main():
         )
 
     # load lr scheduler checkpoint
-    if args.resume_from_checkpoint is not None:
+    if args.resume_from_checkpoint is not None and not args.deepspeed:
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
     if args.deepspeed:
@@ -518,6 +526,20 @@ def main():
         print(
             f"After deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
         )
+
+        if args.resume_from_checkpoint is not None:
+            if args.rank == 0:
+                print(f"Loading checkpoint from {args.resume_from_checkpoint}")
+            # We will not pass in a 'tag' and instead rely on 'latest' file in the checkpoint directory
+            ddp_model.load_checkpoint(
+                load_dir=args.resume_from_checkpoint,  # Note: this is the dir, not the file
+                load_module_strict=False,
+            )
+            # read latest file to get epoch
+            latest_file = os.path.join(args.resume_from_checkpoint, "latest")
+            with open(latest_file, "r") as f:
+                checkpoint_epoch = int(f.read().split("_")[-1])
+            resume_from_epoch = checkpoint_epoch + 1
 
     # Initialize gradient checkpointing
     if args.gradient_checkpointing:
@@ -553,13 +575,14 @@ def main():
             lr_scheduler=lr_scheduler,
             laion_loader=laion_loader,
             mmc4_loader=mmc4_loader,
-            device_id=args.local_rank if args.deepspeed else device_id,
+            device_id=device_id,
             wandb=wandb,
         )
-        save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
 
-    # save final checkpoint
-    save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
+        if args.deepspeed:
+            ds_save_checkpoint(ddp_model, epoch, args)
+        else:
+            save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
 
 
 if __name__ == "__main__":
