@@ -21,8 +21,8 @@ srun --cpu_bind=v --accel-bind=gn python
 
 
 deepspeed open_flamingo/open_flamingo/train/train.py \
-    --lm_path anas-awadalla/mpt-7b \
-    --tokenizer_path anas-awadalla/mpt-7b \
+    --lm_path meta-llama/Llama-2-13b \
+    --tokenizer_path meta-llama/Llama-2-13b \
     --cross_attn_every_n_layers 4 \
     --dataset_resampled \
     --batch_size_mmc4 16 \

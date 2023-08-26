@@ -92,12 +92,10 @@ def train_one_epoch(
         global_step = num_steps + epoch * num_batches_per_epoch
 
         #### LAION FORWARD PASS ####
-        images = batch_laion[0].to(device_id, dtype=torch.float16, non_blocking=True)
+        images = batch_laion[0].to(device_id, dtype=cast_dtype, non_blocking=True)
         images = rearrange(images, "(b t f) c h w -> b t f c h w", t=1, f=1)
-        input_ids = batch_laion[1][0].to(device_id, dtype=cast_dtype, non_blocking=True)
-        attention_mask = batch_laion[1][1].to(
-            device_id, dtype=cast_dtype, non_blocking=True
-        )
+        input_ids = batch_laion[1][0].to(device_id, non_blocking=True)
+        attention_mask = batch_laion[1][1].to(device_id, non_blocking=True)
 
         # set up labels; language model is expected to handle shifting
         labels = input_ids.clone()
@@ -122,17 +120,17 @@ def train_one_epoch(
             (divided_loss_laion * args.loss_multiplier_laion).backward()
 
         #### MMC4 FORWARD PASS ####
-        images = batch_mmc4[0].to(device_id, dtype=torch.float16, non_blocking=True)
+        images = batch_mmc4[0].to(device_id, dtype=cast_dtype, non_blocking=True)
         images = rearrange(images, "b (t f) c h w -> b t f c h w", f=1)
         input_ids = (
             torch.stack([x[0] for x in batch_mmc4[1]])
             .squeeze(1)
-            .to(device_id, dtype=cast_dtype, non_blocking=True)
+            .to(device_id, non_blocking=True)
         )
         attention_mask = (
             torch.stack([x[1] for x in batch_mmc4[1]])
             .squeeze(1)
-            .to(device_id, dtype=cast_dtype, non_blocking=True)
+            .to(device_id, non_blocking=True)
         )
 
         # set up labels; language model is expected to handle shifting
@@ -168,29 +166,29 @@ def train_one_epoch(
             (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
 
         # TODO: investigate whether this is necessary
-        # if (not args.freeze_lm_embeddings) and (
-        #     not args.fsdp or args.fsdp_use_orig_params
-        # ):
-        #     # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
-        #     if args.fsdp:
-        #         embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
-        #     else:
-        #         embed_grad = (
-        #             model.module.lang_encoder.get_input_embeddings().weight.grad
-        #         )
-        #     zero_mask = torch.zeros_like(embed_grad)
-        #     zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-        #     zero_mask[endofchunk_token_id] = torch.ones_like(
-        #         zero_mask[endofchunk_token_id]
-        #     )
-        #     if args.fsdp:
-        #         model.lang_encoder.get_input_embeddings().weight.grad = (
-        #             embed_grad * zero_mask
-        #         )
-        #     else:
-        #         model.module.lang_encoder.get_input_embeddings().weight.grad = (
-        #             embed_grad * zero_mask
-        #         )
+        if (not args.freeze_lm_embeddings) and (
+            not args.fsdp or args.fsdp_use_orig_params
+        ):
+            # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
+            if args.fsdp:
+                embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+            else:
+                embed_grad = (
+                    model.module.lang_encoder.get_input_embeddings().weight.grad
+                )
+            zero_mask = torch.zeros_like(embed_grad)
+            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+            zero_mask[endofchunk_token_id] = torch.ones_like(
+                zero_mask[endofchunk_token_id]
+            )
+            if args.fsdp:
+                model.lang_encoder.get_input_embeddings().weight.grad = (
+                    embed_grad * zero_mask
+                )
+            else:
+                model.module.lang_encoder.get_input_embeddings().weight.grad = (
+                    embed_grad * zero_mask
+                )
 
         # clip gradient norm
         if args.fsdp:

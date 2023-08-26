@@ -215,7 +215,6 @@ def main():
         "--deepspeed_stage",
         default=2,
         type=int,
-        options=[1, 2, 3],
         help="DeepSpeed distributed training stage. 1: ZeRO-1 (optimizer sharding), 2: ZeRO-2 (optimizer + gradient sharding), 3: ZeRO-3 (optimizer + gradient + model sharding)",
     )
     parser.add_argument(
@@ -288,6 +287,8 @@ def main():
 
         zero_opt_dict = {
             "stage": args.deepspeed_stage,
+            "overlap_comm": True,
+            "contiguous_gradients": True,
             "offload_param": {"device": "none"},  # TODO: Support CPU offload
             "offload_optimizer": {"device": "none"},
             "stage3_param_persistence_threshold": 1e4,
@@ -303,21 +304,20 @@ def main():
                 args.batch_size_mmc4 + args.batch_size_laion
             )
             * args.gradient_accumulation_steps,
-            "steps_per_print": 10,
+            "steps_per_print": 100,
             "zero_optimization": zero_opt_dict,
-            "fp16": {"enabled": True, "loss_scale_window": 100},
             "gradient_clipping": 1.0,
             "prescale_gradients": False,
             "wall_clock_breakdown": False,
-            "hybrid_engine": {  # TODO: investigate
-                "enabled": False,
-                "max_out_tokens": 512,
-                "inference_tp_size": 1,
-                "release_inference_cache": False,
-                "pin_parameters": True,
-                "tp_gather_partition_size": 8,
-            },
         }
+
+        if args.precision == "fp16":
+            ds_config["fp16"] = {"enabled": True, "loss_scale_window": 100}
+        elif args.precision == "bf16":
+            ds_config["bf16"] = {"enabled": True}
+        # amp not supported with DeepSpeed
+        elif "amp" in args.precision:
+            raise ValueError("amp not supported with DeepSpeed")
 
     else:
         device_id = init_distributed_device(args)
@@ -433,21 +433,6 @@ def main():
         model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
 
-    # Initialize gradient checkpointing
-    # if args.gradient_checkpointing:
-    #     non_reentrant_wrapper = functools.partial(
-    #         checkpoint_wrapper,
-    #         offload_to_cpu=True,
-    #         checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-    #     )
-    #     apply_activation_checkpointing(
-    #         ddp_model,
-    #         checkpoint_wrapper_fn=non_reentrant_wrapper,
-    #         check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
-    #         and not isinstance(m, FSDP)
-    #         and not isinstance(m, CheckpointWrapper),
-    #     )
-
     # Initialize optimizer
     params_to_optimize = model.named_parameters()
     params_to_optimize = list(
@@ -522,12 +507,6 @@ def main():
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
     if args.deepspeed:
-        print(
-            f"Before deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
-        )
-        print(
-            f"Before deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
-        )
         ddp_model, optimizer, _, lr_scheduler = deepspeed.initialize(
             model=model,
             optimizer=optimizer,
@@ -537,16 +516,27 @@ def main():
             dist_init_required=True,
         )
         print(
-            f"After deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
-        )
-        print(
-            f"DeepSpeed Engine parameters: {sum(p.numel() for p in ddp_model.parameters())}"
-        )
-        print(
             f"After deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
         )
-        # Start training!
-        ddp_model.train()
+
+    # Initialize gradient checkpointing
+    if args.gradient_checkpointing:
+        if args.deepspeed:
+            raise ValueError(
+                "gradient checkpointing currently not supported with deepspeed"
+            )
+        non_reentrant_wrapper = functools.partial(
+            checkpoint_wrapper,
+            offload_to_cpu=True,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        )
+        apply_activation_checkpointing(
+            ddp_model,
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
+            and not isinstance(m, FSDP)
+            and not isinstance(m, CheckpointWrapper),
+        )
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
