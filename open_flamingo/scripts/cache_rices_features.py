@@ -365,6 +365,22 @@ def main():
             os.path.join(args.output_dir, "hateful_memes.pkl"),
         )
 
+    if args.eval_imagenet:
+        print("Caching ImageNet...")
+        train_dataset = ImageNetDataset(
+            os.path.join(args.imagenet_root, "train")
+        )
+        rices_dataset = RICES(
+            train_dataset,
+            device_id,
+            args.batch_size,
+            vision_encoder_path=args.vision_encoder_path,
+            vision_encoder_pretrained=args.vision_encoder_pretrained,            
+        )
+        torch.save(
+            rices_dataset.features,
+            os.path.join(args.output_dir, "imagenet.pkl"),
+        )
 
 if __name__ == "__main__":
     main()

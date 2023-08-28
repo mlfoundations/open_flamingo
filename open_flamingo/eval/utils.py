@@ -96,7 +96,7 @@ def sample_class_conditional_batch_demos_from_query_set(
 def sample_examples_from_class(dataset, y, num_samples, replace_if_insufficient=False):
     """
     Given a class id y and a torch dataset containing examples from multiple classes,
-    samples num_samples examples from class y.
+    samples num_samples examples from class y uniformly at random.
     Returns: indices of selected examples
     """
     class_indices = torch.where(dataset.class_id_array == y)[0].tolist()
@@ -229,3 +229,25 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+def repeat_interleave(list, n):
+    """
+    Mimics torch.repeat_interelave for a list of arbitrary objects
+    """
+    return [item for item in list for _ in range(n)]
+
+def reshape_nested_list(original_list, shape: tuple):
+    """
+    Reshapes a 2D list into a 2D list of shape shape
+    """
+    assert len(shape) == 2
+    outer_list, inner_list = [], []
+    for list in original_list:
+        for x in list:
+            inner_list.append(x)
+            if len(inner_list) == shape[1]:
+                outer_list.append(inner_list)
+                inner_list = []
+    if len(outer_list) != shape[0]:
+        raise ValueError(f"List could not be reshaped to {shape}")
+    return outer_list

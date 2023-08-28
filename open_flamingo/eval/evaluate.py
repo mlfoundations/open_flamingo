@@ -501,9 +501,6 @@ def main():
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
 
-    if args.rices and args.classification_num_classes_in_demos is not None:
-        raise NotImplementedError("RICES + class conditional sampling not yet implemented.")
-
     # set up wandb
     if args.rank == 0 and args.report_to_wandb:
         cfg_dict = vars(args)
@@ -750,7 +747,8 @@ def evaluate_captioning(
         ]
 
         if args.rank == 0:
-            print("Context:", batch_text[0], "\n", "Generated:", new_predictions[0])
+            for i in range(len(batch_text)):
+                print("Context:", batch_text[i], "\n", "Generated:", new_predictions[i])
 
         for i, sample_id in enumerate(batch["image_id"]):
             predictions[sample_id] = {
@@ -1141,16 +1139,30 @@ def evaluate_classification(
     ):
 
         end = time.time()
-        if args.rices:
-            batch_demo_samples = rices_dataset.find(batch["image"], effective_num_shots)
-        elif args.classification_num_classes_in_demos is not None:
-            _, batch_demo_samples = utils.sample_class_conditional_batch_demos_from_query_set(
+        if args.classification_num_classes_in_demos is not None:
+            batch_classes, batch_demo_samples = utils.sample_class_conditional_batch_demos_from_query_set(
                 batch["class_id"], args.classification_num_classes_in_demos, query_set, effective_num_shots,
             )
+            if args.rices: 
+                batch_classes = torch.LongTensor(batch_classes)
+                num_samples = effective_num_shots // args.classification_num_classes_in_demos * torch.ones_like(batch_classes)
+                num_samples += torch.tensor([int(i < effective_num_shots % args.classification_num_classes_in_demos) for i in range(args.classification_num_classes_in_demos)]).unsqueeze(0).repeat(len(batch_classes), 1)
+                batch_demo_samples = rices_dataset.find_filtered(
+                    utils.repeat_interleave(batch["image"], args.classification_num_classes_in_demos), 
+                    num_samples.view(-1),
+                    [torch.where(query_set.class_id_array == class_id)[0].tolist() for class_id in batch_classes.view(-1)],
+                )
+                batch_demo_samples = utils.reshape_nested_list(batch_demo_samples, (len(batch_classes), effective_num_shots))
         else:
-            batch_demo_samples = utils.sample_batch_demos_from_query_set(
-                query_set, effective_num_shots, len(batch["image"])
-            )
+            if not args.rices:
+                batch_demo_samples = utils.sample_batch_demos_from_query_set(
+                    query_set, effective_num_shots, len(batch["image"])
+                )
+            else:
+                batch_demo_samples = rices_dataset.find(
+                    batch["image"], 
+                    effective_num_shots, 
+                )
 
         prompt_time_m.update(time.time() - end)
         end = time.time()
