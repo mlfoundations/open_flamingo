@@ -155,8 +155,8 @@ def train_one_epoch(
         with autocast():
             loss_mmc4 = model(
                 vision_x=images,
-                lang_x=input_ids,
-                attention_mask=attention_mask,
+                lang_x=input_ids.to(device_id),
+                attention_mask=attention_mask.to(device_id),
                 labels=labels,
             )[0]
 
