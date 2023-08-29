@@ -39,8 +39,7 @@ def sample_batch_demos_from_query_set(query_set, num_samples, batch_size):
     Sample random demonstrations with replacement from the query set.
     Returns a torch Subset
     """
-    random_indices = np.random.choice(len(query_set), num_samples, replace=True)
-    return Subset(query_set, random_indices)
+    return [Subset(query_set, np.random.choice(len(query_set), num_samples, replace=True)) for _ in range(batch_size)]
 
 def sample_class_conditional_batch_demos_from_query_set(
     batch_class_ids,
