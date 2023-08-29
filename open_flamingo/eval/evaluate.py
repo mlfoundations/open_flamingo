@@ -1250,8 +1250,10 @@ def evaluate_classification(
         end = time.time()
 
     # all gather
+    gloo_pg = torch.distributed.new_group(backend="gloo")
     all_predictions = [None for _ in range(args.world_size)]
-    torch.distributed.all_gather_object(all_predictions, predictions)  # list of lists
+    torch.distributed.all_gather_object(all_predictions, predictions, group=gloo_pg)  # list of dicts
+
     if args.rank != 0:
         return
 
