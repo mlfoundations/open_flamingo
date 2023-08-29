@@ -11,13 +11,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 
 class EvalModel(BaseEvalModel):
-    """OpenFlamingo model evaluation.
-
-    Attributes:
-      model (nn.Module): Underlying Torch model.
-      tokenizer (transformers.PreTrainedTokenizer): Tokenizer for model.
-      device: Index of GPU to use, or the string "CPU"
-    """
+    """OpenFlamingo model evaluation."""
 
     def __init__(self, model_args):
         assert (
@@ -27,15 +21,8 @@ class EvalModel(BaseEvalModel):
             and "lm_tokenizer_path" in model_args
             and "cross_attn_every_n_layers" in model_args
             and "vision_encoder_pretrained" in model_args
-            and "precision" in model_args
-        ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained, and precision arguments to be specified"
-
-        self.device = (
-            model_args["device"]
-            if ("device" in model_args and model_args["device"] >= 0)
-            else "cpu"
-        )
-
+        ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained arguments to be specified"
+        super().__init__(model_args)
         (
             self.model,
             self.image_processor,
@@ -47,31 +34,14 @@ class EvalModel(BaseEvalModel):
             model_args["lm_tokenizer_path"],
             cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
-        checkpoint = torch.load(model_args["checkpoint_path"], map_location=self.device)
+        checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
         if "model_state_dict" in checkpoint:
             checkpoint = checkpoint["model_state_dict"]
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
         self.model.load_state_dict(checkpoint, strict=False)
-        self.model.to(self.device)
-        self.model.eval()
-        self.tokenizer.padding_side = "left"
+        self._check_init()
 
-        self.lm_name = model_args["lm_path"].split("/")[-1]
-
-        # autocast
-        self.autocast = get_autocast(model_args["precision"])
-        self.cast_dtype = get_cast_dtype(model_args["precision"])
-
-    def _prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
-        """
-        Convert images to tensors, reshape them, and stack them.
-        Args:
-            batch: A list of lists of images.
-        Returns:
-            preprocessed images (tensors) or None
-                shape (B, T_img, F, C, H, W)
-                None if no images in batch
-        """
+    def prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
         images_per_example = max(len(x) for x in batch)
         batch_images = None
         for iexample, example in enumerate(batch):
@@ -89,67 +59,47 @@ class EvalModel(BaseEvalModel):
             )
         return batch_images
 
-    def _prepare_text(
+    def prepare_text(
         self,
         batch: List[List[str]],
         padding="longest",
         truncation=True,
         max_length=2000,
+        add_special_tokens=True,
     ):
-        """
-        Tokenize the text and stack them.
-        Args:
-            batch: A list of lists of strings.
-        Returns:
-            input_ids (tensor)
-                shape (B, T_txt)
-            attention_mask (tensor)
-                shape (B, T_txt)
-        """
         encodings = self.tokenizer(
             batch,
             padding=padding,
             truncation=truncation,
             return_tensors="pt",
             max_length=max_length,
+            add_special_tokens=add_special_tokens,
         )
         input_ids, attention_mask = encodings["input_ids"], encodings["attention_mask"]
-        input_ids = input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True)
-        attention_mask = attention_mask.to(
-            self.device, dtype=self.cast_dtype, non_blocking=True
-        )
+        input_ids = input_ids.to(self.device, non_blocking=True)
+        attention_mask = attention_mask.to(self.device, non_blocking=True)
         return input_ids, attention_mask.bool()
 
     def get_outputs(
         self,
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
-        min_generation_length: int,
-        max_generation_length: int,
-        num_beams: int,
-        length_penalty: float,
+        **decode_kwargs,
     ) -> List[str]:
-        """
-        Get generation outputs.
-        """
-        batch_images = self._prepare_images(batch_images)
-        input_ids, attention_mask = self._prepare_text(batch_text)
+        batch_images = self.prepare_images(batch_images)  # (B, T, 1, C, H, W)
+        input_ids, attention_mask = self.prepare_text(batch_text)
 
         with torch.inference_mode():
             with self.autocast():
                 outputs = unwrap_model(self.model).generate(
-                    batch_images,
-                    input_ids,
-                    attention_mask,
-                    min_new_tokens=min_generation_length,
-                    max_new_tokens=max_generation_length,
-                    num_beams=num_beams,
-                    length_penalty=length_penalty,
+                    vision_x=batch_images,
+                    lang_x=input_ids,
+                    attention_mask=attention_mask,
+                    **decode_kwargs,
                 )
 
         # Extract only the new gnerated tokens
         outputs = outputs[:, len(input_ids[0]) :]
-
         return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
     def get_rank_classifications(
@@ -163,8 +113,8 @@ class EvalModel(BaseEvalModel):
         """
         Returns a (B, |all_class_names|) tensor containing the logprobs for each class name.
         """
-        batch_images = self._prepare_images(batch_images)
-        ctx_input_ids, ctx_attention_mask = self._prepare_text(batch_text)
+        batch_images = self.prepare_images(batch_images)
+        ctx_input_ids, ctx_attention_mask = self.prepare_text(batch_text)
 
         # Cache the context
         if use_cache:
@@ -173,13 +123,14 @@ class EvalModel(BaseEvalModel):
                 input_ids=ctx_input_ids,
                 vision_x=batch_images,
             )
-            precomputed = self.__call__(
-                vision_x=None,
-                lang_x=ctx_input_ids,
-                attention_mask=ctx_attention_mask,
-                clear_conditioned_layers=False,
-                use_cache=True,
-            )
+            with torch.inference_mode():
+                precomputed = self.__call__(
+                    vision_x=None,
+                    lang_x=ctx_input_ids,
+                    attention_mask=ctx_attention_mask,
+                    clear_conditioned_layers=False,
+                    use_cache=True,
+                )
             precomputed_logits = precomputed.logits
             precomputed_pkvs = precomputed.past_key_values
         else:
@@ -218,13 +169,14 @@ class EvalModel(BaseEvalModel):
                 _vision_x = None
 
             # Call forward to get the logits
-            outputs = self.__call__(
-                vision_x=_vision_x,
-                lang_x=_lang_x,
-                attention_mask=_attention_mask,
-                clear_conditioned_layers=(not use_cache),
-                past_key_values=precomputed_pkvs,
-            )
+            with torch.inference_mode():
+                outputs = self.__call__(
+                    vision_x=_vision_x,
+                    lang_x=_lang_x,
+                    attention_mask=_attention_mask,
+                    clear_conditioned_layers=(not use_cache),
+                    past_key_values=precomputed_pkvs,
+                )
 
             # Get the logits of the classname
             # logits shape is either (B, num_tokens_in_classname, vocab_len) with use_cache
@@ -262,25 +214,17 @@ class EvalModel(BaseEvalModel):
         clear_conditioned_layers: bool = False,
         use_cache: bool = False,
     ):
-        """
-        Calls the forward function of the model.
-        Special logic to handle the case if past_key_values is not None:
-            then lang_x is assumed to contain the tokens to be generated
-            *excluding* the tokens already in past_key_values.
-            We then repeatedly call forward, updating the past_key_values.
-        """
         # standard forward pass
         if past_key_values is None:
-            with torch.inference_mode():
-                with self.autocast():
-                    outputs = self.model(
-                        vision_x=vision_x,
-                        lang_x=lang_x,
-                        attention_mask=attention_mask,
-                        clear_conditioned_layers=clear_conditioned_layers,
-                        past_key_values=past_key_values,
-                        use_cache=use_cache,
-                    )
+            with self.autocast():
+                outputs = self.model(
+                    vision_x=vision_x,
+                    lang_x=lang_x,
+                    attention_mask=attention_mask,
+                    clear_conditioned_layers=clear_conditioned_layers,
+                    past_key_values=past_key_values,
+                    use_cache=use_cache,
+                )
             return outputs
 
         # loop to handle updating past_key_values
@@ -292,16 +236,15 @@ class EvalModel(BaseEvalModel):
             else:
                 _attention_mask = None
 
-            with torch.inference_mode():
-                with self.autocast():
-                    outputs = self.model(
-                        vision_x=vision_x,
-                        lang_x=_lang_x,
-                        attention_mask=_attention_mask,
-                        clear_conditioned_layers=False,
-                        past_key_values=past_key_values,
-                        use_cache=True,
-                    )
+            with self.autocast():
+                outputs = self.model(
+                    vision_x=vision_x,
+                    lang_x=_lang_x,
+                    attention_mask=_attention_mask,
+                    clear_conditioned_layers=False,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
 
             past_key_values = outputs.past_key_values
             logits.append(outputs.logits)

@@ -388,6 +388,12 @@ parser.add_argument(
     action="store_true",
     help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
 )
+parser.add_argument(
+    "--deepspeed",
+    default=False,
+    action="store_true",
+    help="Whether to use deepspeed for distributed inference.",
+)
 
 
 def main():
@@ -403,7 +409,9 @@ def main():
     args.local_rank, args.rank, args.world_size = world_info_from_env()
     device_id = init_distributed_device(args)
     eval_model.set_device(device_id)
-    eval_model.init_distributed()
+    eval_model.init_distributed(
+        world_size=args.world_size, use_deepspeed=args.deepspeed
+    )
 
     if args.model != "open_flamingo" and args.shots != [0]:
         raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")

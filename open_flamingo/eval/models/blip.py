@@ -4,97 +4,95 @@ from PIL import Image
 import torch
 
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
-from open_flamingo.eval.eval_model import BaseEvalModel
-from open_flamingo.eval.utils import unwrap_model
+from models.eval_model import BaseEvalModel
+from utils import unwrap_model
+from transformers.modeling_outputs import CausalLMOutputWithPast
 
 
 class EvalModel(BaseEvalModel):
-    """BLIP-2 model evaluation.
+    """BLIP-2 model evaluation."""
 
-    Attributes:
-      model (nn.Module): Underlying Torch model.
-      tokenizer (transformers.PreTrainedTokenizer): Tokenizer for model.
-      device: Index of GPU to use, or the string "cpu"
-    """
-
-    def __init__(self, model_args):
+    def __init__(self, **model_args):
         assert (
             "processor_path" in model_args and "lm_path" in model_args
         ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
-
+        super().__init__(model_args)
         self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
         self.model = Blip2ForConditionalGeneration.from_pretrained(
             model_args["lm_path"]
         )
-        self.model.eval()
-        self.processor.tokenizer.padding_side = "left"
-        self.lm_name = model_args["lm_path"].split("/")[-1]
+        self.tokenizer = self.processor.tokenizer
+        self._check_init()
 
-    def _prepare_images(self, batch: List[List[torch.Tensor]]) -> torch.Tensor:
-        """Preprocess images and stack them.
-
-        Args:
-            batch: A list of lists of images.
-
-        Returns:
-            A Tensor of shape
-            (batch_size, channels, height, width).
-        """
+    def prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
         batch_images = None
         assert all(
             len(example) == 1 for example in batch
         ), "BLIP-2 only supports one image per example"
-
         for example in batch:
-            assert len(example) == 1, "BLIP-2 only supports one image per example"
-            batch_images = torch.cat(
-                [
-                    batch_images,
-                    self.processor.image_processor(example, return_tensors="pt")[
-                        "pixel_values"
-                    ],
-                ]
-                if batch_images is not None
-                else [
-                    self.processor.image_processor(example, return_tensors="pt")[
-                        "pixel_values"
+            if batch_images is None:
+                batch_images = self.processor.image_processor(
+                    example, return_tensors="pt"
+                )["pixel_values"]
+            else:
+                batch_images = torch.cat(
+                    [
+                        batch_images,
+                        self.processor.image_processor(example, return_tensors="pt")[
+                            "pixel_values"
+                        ],
                     ]
-                ],
-                dim=0,
+                )
+        if batch_images is not None:
+            batch_images = batch_images.to(
+                self.device, dtype=self.cast_dtype, non_blocking=True
             )
         return batch_images
+
+    def prepare_text(
+        self,
+        batch: List[List[str]],
+        padding="longest",
+        truncation=True,
+        max_length=2000,
+        add_special_tokens=True,
+    ):
+        encodings = self.tokenizer(
+            batch,
+            padding=padding,
+            truncation=truncation,
+            return_tensors="pt",
+            max_length=max_length,
+            add_special_tokens=add_special_tokens,
+        )
+        input_ids = encodings["input_ids"]
+        attention_mask = encodings["attention_mask"]
+        input_ids = input_ids.to(self.device, non_blocking=True)
+        attention_mask = attention_mask.to(self.device, non_blocking=True)
+        return input_ids, attention_mask
 
     def get_outputs(
         self,
         batch_text: List[str],
         batch_images: List[List[Image.Image]],
-        min_generation_length: int,
-        max_generation_length: int,
-        num_beams: int,
-        length_penalty: float,
+        **decode_kwargs,
     ) -> List[str]:
-        encodings = self.processor.tokenizer(
-            batch_text,
-            padding="longest",
-            truncation=True,
-            return_tensors="pt",
-            max_length=2000,
-        )
-        input_ids = encodings["input_ids"]
-        attention_mask = encodings["attention_mask"]
+        batch_images = self.prepare_images(batch_images)  # (B, C, H, W)
+        input_ids, attention_mask = self.prepare_text(batch_text)
 
         with torch.inference_mode():
-            outputs = unwrap_model(self.model).generate(
-                self._prepare_images(batch_images).to(self.device),
-                input_ids.to(self.device),
-                attention_mask=attention_mask.to(self.device),
-                max_new_tokens=max_generation_length,
-                min_new_tokens=min_generation_length,
-                num_beams=num_beams,
-                length_penalty=length_penalty,
-            )
+            with self.autocast():
+                outputs = unwrap_model(self.model).generate(
+                    batch_images,
+                    input_ids,
+                    attention_mask=attention_mask,
+                    **decode_kwargs,
+                )
 
-        return self.processor.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        # Extract only the new gnerated tokens
+        outputs = outputs[:, len(input_ids[0]) :]
+
+        return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
     def get_vqa_prompt(self, question, answer=None) -> str:
         return (
@@ -103,6 +101,23 @@ class EvalModel(BaseEvalModel):
 
     def get_caption_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
+
+    def __call__(
+        self,
+        lang_x: torch.Tensor,
+        vision_x: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ):
+        with self.autocast():
+            outputs = self.model(
+                pixel_values=vision_x,
+                input_ids=lang_x,
+                attention_mask=attention_mask,
+            )
+
+        # remove vision tokens
+        outputs.logits = outputs.logits[:, -lang_x.size(1) :, :]
+        return outputs
 
     def get_rank_classifications(
         self,
