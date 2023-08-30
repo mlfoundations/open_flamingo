@@ -4,6 +4,7 @@ import open_clip
 from .flamingo import Flamingo
 from .flamingo_lm import FlamingoLMMixin
 from .utils import extend_instance
+from .mllm import MLLM
 
 
 def create_model_and_transforms(
@@ -15,6 +16,8 @@ def create_model_and_transforms(
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
     freeze_lm_embeddings: bool = False,
+    model_family: str = "flamingo",
+    freeze_backbone_mllm: bool = False,
     **flamingo_kwargs,
 ):
     """
@@ -72,40 +75,63 @@ def create_model_and_transforms(
 
         extend_instance(lang_encoder, EmbeddingFnMixin)
 
-    # convert LM to FlamingoLM
-    extend_instance(lang_encoder, FlamingoLMMixin)
+    if model_family == "flamingo":
+        # convert LM to FlamingoLM
+        extend_instance(lang_encoder, FlamingoLMMixin)
 
-    if decoder_layers_attr_name is None:
-        decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
-    lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
-    lang_encoder.resize_token_embeddings(len(text_tokenizer))
+        if decoder_layers_attr_name is None:
+            decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
+        lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
+        lang_encoder.resize_token_embeddings(len(text_tokenizer))
 
-    model = Flamingo(
-        vision_encoder,
-        lang_encoder,
-        text_tokenizer.encode("<|endofchunk|>")[-1],
-        text_tokenizer.encode("<image>")[-1],
-        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
-            "width"
-        ],
-        cross_attn_every_n_layers=cross_attn_every_n_layers,
-        **flamingo_kwargs,
-    )
+        model = Flamingo(
+            vision_encoder,
+            lang_encoder,
+            text_tokenizer.encode("<|endofchunk|>")[-1],
+            text_tokenizer.encode("<image>")[-1],
+            vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+                "width"
+            ],
+            cross_attn_every_n_layers=cross_attn_every_n_layers,
+            **flamingo_kwargs,
+        )
 
-    # Freeze all parameters
-    model.requires_grad_(False)
-    assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+        # Freeze all parameters
+        model.requires_grad_(False)
+        assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
 
-    # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
-    model.perceiver.requires_grad_(True)
-    model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
-    if not freeze_lm_embeddings:
-        model.lang_encoder.get_input_embeddings().requires_grad_(True)
-        # TODO: investigate also training the output embeddings when untied
+        # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
+        model.perceiver.requires_grad_(True)
+        model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
+        if not freeze_lm_embeddings:
+            model.lang_encoder.get_input_embeddings().requires_grad_(True)
+            # TODO: investigate also training the output embeddings when untied
 
-    print(
-        f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
-    )
+        print(
+            f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
+        )
+
+    elif model_family == "mllm":
+        lang_encoder.resize_token_embeddings(len(text_tokenizer))                
+
+        model = MLLM(
+            vision_model=vision_encoder,
+            language_model=lang_encoder,
+            padding_token_id=text_tokenizer.pad_token_id,
+            media_token_id=text_tokenizer.encode("<image>")[-1],
+            vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+                "width"
+            ],
+        )
+
+        # Freeze vision encoder
+        model.vision_model.requires_grad_(False)
+        if freeze_backbone_mllm:
+            model.language_model.requires_grad_(False)
+
+        print(
+            f"MLLM model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
+        )
 
     return model, image_processor, text_tokenizer
 

@@ -87,6 +87,8 @@ def main():
     )
     parser.add_argument("--batch_size_mmc4", type=int, default=128)
     parser.add_argument("--batch_size_laion", type=int, default=128)
+    parser.add_argument("--batch_size_video", type=int, default=128)
+    parser.add_argument("--batch_size_arxiv", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
@@ -98,6 +100,7 @@ def main():
     )
     parser.add_argument("--loss_multiplier_mmc4", type=float, default=1.0)
     parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
+    parser.add_argument("--loss_multiplier_video", type=float, default=1.0)
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
     parser.add_argument(
@@ -138,9 +141,13 @@ def main():
         type=str,
         help="path to c4 shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
     )
+    parser.add_argument("--video_shards", type=str, help="path to video shards")
+    parser.add_argument("--arxiv_shards", type=str, help="path to arxiv shards")
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--train_num_samples_mmc4", type=int, default=10000)
-    parser.add_argument("--train_num_samples_laion", type=int, default=10000)
+    parser.add_argument("--train_num_samples_mmc4", type=int, default=125000)
+    parser.add_argument("--train_num_samples_laion", type=int, default=250000)
+    parser.add_argument("--train_num_samples_video", type=int, default=125000)
+    parser.add_argument("--train_num_samples_arxiv", type=int, default=125000)
     parser.add_argument("--dataset_resampled", action="store_true")
     parser.add_argument(
         "--mmc4_textsim_threshold",
@@ -222,8 +229,14 @@ def main():
     if args.laion_shards.startswith("s3"):
         args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
 
-    if args.mmc4_shards.startswith("s3"):
-        args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
+    # if args.mmc4_shards.startswith("s3"):
+    #     args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
+
+    # if args.video_shards.startswith("s3"):
+    #     args.video_shards = f"pipe:aws s3 cp {args.video_shards} -"
+
+    if args.arxiv_shards.startswith("s3"):
+        args.arxiv_shards = f"pipe:aws s3 cp {args.arxiv_shards} -"
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
@@ -266,6 +279,8 @@ def main():
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
         freeze_lm_embeddings=args.freeze_lm_embeddings,
+        model_family="mllm",
+        freeze_backbone_mllm=True,
     )
     random_seed(args.seed, args.rank)
 
@@ -351,7 +366,7 @@ def main():
             backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
             limit_all_gathers=True,
         )
-        model.wrap_fsdp(wrapper_kwargs, device_id)
+        model.wrap_fsdp(wrapper_kwargs, device_id, lm_trainable=False)
         ddp_model = model
 
         print(
@@ -389,30 +404,31 @@ def main():
             params_to_optimize,
         )
     )
-    if not args.fsdp or args.fsdp_use_orig_params:
-        # apply weight decay only to params in the xattn layers
-        def get_grouped_params(model):
-            params_with_wd, params_without_wd = [], []
-            for n, p in params_to_optimize:
-                if "gated_cross_attn" in n:
-                    params_with_wd.append(p)
-                else:
-                    params_without_wd.append(p)
-            return [
-                {"params": params_with_wd, "weight_decay": args.weight_decay},
-                {"params": params_without_wd, "weight_decay": 0.0},
-            ]
+    # if not args.fsdp or args.fsdp_use_orig_params:
+    #     # apply weight decay only to params in the xattn layers
+    #     def get_grouped_params(model):
+    #         params_with_wd, params_without_wd = [], []
+    #         for n, p in params_to_optimize:
+    #             if "gated_cross_attn" in n:
+    #                 params_with_wd.append(p)
+    #             else:
+    #                 params_without_wd.append(p)
+    #         return [
+    #             {"params": params_with_wd, "weight_decay": args.weight_decay},
+    #             {"params": params_without_wd, "weight_decay": 0.0},
+    #         ]
 
-        optimizer = torch.optim.AdamW(
-            get_grouped_params(params_to_optimize), lr=args.learning_rate
-        )
-    else:
-        # unclear if we should be using no weight decay or small weight decay for all parameters
-        optimizer = torch.optim.AdamW(
-            (p for _, p in params_to_optimize),
-            lr=args.learning_rate,
-            weight_decay=args.weight_decay,
-        )
+    #     optimizer = torch.optim.AdamW(
+    #         get_grouped_params(params_to_optimize), lr=args.learning_rate
+    #     )
+    # else:
+    #     # unclear if we should be using no weight decay or small weight decay for all parameters
+    optimizer = torch.optim.AdamW(
+        (p for _, p in params_to_optimize),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
+        foreach=False,
+    )
 
     # load optimizer checkpoint
     if args.resume_from_checkpoint is not None:
@@ -423,7 +439,7 @@ def main():
 
     # Initialize data loaders
     laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
-    mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
+    mmc4_dataset = get_data(args, image_processor, tokenizer, "arxiv")
     total_training_steps = (
         (args.train_num_samples_mmc4) // (args.batch_size_mmc4 * args.world_size)
     ) * args.num_epochs

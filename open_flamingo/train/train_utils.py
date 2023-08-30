@@ -102,7 +102,6 @@ def train_one_epoch(
         # set up labels; language model is expected to handle shifting
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
-        labels[labels == tokenizer.eos_token] = -100
         labels[labels == media_token_id] = -100
         labels = labels.to(device_id)
 
@@ -127,27 +126,6 @@ def train_one_epoch(
         # set up labels; language model is expected to handle shifting
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
-        labels[labels == tokenizer.eos_token] = -100
-        for i in range(labels.shape[0]):
-            # remove loss for any token before the first <image> token
-            label_idx = 0
-            while (
-                label_idx < labels.shape[1] and labels[i][label_idx] != media_token_id
-            ):
-                labels[i][label_idx] = -100
-                label_idx += 1
-
-            # get index of all endofchunk tokens in the sequence
-            endofchunk_idxs = torch.where(labels[i] == endofchunk_token_id)[0]
-            for endofchunk_idx in endofchunk_idxs:
-                token_idx = endofchunk_idx + 1
-                while (
-                    token_idx < labels.shape[1]
-                    and labels[i][token_idx] != media_token_id
-                ):
-                    labels[i][token_idx] = -100
-                    token_idx += 1
-
         labels[labels == media_token_id] = -100
         labels = labels.to(device_id)
 
@@ -173,29 +151,29 @@ def train_one_epoch(
         divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
         (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
 
-        if (not args.freeze_lm_embeddings) and (
-            not args.fsdp or args.fsdp_use_orig_params
-        ):
-            # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
-            if args.fsdp:
-                embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
-            else:
-                embed_grad = (
-                    model.module.lang_encoder.get_input_embeddings().weight.grad
-                )
-            zero_mask = torch.zeros_like(embed_grad)
-            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-            zero_mask[endofchunk_token_id] = torch.ones_like(
-                zero_mask[endofchunk_token_id]
-            )
-            if args.fsdp:
-                model.lang_encoder.get_input_embeddings().weight.grad = (
-                    embed_grad * zero_mask
-                )
-            else:
-                model.module.lang_encoder.get_input_embeddings().weight.grad = (
-                    embed_grad * zero_mask
-                )
+        # if (not args.freeze_lm_embeddings) and (
+        #     not args.fsdp or args.fsdp_use_orig_params
+        # ):
+        #     # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
+        #     if args.fsdp:
+        #         embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
+        #     else:
+        #         embed_grad = (
+        #             model.module.lang_encoder.get_input_embeddings().weight.grad
+        #         )
+        #     zero_mask = torch.zeros_like(embed_grad)
+        #     zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
+        #     zero_mask[endofchunk_token_id] = torch.ones_like(
+        #         zero_mask[endofchunk_token_id]
+        #     )
+        #     if args.fsdp:
+        #         model.lang_encoder.get_input_embeddings().weight.grad = (
+        #             embed_grad * zero_mask
+        #         )
+        #     else:
+        #         model.module.lang_encoder.get_input_embeddings().weight.grad = (
+        #             embed_grad * zero_mask
+        #         )
 
         # clip gradient norm
         if args.fsdp:
@@ -271,12 +249,6 @@ def train_one_epoch(
                     {"loss_mmc4": loss_mmc4.item(), "global_step": global_step},
                     commit=True,
                 )
-
-        # Log loss to console
-        if ((num_steps + 1) % args.logging_steps == 0) and args.rank == 0:
-            print(
-                f"Step {num_steps+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f}"
-            )
 
 
 class AverageMeter(object):
