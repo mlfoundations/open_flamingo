@@ -16,6 +16,7 @@ from train_utils import (
     train_one_epoch,
     get_mp_policy_dtype,
     save_checkpoint,
+    ds_save_checkpoint,
 )
 from transformers import (
     get_constant_schedule_with_warmup,
@@ -35,6 +36,9 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     CheckpointImpl,
     apply_activation_checkpointing,
 )
+
+import deepspeed
+
 from torch.distributed.fsdp._init_utils import _init_intra_and_inter_node_groups
 from torch.distributed.distributed_c10d import _get_default_group
 import functools
@@ -77,7 +81,7 @@ def main():
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
-        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states. if there exists a checkpoint in the dir named run_name, we will resume from that checkpoint by default",
+        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states. if there exists a checkpoint in the dir named run_name, we will resume from that checkpoint by default. If using deepspeed this should be a directory, not a file.",
         default=None,
     )
     parser.add_argument(
@@ -190,6 +194,8 @@ def main():
         action="store_true",
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
     )
+
+    # fsdp args
     parser.add_argument(
         "--fsdp",
         default=False,
@@ -204,6 +210,20 @@ def main():
     )
     parser.add_argument(
         "--fsdp_sharding_strategy", default="full", type=str, choices=["full", "hybrid"]
+    )
+
+    # deepspeed args
+    parser.add_argument(
+        "--deepspeed",
+        default=False,
+        action="store_true",
+        help="Use deepspeed for distributed training.",
+    )
+    parser.add_argument(
+        "--deepspeed_stage",
+        default=2,
+        type=int,
+        help="DeepSpeed distributed training stage. 1: ZeRO-1 (optimizer sharding), 2: ZeRO-2 (optimizer + gradient sharding), 3: ZeRO-3 (optimizer + gradient + model sharding)",
     )
 
     # wandb args
@@ -224,6 +244,8 @@ def main():
     )
 
     args = parser.parse_args()
+    
+    args.local_rank = int(os.environ.get('LOCAL_RANK', -1)) # for deepspeed
 
     # Validate args
     if args.laion_shards.startswith("s3"):
@@ -256,6 +278,9 @@ def main():
             + "Copy and paste the code from the _optim_utils.py in this repo into the torch file."
             + "The main issue was the missing group kwarg on line 1596 in _all_gather_optim_state."
         )
+    
+    if args.deepspeed and args.freeze_lm_embeddings:
+        raise ValueError("DeepSpeed is not supported with partially frozen LM embeddings")
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
         args.train_num_samples_mmc4 // args.batch_size_mmc4
@@ -265,8 +290,54 @@ def main():
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
     args.local_rank, args.rank, args.world_size = world_info_from_env()
-    device_id = init_distributed_device(args)
+    if args.deepspeed:
+        torch.cuda.set_device(args.local_rank)
+        device = torch.device("cuda", args.local_rank)
+        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+        deepspeed.init_distributed()
+
+        zero_opt_dict = {
+            "stage": args.deepspeed_stage,
+            "overlap_comm": True,
+            "contiguous_gradients": True,
+            "offload_param": {"device": "none"},  # TODO: Support CPU offload
+            "offload_optimizer": {"device": "none"},
+            "stage3_param_persistence_threshold": 1e4,
+            "stage3_max_live_parameters": 3e7,
+            "stage3_prefetch_bucket_size": 3e7,
+            "stage3_gather_16bit_weights_on_model_save": True,
+            "memory_efficient_linear": False,
+        }
+        ds_config = {
+            "train_batch_size": (args.batch_size_mmc4 + args.batch_size_laion)
+            * args.world_size
+            * args.gradient_accumulation_steps,
+            "train_micro_batch_size_per_gpu": (
+                args.batch_size_mmc4 + args.batch_size_laion
+            )
+            * args.gradient_accumulation_steps,
+            "steps_per_print": 100,
+            "zero_optimization": zero_opt_dict,
+            "gradient_clipping": 1.0,
+            "prescale_gradients": False,
+            "wall_clock_breakdown": False,
+        }
+
+        if args.precision == "fp16":
+            ds_config["fp16"] = {"enabled": True, "loss_scale_window": 100}
+        elif args.precision == "bf16":
+            ds_config["bf16"] = {"enabled": True}
+        # amp not supported with DeepSpeed
+        elif "amp" in args.precision:
+            raise ValueError("amp not supported with DeepSpeed")
+
+        device_id = args.local_rank
+
+    else:
+        device_id = init_distributed_device(args)
+
     random_seed(args.seed)
 
     # Initialize model
@@ -298,19 +369,28 @@ def main():
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
         # if args do not specify a checkpoint to resume from, check if checkpoints exist for this run
         # and automatically resume from the latest checkpoint
-        checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
-        if len(checkpoint_list) == 0:
-            print(f"Found no checkpoints for run {args.run_name}.")
+        if args.deepspeed:
+            if os.path.exists(f"{args.run_name}/latest"):
+                args.resume_from_checkpoint = args.run_name
+                print(
+                    f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
+                )
+            else:
+                print(f"Found no checkpoints for run {args.run_name}.")
         else:
-            args.resume_from_checkpoint = sorted(
-                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
-            )[-1]
-            print(
-                f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
-            )
+            checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
+            if len(checkpoint_list) == 0:
+                print(f"Found no checkpoints for run {args.run_name}.")
+            else:
+                args.resume_from_checkpoint = sorted(
+                    checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
+                )[-1]
+                print(
+                    f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
+                )
 
     resume_from_epoch = 0
-    if args.resume_from_checkpoint is not None:
+    if args.resume_from_checkpoint is not None and not args.deepspeed:
         if args.rank == 0:
             print(f"Loading checkpoint from {args.resume_from_checkpoint}")
         checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
@@ -376,27 +456,12 @@ def main():
             f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
         )
 
-    else:
+    elif not args.deepspeed:
         model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
 
-    # Initialize gradient checkpointing
-    if args.gradient_checkpointing:
-        non_reentrant_wrapper = functools.partial(
-            checkpoint_wrapper,
-            offload_to_cpu=True,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        )
-        apply_activation_checkpointing(
-            ddp_model,
-            checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
-            and not isinstance(m, FSDP)
-            and not isinstance(m, CheckpointWrapper),
-        )
-
     # Initialize optimizer
-    params_to_optimize = ddp_model.named_parameters()
+    params_to_optimize = ddp_model.named_parameters() if not args.deepspeed else model.named_parameters()
     params_to_optimize = list(
         filter(
             lambda x: x[1].requires_grad
@@ -431,7 +496,7 @@ def main():
     )
 
     # load optimizer checkpoint
-    if args.resume_from_checkpoint is not None:
+    if args.resume_from_checkpoint is not None and not args.deepspeed:
         osd = checkpoint["optimizer_state_dict"]
         if args.fsdp:
             osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
@@ -466,11 +531,57 @@ def main():
         )
 
     # load lr scheduler checkpoint
-    if args.resume_from_checkpoint is not None:
+    if args.resume_from_checkpoint is not None and not args.deepspeed:
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
-    # Start training!
-    ddp_model.train()
+    if args.deepspeed:
+        ddp_model, optimizer, _, lr_scheduler = deepspeed.initialize(
+            model=model,
+            optimizer=optimizer,
+            args=args,
+            config=ds_config,
+            lr_scheduler=lr_scheduler,
+            dist_init_required=True,
+        )
+        print(
+            f"After deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
+        print(
+            f"After deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
+        )
+
+        if args.resume_from_checkpoint is not None:
+            if args.rank == 0:
+                print(f"Loading checkpoint from {args.resume_from_checkpoint}")
+            # We will not pass in a 'tag' and instead rely on 'latest' file in the checkpoint directory
+            ddp_model.load_checkpoint(
+                load_dir=args.resume_from_checkpoint,  # Note: this is the dir, not the file
+                load_module_strict=False,
+            )
+            # read latest file to get epoch
+            latest_file = os.path.join(args.resume_from_checkpoint, "latest")
+            with open(latest_file, "r") as f:
+                checkpoint_epoch = int(f.read().split("_")[-1])
+            resume_from_epoch = checkpoint_epoch + 1
+
+    # Initialize gradient checkpointing
+    if args.gradient_checkpointing:
+        if args.deepspeed:
+            raise ValueError(
+                "gradient checkpointing currently not supported with deepspeed"
+            )
+        non_reentrant_wrapper = functools.partial(
+            checkpoint_wrapper,
+            offload_to_cpu=True,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        )
+        apply_activation_checkpointing(
+            ddp_model,
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
+            and not isinstance(m, FSDP)
+            and not isinstance(m, CheckpointWrapper),
+        )
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
@@ -490,10 +601,11 @@ def main():
             device_id=device_id,
             wandb=wandb,
         )
-        save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
 
-    # save final checkpoint
-    save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
+        if args.deepspeed:
+            ds_save_checkpoint(ddp_model, epoch, args)
+        else:
+            save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
 
 
 if __name__ == "__main__":

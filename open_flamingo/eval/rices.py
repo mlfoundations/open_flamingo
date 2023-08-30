@@ -23,7 +23,6 @@ class RICES:
         vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
             vision_encoder_path,
             pretrained=vision_encoder_pretrained,
-            cache_dir="/mmfs1/gscratch/efml/anasa2/clip_cache",
         )
         self.model = vision_encoder.to(self.device)
         self.image_processor = image_processor

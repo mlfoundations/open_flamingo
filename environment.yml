@@ -7,4 +7,6 @@ dependencies:
   - pip
   - pip:
     - -r requirements.txt
+    - -r requirements-training.txt
+    - -r requirements-eval.txt
     - -e .
