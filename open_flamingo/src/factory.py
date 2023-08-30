@@ -88,8 +88,8 @@ def create_model_and_transforms(
         decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
     lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
     lang_encoder.resize_token_embeddings(
-        len(text_tokenizer), pad_to_multiple_of=8
-    )  # padding to enable tensor cores
+        len(text_tokenizer)
+    )
 
     model = Flamingo(
         vision_encoder,
@@ -110,9 +110,10 @@ def create_model_and_transforms(
     # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
     model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
-    if not freeze_lm_embeddings:
-        model.lang_encoder.get_input_embeddings().requires_grad_(True)
-        # TODO: investigate also training the output embeddings when untied
+
+    # TODO: FIX this. Currently we are just training all embeddings unless freeze_lm_embeddings is on in which case we only train <image> and <eoc> embeddings
+    model.lang_encoder.get_input_embeddings().requires_grad_(True)
+    model.lang_encoder.get_output_embeddings().requires_grad_(True)
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"

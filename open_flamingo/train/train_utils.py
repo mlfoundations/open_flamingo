@@ -167,11 +167,11 @@ def train_one_epoch(
             (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
 
         # TODO: investigate whether this is necessary
-        if (not args.freeze_lm_embeddings) and (
+        if (args.freeze_lm_embeddings) and (
             not args.fsdp or args.fsdp_use_orig_params
         ):
             # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
-            if args.fsdp or args.deepspeed:
+            if args.fsdp:
                 embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
             else:
                 embed_grad = (
@@ -182,7 +182,7 @@ def train_one_epoch(
             zero_mask[endofchunk_token_id] = torch.ones_like(
                 zero_mask[endofchunk_token_id]
             )
-            if args.fsdp or args.deepspeed:
+            if args.fsdp:
                 model.lang_encoder.get_input_embeddings().weight.grad = (
                     embed_grad * zero_mask
                 )

@@ -265,6 +265,9 @@ def main():
             + "Copy and paste the code from the _optim_utils.py in this repo into the torch file."
             + "The main issue was the missing group kwarg on line 1596 in _all_gather_optim_state."
         )
+    
+    if args.deepspeed and args.freeze_lm_embeddings:
+        raise ValueError("DeepSpeed is not supported with partially frozen LM embeddings")
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
         args.train_num_samples_mmc4 // args.batch_size_mmc4
@@ -291,6 +294,7 @@ def main():
             "stage3_param_persistence_threshold": 1e4,
             "stage3_max_live_parameters": 3e7,
             "stage3_prefetch_bucket_size": 3e7,
+            "stage3_gather_16bit_weights_on_model_save": True,
             "memory_efficient_linear": False,
         }
         ds_config = {
@@ -442,7 +446,7 @@ def main():
         ddp_model = DDP(model, device_ids=[device_id])
 
     # Initialize optimizer
-    params_to_optimize = model.named_parameters()
+    params_to_optimize = ddp_model.named_parameters() if not args.deepspeed else model.named_parameters()
     params_to_optimize = list(
         filter(
             lambda x: x[1].requires_grad
@@ -525,6 +529,9 @@ def main():
         )
         print(
             f"After deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
+        )
+        print(
+            f"After deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
         )
 
         if args.resume_from_checkpoint is not None:
