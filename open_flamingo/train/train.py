@@ -232,8 +232,7 @@ def main():
     )
 
     args = parser.parse_args()
-
-    args.local_rank = int(os.environ.get("LOCAL_RANK", -1))  # for deepspeed
+    args.local_rank, args.rank, args.world_size = world_info_from_env()
 
     # Validate args
     if args.laion_shards.startswith("s3"):
@@ -269,7 +268,6 @@ def main():
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-    args.local_rank, args.rank, args.world_size = world_info_from_env()
     if args.deepspeed:
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
@@ -285,7 +283,6 @@ def main():
             "stage3_param_persistence_threshold": 1e4,
             "stage3_max_live_parameters": 3e7,
             "stage3_prefetch_bucket_size": 3e7,
-            "stage3_gather_16bit_weights_on_model_save": True,
             "memory_efficient_linear": False,
         }
         ds_config = {
