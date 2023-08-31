@@ -14,6 +14,7 @@ import torchvision
 import webdataset as wds
 from PIL import Image
 import base64
+from scipy.optimize import linear_sum_assignment
 
 from data_utils import *
 
@@ -156,25 +157,41 @@ def preprocess_interleaved(
     sentences = info["text_list"]
     sim_matrix = info["similarity_matrix"]
 
-    # convert images from base64 to PIL and filter based on image-text similarity
-    images, sentence_ixs = [], []
-    for sample_image, sim_vec in zip(info["image_info"], sim_matrix):
+    # load images first to find which ones are valid
+    valid_images, valid_image_indices = [], []
+    for i, sample_image in enumerate(info["image_info"]):
         if "image_base64" not in sample_image:
             continue
         image_base64 = sample_image["image_base64"]
         rawbytes = base64.b64decode(image_base64)
 
-        sim_ix = np.argmax(sim_vec)
-        sim_score = sim_vec[sim_ix]
-
         # filter to images >= 10KB
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
+
+        image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
+        valid_images.append(image)
+        valid_image_indices.append(i)
+
+    if len(valid_image_indices) == 0:
+        raise ValueError("No images in sample")
+
+    sim_matrix = np.array(sim_matrix)  # of shape images x sentences
+    sim_matrix = sim_matrix[valid_image_indices]
+
+    # negate the similarities to turn then into costs
+    cost_matrix = -sim_matrix
+    # find one to one assignements
+    image_indices, sentence_indices = linear_sum_assignment(cost_matrix)
+
+    images, sentence_ixs = [], []
+    for i, sim_ix in zip(image_indices, sentence_indices):
+        sim_score = sim_matrix[i][sim_ix]
+
         if sim_score < sim_threshold:
             continue
-        image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
 
-        images.append(image)
+        images.append(valid_images[i])
         sentence_ixs.append(sim_ix)
 
     if len(images) == 0:
