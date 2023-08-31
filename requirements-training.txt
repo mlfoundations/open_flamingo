@@ -3,3 +3,4 @@ braceexpand
 webdataset
 tqdm
 wandb
+deepspeed
