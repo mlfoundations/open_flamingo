@@ -122,12 +122,6 @@ class FlamingoLMMixin(nn.Module):
         )
         self.get_input_embeddings().weight = input_embed_weights
 
-        # create a get_output_embeddings() / set_output_embeddings() method if it doesn't exist
-        # this is needed for compatibility
-        if not hasattr(self, "get_output_embeddings"):
-            self.get_output_embeddings = lambda: self.lm_head
-            self.set_output_embeddings = lambda x: setattr(self, "lm_head", x)
-
         out_embeds = FlamingoDecoupledLinear(
             in_features=input_embed_weights.shape[1],
             out_features=input_embed_weights.shape[0],

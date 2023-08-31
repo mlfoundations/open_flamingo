@@ -80,6 +80,10 @@ def create_model_and_transforms(
                 self.transformer.wte = new_embeddings
 
         extend_instance(lang_encoder, EmbeddingFnMixin)
+    
+    if not hasattr(lang_encoder, "get_output_embeddings"):
+        lang_encoder.get_output_embeddings = lambda: lang_encoder.lm_head
+        lang_encoder.set_output_embeddings = lambda x: setattr(lang_encoder, "lm_head", x)
 
     # convert LM to FlamingoLM
     extend_instance(lang_encoder, FlamingoLMMixin)
@@ -105,7 +109,8 @@ def create_model_and_transforms(
     model.vision_encoder.requires_grad_(False)
     model.lang_encoder.requires_grad_(False)
 
-    # Unfreeze gated_cross_attn_layers
+    # Unfreeze gated_cross_attn_layers and perceiver
+    model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
 
     print(
