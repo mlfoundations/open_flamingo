@@ -16,7 +16,6 @@ def create_model_and_transforms(
     cross_attn_every_n_layers: int = 1,
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
-    freeze_lm_embeddings: bool = False,
     cache_dir: Optional[str] = None,
     **flamingo_kwargs,
 ):
@@ -32,7 +31,6 @@ def create_model_and_transforms(
         cross_attn_every_n_layers (int, optional): determines how often to add a cross-attention layer. Defaults to 1.
         use_local_files (bool, optional): whether to use local files. Defaults to False.
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
-        freeze_lm_embeddings (bool, optional): whether to freeze LM input embeddings when configuring Perceiver.
         cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
@@ -57,10 +55,12 @@ def create_model_and_transforms(
     text_tokenizer.add_special_tokens(
         {"additional_special_tokens": ["<|endofchunk|>", "<image>"]}
     )
+    new_tokens = 2
     if text_tokenizer.pad_token is None:
         # Issue: GPT models don't have a pad token, which we use to
         # modify labels for the loss.
         text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
+        new_tokens += 1
 
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path,
@@ -87,9 +87,6 @@ def create_model_and_transforms(
     if decoder_layers_attr_name is None:
         decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
     lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
-    lang_encoder.resize_token_embeddings(
-        len(text_tokenizer)
-    )
 
     model = Flamingo(
         vision_encoder,
@@ -100,20 +97,16 @@ def create_model_and_transforms(
             "width"
         ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
+        new_tokens=new_tokens,  # number of tokens embeddings to train
         **flamingo_kwargs,
     )
 
     # Freeze all parameters
-    model.requires_grad_(False)
-    assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+    model.vision_encoder.requires_grad_(False)
+    model.lang_encoder.requires_grad_(False)
 
-    # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
-    model.perceiver.requires_grad_(True)
+    # Unfreeze gated_cross_attn_layers
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
-
-    # TODO: FIX this. Currently we are just training all embeddings unless freeze_lm_embeddings is on in which case we only train <image> and <eoc> embeddings
-    model.lang_encoder.get_input_embeddings().requires_grad_(True)
-    model.lang_encoder.get_output_embeddings().requires_grad_(True)
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"

@@ -8,7 +8,7 @@ from open_flamingo.eval.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
 from open_flamingo.eval.utils import unwrap_model, get_autocast, get_cast_dtype
 from transformers.modeling_outputs import CausalLMOutputWithPast
-
+from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
 
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation.
@@ -47,11 +47,12 @@ class EvalModel(BaseEvalModel):
             model_args["lm_tokenizer_path"],
             cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
-        checkpoint = torch.load(model_args["checkpoint_path"], map_location=self.device)
-        if "model_state_dict" in checkpoint:
-            checkpoint = checkpoint["model_state_dict"]
-            checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
-        self.model.load_state_dict(checkpoint, strict=False)
+        self.model = load_state_dict_from_zero_checkpoint(self.model, model_args["checkpoint_path"])
+        # checkpoint = torch.load(model_args["checkpoint_path"], map_location=self.device)
+        # if "model_state_dict" in checkpoint:
+        #     checkpoint = checkpoint["model_state_dict"]
+        #     checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
+        # self.model.load_state_dict(checkpoint, strict=False)
         self.model.to(self.device)
         self.model.eval()
         self.tokenizer.padding_side = "left"
@@ -114,9 +115,9 @@ class EvalModel(BaseEvalModel):
             max_length=max_length,
         )
         input_ids, attention_mask = encodings["input_ids"], encodings["attention_mask"]
-        input_ids = input_ids.to(self.device, dtype=self.cast_dtype, non_blocking=True)
+        input_ids = input_ids.to(self.device, non_blocking=True)
         attention_mask = attention_mask.to(
-            self.device, dtype=self.cast_dtype, non_blocking=True
+            self.device, non_blocking=True
         )
         return input_ids, attention_mask.bool()
 

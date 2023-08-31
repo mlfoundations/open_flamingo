@@ -1,5 +1,9 @@
 import torch.nn as nn
-from .helpers import GatedCrossAttentionBlock
+from .helpers import (
+    GatedCrossAttentionBlock,
+    FlamingoDecoupledEmbedding,
+    FlamingoDecoupledLinear,
+)
 from .utils import getattr_recursive, setattr_recursive
 
 
@@ -87,6 +91,7 @@ class FlamingoLMMixin(nn.Module):
         vis_hidden_size,
         cross_attn_every_n_layers,
         gradient_checkpointing,
+        new_tokens,
     ):
         """
         Initialize Flamingo by adding a new gated cross attn to the decoder. Store the media token id for computing the media locations.
@@ -104,6 +109,43 @@ class FlamingoLMMixin(nn.Module):
         )
         self.init_flamingo_layers(gradient_checkpointing)
         self.media_token_id = media_token_id
+
+        # modify the embedding layer to support decoupling
+        input_embed_weights = self.get_input_embeddings().weight
+        self.set_input_embeddings(
+            FlamingoDecoupledEmbedding(
+                num_embeddings=input_embed_weights.shape[0],
+                num_additional_embeddings=new_tokens,
+                embedding_dim=input_embed_weights.shape[1],
+                partially_freeze=True,
+            )
+        )
+        self.get_input_embeddings().weight = input_embed_weights
+
+        # create a get_output_embeddings() / set_output_embeddings() method if it doesn't exist
+        # this is needed for compatibility
+        if not hasattr(self, "get_output_embeddings"):
+            self.get_output_embeddings = lambda: self.lm_head
+            self.set_output_embeddings = lambda x: setattr(self, "lm_head", x)
+
+        out_embeds = FlamingoDecoupledLinear(
+            in_features=input_embed_weights.shape[1],
+            out_features=input_embed_weights.shape[0],
+            bias=self.get_output_embeddings().bias is not None,
+            out_additional_features=new_tokens,
+            partially_freeze=True,
+        )
+
+        if getattr(self.config, "tie_word_embeddings", True):
+            out_embeds.weight = input_embed_weights
+        else:
+            out_embeds.weight = self.get_output_embeddings().weight
+
+        if self.get_output_embeddings().bias is not None:
+            out_embeds.bias = self.get_output_embeddings().bias
+
+        self.set_output_embeddings(out_embeds)
+
         self.initialized_flamingo = True
         self._use_cached_vision_x = False
 

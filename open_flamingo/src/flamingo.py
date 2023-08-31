@@ -24,6 +24,7 @@ class Flamingo(nn.Module):
         vis_dim: int,
         cross_attn_every_n_layers: int = 1,
         gradient_checkpointing: bool = False,
+        new_tokens: int = 2,
     ):
         """
         Args:
@@ -34,6 +35,8 @@ class Flamingo(nn.Module):
             vis_dim (int): Dimension of the visual features.
                 Visual features are projected to match this shape along the last dimension.
             cross_attn_every_n_layers (int, optional): How often to apply cross attention after transformer layer. Defaults to 1.
+            gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            new_tokens (int, optional): Number of new tokens added to the tokenizer. Defaults to 2.
         """
         super().__init__()
         self.eoc_token_id = eoc_token_id
@@ -53,6 +56,7 @@ class Flamingo(nn.Module):
             vis_hidden_size=self.vis_dim,
             cross_attn_every_n_layers=cross_attn_every_n_layers,
             gradient_checkpointing=gradient_checkpointing,
+            new_tokens=new_tokens,
         )
         self._use_gradient_checkpointing = gradient_checkpointing
         self.perceiver._use_gradient_checkpointing = gradient_checkpointing

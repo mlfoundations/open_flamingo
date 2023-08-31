@@ -123,11 +123,6 @@ def main():
     )
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
-        "--freeze_lm_embeddings",
-        action="store_true",
-        help="if True, we freeze the LM embeddings during training. Otherwise, we train the <image> and <|endofchunk|> embeddings.",
-    )
-    parser.add_argument(
         "--logging_steps", type=int, default=100, help="log loss every n steps"
     )
 
@@ -237,8 +232,8 @@ def main():
     )
 
     args = parser.parse_args()
-    
-    args.local_rank = int(os.environ.get('LOCAL_RANK', -1)) # for deepspeed
+
+    args.local_rank = int(os.environ.get("LOCAL_RANK", -1))  # for deepspeed
 
     # Validate args
     if args.laion_shards.startswith("s3"):
@@ -253,8 +248,7 @@ def main():
     if args.fsdp and not args.fsdp_use_orig_params:
         print(
             "Warning: FSDP is running without fsdp_use_orig_params flag. "
-            + "This is not recommended because it means we will use uniform weight decay"
-            + " and train all embeddings, not just the newly added ones. "
+            + "This is not recommended because it means we will use uniform weight decay."
             + "Note: OPT models are not compatible with fsdp_use_orig_params flag."
         )
 
@@ -265,9 +259,6 @@ def main():
             + "Copy and paste the code from the _optim_utils.py in this repo into the torch file."
             + "The main issue was the missing group kwarg on line 1596 in _all_gather_optim_state."
         )
-    
-    if args.deepspeed and args.freeze_lm_embeddings:
-        raise ValueError("DeepSpeed is not supported with partially frozen LM embeddings")
 
     assert (args.train_num_samples_laion // args.batch_size_laion) == (
         args.train_num_samples_mmc4 // args.batch_size_mmc4
@@ -336,7 +327,6 @@ def main():
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
-        freeze_lm_embeddings=args.freeze_lm_embeddings,
     )
     random_seed(args.seed, args.rank)
 
@@ -446,7 +436,9 @@ def main():
         ddp_model = DDP(model, device_ids=[device_id])
 
     # Initialize optimizer
-    params_to_optimize = ddp_model.named_parameters() if not args.deepspeed else model.named_parameters()
+    params_to_optimize = (
+        ddp_model.named_parameters() if not args.deepspeed else model.named_parameters()
+    )
     params_to_optimize = list(
         filter(
             lambda x: x[1].requires_grad
