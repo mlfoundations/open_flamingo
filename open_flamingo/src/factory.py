@@ -80,10 +80,12 @@ def create_model_and_transforms(
                 self.transformer.wte = new_embeddings
 
         extend_instance(lang_encoder, EmbeddingFnMixin)
-    
+
     if not hasattr(lang_encoder, "get_output_embeddings"):
         lang_encoder.get_output_embeddings = lambda: lang_encoder.lm_head
-        lang_encoder.set_output_embeddings = lambda x: setattr(lang_encoder, "lm_head", x)
+        lang_encoder.set_output_embeddings = lambda x: setattr(
+            lang_encoder, "lm_head", x
+        )
 
     # convert LM to FlamingoLM
     extend_instance(lang_encoder, FlamingoLMMixin)

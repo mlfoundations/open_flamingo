@@ -125,7 +125,7 @@ class FlamingoLMMixin(nn.Module):
         out_embeds = FlamingoDecoupledLinear(
             in_features=input_embed_weights.shape[1],
             out_features=input_embed_weights.shape[0],
-            bias=self.get_output_embeddings().bias is not None,
+            bias=getattr(self.get_output_embeddings(), "bias", None) is not None,
             out_additional_features=new_tokens,
             partially_freeze=True,
         )
