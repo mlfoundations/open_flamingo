@@ -48,7 +48,6 @@ def create_model_and_transforms(
     text_tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         local_files_only=use_local_files,
-        trust_remote_code=True,
         cache_dir=cache_dir,
     )
     # add Flamingo special tokens to the tokenizer
@@ -65,7 +64,6 @@ def create_model_and_transforms(
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path,
         local_files_only=use_local_files,
-        trust_remote_code=True,
         cache_dir=cache_dir,
     )
 
