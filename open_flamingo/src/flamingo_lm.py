@@ -135,7 +135,7 @@ class FlamingoLMMixin(nn.Module):
         else:
             out_embeds.weight = self.get_output_embeddings().weight
 
-        if self.get_output_embeddings().bias is not None:
+        if getattr(self.get_output_embeddings(), "bias", None):
             out_embeds.bias = self.get_output_embeddings().bias
 
         self.set_output_embeddings(out_embeds)
