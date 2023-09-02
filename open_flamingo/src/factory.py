@@ -49,6 +49,7 @@ def create_model_and_transforms(
         tokenizer_path,
         local_files_only=use_local_files,
         cache_dir=cache_dir,
+        trust_remote_code=True
     )
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens(
@@ -65,6 +66,7 @@ def create_model_and_transforms(
         lang_encoder_path,
         local_files_only=use_local_files,
         cache_dir=cache_dir,
+        trust_remote_code=True
     )
 
     # hacks for MPT-1B, which doesn't have a get_input_embeddings method
@@ -84,7 +86,7 @@ def create_model_and_transforms(
             lang_encoder.get_output_embeddings = lambda: lang_encoder.lm_head
         else:
             raise ValueError(
-                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this string manually."
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
             )
 
     if not hasattr(lang_encoder, "set_output_embeddings"):
@@ -94,7 +96,7 @@ def create_model_and_transforms(
             )
         else:
             raise ValueError(
-                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this string manually."
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
             )
 
     # convert LM to FlamingoLM
