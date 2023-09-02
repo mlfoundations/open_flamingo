@@ -80,10 +80,22 @@ def create_model_and_transforms(
         extend_instance(lang_encoder, EmbeddingFnMixin)
 
     if not hasattr(lang_encoder, "get_output_embeddings"):
-        lang_encoder.get_output_embeddings = lambda: lang_encoder.lm_head
-        lang_encoder.set_output_embeddings = lambda x: setattr(
-            lang_encoder, "lm_head", x
-        )
+        if hasattr(lang_encoder, "lm_head"):
+            lang_encoder.get_output_embeddings = lambda: lang_encoder.lm_head
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this string manually."
+            )
+
+    if not hasattr(lang_encoder, "set_output_embeddings"):
+        if hasattr(lang_encoder, "lm_head"):
+            lang_encoder.set_output_embeddings = lambda x: setattr(
+                lang_encoder, "lm_head", x
+            )
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this string manually."
+            )
 
     # convert LM to FlamingoLM
     extend_instance(lang_encoder, FlamingoLMMixin)
