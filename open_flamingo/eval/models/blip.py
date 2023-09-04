@@ -12,16 +12,17 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 class EvalModel(BaseEvalModel):
     """BLIP-2 model evaluation."""
 
-    def __init__(self, **model_args):
+    def __init__(self, model_args, init_on_device=False):
         assert (
             "processor_path" in model_args and "lm_path" in model_args
         ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
-        super().__init__(model_args)
-        self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
-        self.model = Blip2ForConditionalGeneration.from_pretrained(
-            model_args["lm_path"]
-        )
-        self.tokenizer = self.processor.tokenizer
+        super().__init__(model_args, init_on_device)
+        with self.init_ctx:
+            self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
+            self.model = Blip2ForConditionalGeneration.from_pretrained(
+                model_args["lm_path"]
+            )
+            self.tokenizer = self.processor.tokenizer
         self._check_init()
 
     def prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:

@@ -13,7 +13,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation."""
 
-    def __init__(self, model_args):
+    def __init__(self, model_args, init_on_device=False):
         assert (
             "vision_encoder_path" in model_args
             and "lm_path" in model_args
@@ -22,18 +22,19 @@ class EvalModel(BaseEvalModel):
             and "cross_attn_every_n_layers" in model_args
             and "vision_encoder_pretrained" in model_args
         ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained arguments to be specified"
-        super().__init__(model_args)
-        (
-            self.model,
-            self.image_processor,
-            self.tokenizer,
-        ) = create_model_and_transforms(
-            model_args["vision_encoder_path"],
-            model_args["vision_encoder_pretrained"],
-            model_args["lm_path"],
-            model_args["lm_tokenizer_path"],
-            cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
-        )
+        super().__init__(model_args, init_on_device)        
+        with self.init_ctx:
+            (
+                self.model,
+                self.image_processor,
+                self.tokenizer,
+            ) = create_model_and_transforms(
+                model_args["vision_encoder_path"],
+                model_args["vision_encoder_pretrained"],
+                model_args["lm_path"],
+                model_args["lm_tokenizer_path"],
+                cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
+            )
         checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
         if "model_state_dict" in checkpoint:
             checkpoint = checkpoint["model_state_dict"]

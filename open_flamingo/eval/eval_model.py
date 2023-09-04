@@ -4,8 +4,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from PIL import Image
 from utils import get_autocast, get_cast_dtype
 import torch
-from transformers.modeling_outputs import CausalLMOutputWithPast
-
+from contextlib import suppress
 
 class BaseEvalModel(abc.ABC):
     """Base class encapsulating functionality needed to evaluate a model."""
@@ -19,17 +18,23 @@ class BaseEvalModel(abc.ABC):
                 is non-empty.
         """
 
-    def __init__(self, model_args):
+    def __init__(self, model_args, init_on_device=False):
         assert "lm_path" in model_args, "All models require the lm_path argument"
         self.device = (
             model_args["device"]
-            if ("device" in model_args and model_args["device"] >= 0)
+            if ("device" in model_args and (type(model_args["device"]) != int or model_args["device"] >= 0))
             else "cpu"
         )
-        precision = model_args.get("precision", "fp32")
+        self.precision = model_args.get("precision", "fp32")
         self.lm_name = model_args["lm_path"].split("/")[-1]
-        self.autocast = get_autocast(precision)
-        self.cast_dtype = get_cast_dtype(precision)
+        self.autocast = get_autocast(self.precision)
+        self.cast_dtype = get_cast_dtype(self.precision)
+        if init_on_device:
+            # for deepspeed, must init on device, or likely CPU OOM 
+            import deepspeed
+            self.init_ctx = deepspeed.OnDevice(dtype=self.cast_dtype, device=self.device)
+        else:
+            self.init_ctx = suppress()
 
     def _check_init(self):
         """Finish model initialization."""
@@ -42,8 +47,8 @@ class BaseEvalModel(abc.ABC):
     def init_distributed(self, world_size=None, use_deepspeed=False):
         """Wrap model as DDP or deepspeed."""
         if use_deepspeed:
+            assert "amp" not in self.precision, "Deepspeed does not support amp"
             import deepspeed
-
             self.ds_engine = deepspeed.init_inference(
                 self.model,
                 mp_size=world_size,
@@ -52,13 +57,15 @@ class BaseEvalModel(abc.ABC):
                 replace_with_kernel_inject=True,
             )
             self.model = self.ds_engine.module
+            self.autocast = get_autocast(None)
         else:
             self.model = DDP(self.model, device_ids=[self.device])
 
     def set_device(self, device):
         """Set device for model."""
-        self.device = device
-        self.model = self.model.to(device)
+        torch.cuda.set_device(device)
+        self.device = torch.device("cuda", device)
+        self.model = self.model.to(device, dtype=self.cast_dtype)
 
     def __call__(
         self,
@@ -120,10 +127,6 @@ class BaseEvalModel(abc.ABC):
                 of any images to be included.
             batch_images: images to provide to model. Should be a list of lists,
               where each list contains the images for a single example.
-            max_generation_length: maximum length of the generated caption.
-                Defaults to 10.
-            num_beams: number of beams to use for beam search. Defaults to 3.
-            length_penalty: length penalty for beam search. Defaults to -2.0.
 
         Returns:
             List of decoded output strings.

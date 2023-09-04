@@ -17,14 +17,15 @@ from utils import unwrap_model
 class EvalModel(BaseEvalModel):
     """IDEFICS model evaluation."""
 
-    def __init__(self, **model_args):
+    def __init__(self, model_args, init_on_device=False):
         assert (
             "lm_path" in model_args and "processor_path" in model_args
         ), "IDEFICS requires lm_path and lm_tokenizer_path"
-        super().__init__(model_args)
-        self.model = IdeficsForVisionText2Text.from_pretrained(model_args["lm_path"])
-        self.processor = AutoProcessor.from_pretrained(model_args["processor_path"])
-        self.tokenizer = self.processor.tokenizer
+        super().__init__(model_args, init_on_device)
+        with self.init_ctx:
+            self.model = IdeficsForVisionText2Text.from_pretrained(model_args["lm_path"])
+            self.processor = AutoProcessor.from_pretrained(model_args["processor_path"])
+            self.tokenizer = self.processor.tokenizer
         self._check_init()
 
     def prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
