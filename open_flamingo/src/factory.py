@@ -88,7 +88,7 @@ def create_model_and_transforms(
         decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
     lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
     lang_encoder.resize_token_embeddings(
-        len(text_tokenizer),
+        len(text_tokenizer), pad_to_multiple_of=8,
     )  # padding to enable tensor cores
 
     model = Flamingo(
