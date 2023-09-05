@@ -91,6 +91,7 @@ class FlamingoLMMixin(nn.Module):
         vis_hidden_size,
         cross_attn_every_n_layers,
         gradient_checkpointing,
+        vocab_size,
         new_tokens,
     ):
         """
@@ -114,7 +115,7 @@ class FlamingoLMMixin(nn.Module):
         input_embed_weights = self.get_input_embeddings().weight
         self.set_input_embeddings(
             FlamingoDecoupledEmbedding(
-                num_embeddings=input_embed_weights.shape[0],
+                num_embeddings=vocab_size,
                 num_additional_embeddings=new_tokens,
                 embedding_dim=input_embed_weights.shape[1],
                 partially_freeze=True,
@@ -124,7 +125,7 @@ class FlamingoLMMixin(nn.Module):
 
         out_embeds = FlamingoDecoupledLinear(
             in_features=input_embed_weights.shape[1],
-            out_features=input_embed_weights.shape[0],
+            out_features=vocab_size,
             bias=getattr(self.get_output_embeddings(), "bias", None) is not None,
             out_additional_features=new_tokens,
             partially_freeze=True,
