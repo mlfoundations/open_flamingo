@@ -15,7 +15,7 @@ def create_model_and_transforms(
     lang_encoder_path: str,
     tokenizer_path: str,
     cross_attn_every_n_layers: int = 1,
-    untie_embeddings: bool = True,
+    untie_embeddings: bool = False,
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
     cache_dir: Optional[str] = None,
