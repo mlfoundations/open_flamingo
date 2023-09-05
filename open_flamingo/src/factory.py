@@ -133,6 +133,11 @@ def create_model_and_transforms(
     # Unfreeze gated_cross_attn_layers and perceiver
     model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
+    if hasattr(model.lang_encoder.get_output_embeddings(), "additional_fc"):
+        model.lang_encoder.get_output_embeddings().additional_fc.requires_grad_(True)
+        
+    if hasattr(model.lang_encoder.get_input_embeddings(), "additional_embedding"):
+        model.lang_encoder.get_input_embeddings().additional_embedding.requires_grad_(True)
 
     if hasattr(model.lang_encoder.get_output_embeddings(), "additional_fc"):
         model.lang_encoder.get_output_embeddings().additional_fc.requires_grad_(True)
