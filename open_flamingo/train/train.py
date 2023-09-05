@@ -314,6 +314,9 @@ def main():
         device_id = init_distributed_device(args)
 
     random_seed(args.seed)
+    
+    if args.fsdp:
+        print("Untying embeddings for FSDP")
 
     # Initialize model
     model, image_processor, tokenizer = create_model_and_transforms(
@@ -322,6 +325,7 @@ def main():
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
+        untie_embeddings=args.fsdp, # untie embeddings for FSDP
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
     )
@@ -436,6 +440,7 @@ def main():
     params_to_optimize = (
         ddp_model.named_parameters() if not args.deepspeed else model.named_parameters()
     )
+            
     params_to_optimize = list(
         filter(
             lambda x: x[1].requires_grad

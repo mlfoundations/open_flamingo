@@ -2,6 +2,7 @@ from typing import Optional
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import open_clip
+import torch.nn as nn
 
 from .flamingo import Flamingo
 from .flamingo_lm import FlamingoLMMixin
@@ -14,6 +15,7 @@ def create_model_and_transforms(
     lang_encoder_path: str,
     tokenizer_path: str,
     cross_attn_every_n_layers: int = 1,
+    untie_embeddings: bool = True,
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
     cache_dir: Optional[str] = None,
@@ -29,6 +31,7 @@ def create_model_and_transforms(
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
         cross_attn_every_n_layers (int, optional): determines how often to add a cross-attention layer. Defaults to 1.
+        untie_embeddings (bool, optional): whether to untie the input and output embeddings if they are tied. This is required for training using FSDP. Defaults to False.
         use_local_files (bool, optional): whether to use local files. Defaults to False.
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
         cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
@@ -103,7 +106,19 @@ def create_model_and_transforms(
             raise ValueError(
                 "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
             )
-
+            
+    if untie_embeddings:
+        new_output_embeddings_weight = lang_encoder.get_output_embeddings().weight.clone()
+        if lang_encoder.get_output_embeddings().bias is not None:
+            new_output_embeddings_bias = lang_encoder.get_output_embeddings().bias.clone()
+        else:
+            new_output_embeddings_bias = None
+        lang_encoder.get_output_embeddings().weight = nn.Parameter(new_output_embeddings_weight)
+        if new_output_embeddings_bias is not None:
+            lang_encoder.get_output_embeddings().bias = nn.Parameter(new_output_embeddings_bias)
+        
+        lang_encoder.config.update({"tie_word_embeddings": False})
+        
     # convert LM to FlamingoLM
     extend_instance(lang_encoder, FlamingoLMMixin)
 
