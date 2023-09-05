@@ -435,6 +435,25 @@ def main():
     elif not args.deepspeed:
         model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
+        
+    # Initialize gradient checkpointing
+    if args.gradient_checkpointing:
+        if args.deepspeed:
+            raise ValueError(
+                "gradient checkpointing currently not supported with deepspeed"
+            )
+        non_reentrant_wrapper = functools.partial(
+            checkpoint_wrapper,
+            offload_to_cpu=True,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        )
+        apply_activation_checkpointing(
+            ddp_model,
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
+            and not isinstance(m, FSDP)
+            and not isinstance(m, CheckpointWrapper),
+        )
 
     # Initialize optimizer
     params_to_optimize = (
@@ -541,25 +560,6 @@ def main():
             with open(latest_file, "r") as f:
                 checkpoint_epoch = int(f.read().split("_")[-1])
             resume_from_epoch = checkpoint_epoch + 1
-
-    # Initialize gradient checkpointing
-    if args.gradient_checkpointing:
-        if args.deepspeed:
-            raise ValueError(
-                "gradient checkpointing currently not supported with deepspeed"
-            )
-        non_reentrant_wrapper = functools.partial(
-            checkpoint_wrapper,
-            offload_to_cpu=True,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        )
-        apply_activation_checkpointing(
-            ddp_model,
-            checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
-            and not isinstance(m, FSDP)
-            and not isinstance(m, CheckpointWrapper),
-        )
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)
