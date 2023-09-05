@@ -112,37 +112,28 @@ class FlamingoLMMixin(nn.Module):
         self.media_token_id = media_token_id
 
         # modify the embedding layer to support decoupling
-        input_embed_weights = self.get_input_embeddings().weight
-        self.set_input_embeddings(
-            FlamingoDecoupledEmbedding(
-                num_embeddings=vocab_size,
-                num_additional_embeddings=new_tokens,
-                embedding_dim=input_embed_weights.shape[1],
-                partially_freeze=True,
-            )
+        input_embeds = FlamingoDecoupledEmbedding(
+            num_embeddings=vocab_size,
+            num_additional_embeddings=new_tokens,
+            embedding_dim=self.get_input_embeddings().weight.shape[1],
+            partially_freeze=True,
         )
-        self.get_input_embeddings().weight = input_embed_weights
+        input_embeds.weight = self.get_input_embeddings().weight
+        self.set_input_embeddings(input_embeds)
 
         out_embeds = FlamingoDecoupledLinear(
-            in_features=input_embed_weights.shape[1],
+            in_features=self.get_input_embeddings().weight.shape[1],
             out_features=vocab_size,
-            bias=getattr(self.get_output_embeddings(), "bias", None) is not None,
+            bias=self.get_output_embeddings().bias is not None,
             out_additional_features=new_tokens,
             partially_freeze=True,
         )
 
-        if getattr(self.get_output_embeddings(), "bias", None):
+        if self.get_output_embeddings().bias is not None:
             out_embeds.bias = self.get_output_embeddings().bias
     
+        out_embeds.weight = self.get_output_embeddings().weight       
         self.set_output_embeddings(out_embeds)
-
-        if getattr(self.config, "tie_word_embeddings", True):
-            out_embeds.weight = input_embed_weights
-            if self.get_input_embeddings().num_additional_embeddings > 0:
-                assert self.get_output_embeddings().out_additional_features == self.get_input_embeddings().num_additional_embeddings
-                self.get_output_embeddings().additional_fc.weight = self.get_input_embeddings().additional_embedding.weight
-        else:
-            out_embeds.weight = self.get_output_embeddings().weight
 
         self.initialized_flamingo = True
         self._use_cached_vision_x = False
