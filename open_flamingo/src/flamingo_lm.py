@@ -131,15 +131,18 @@ class FlamingoLMMixin(nn.Module):
             partially_freeze=True,
         )
 
-        if getattr(self.config, "tie_word_embeddings", True):
-            out_embeds.weight = input_embed_weights
-        else:
-            out_embeds.weight = self.get_output_embeddings().weight
-
         if getattr(self.get_output_embeddings(), "bias", None):
             out_embeds.bias = self.get_output_embeddings().bias
-
+    
         self.set_output_embeddings(out_embeds)
+
+        if getattr(self.config, "tie_word_embeddings", True):
+            out_embeds.weight = input_embed_weights
+            if self.get_input_embeddings().num_additional_embeddings > 0:
+                assert self.get_output_embeddings().out_additional_features == self.get_input_embeddings().num_additional_embeddings
+                self.get_output_embeddings().additional_fc.weight = self.get_input_embeddings().additional_embedding.weight
+        else:
+            out_embeds.weight = self.get_output_embeddings().weight
 
         self.initialized_flamingo = True
         self._use_cached_vision_x = False
