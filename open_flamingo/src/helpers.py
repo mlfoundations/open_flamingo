@@ -297,7 +297,7 @@ class FlamingoDecoupledEmbedding(nn.Embedding):
         num_embeddings,
         num_additional_embeddings,
         embedding_dim,
-        partially_freeze=False,
+        partially_freeze=True,
         device=None,
         dtype=None,
         padding_idx=None,
@@ -311,7 +311,7 @@ class FlamingoDecoupledEmbedding(nn.Embedding):
                 Number of additional embeddings. Only useful when you `partially_freeze=True`.
             embedding_dim (`int`):
                 The size of each embedding vector
-            partially_freeze: (`bool`, *optional*, defaults to `False`):
+            partially_freeze: (`bool`, *optional*, defaults to `True`):
                 If `True`, the regular `weight` will be frozen. `additional_weight` is never frozen.
             padding_idx (`int`, *optional*):
                 The padding index (needs to be less than num_embeddings)

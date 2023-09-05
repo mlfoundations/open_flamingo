@@ -61,7 +61,12 @@ def create_model_and_transforms(
         # modify labels for the loss.
         text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
         new_tokens += 1
-
+        
+    ids_for_additional_special_tokens = text_tokenizer.convert_tokens_to_ids(
+        ["<|endofchunk|>", "<image>", "<PAD>"] if new_tokens == 3 else ["<|endofchunk|>", "<image>"]
+    )
+    print(f"Added {new_tokens} new tokens to the tokenizer")
+        
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path,
         local_files_only=use_local_files,
@@ -105,7 +110,7 @@ def create_model_and_transforms(
     if decoder_layers_attr_name is None:
         decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
     lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
-
+    
     model = Flamingo(
         vision_encoder,
         lang_encoder,
@@ -115,6 +120,8 @@ def create_model_and_transforms(
             "width"
         ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
+        # HACK: The tokenizer's size and model's vocab size sometimes don't match. We use this to find the smaller of the flamingo special tokens and use that as the vocab size (even though the true one might be smaller).
+        vocab_size=min(ids_for_additional_special_tokens), 
         new_tokens=new_tokens,  # number of tokens embeddings to train
         **flamingo_kwargs,
     )
@@ -127,6 +134,12 @@ def create_model_and_transforms(
     model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
 
+    if hasattr(model.lang_encoder.get_output_embeddings(), "additional_fc"):
+        model.lang_encoder.get_output_embeddings().additional_fc.requires_grad_(True)
+        
+    if hasattr(model.lang_encoder.get_input_embeddings(), "additional_embedding"):
+        model.lang_encoder.get_input_embeddings().additional_embedding.requires_grad_(True)
+    
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
     )
