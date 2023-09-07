@@ -3,9 +3,25 @@ Based on: https://github.com/lucidrains/flamingo-pytorch
 """
 
 import torch
+import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops_exts import rearrange_many
 from torch import einsum, nn
+from transformers.modeling_outputs import CausalLMOutputWithPast
+from typing import Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class VLMOutputWithPast(CausalLMOutputWithPast):
+    """
+    VLMOutputWithPast is a wrapper around CausalLMOutputWithPast that adds the following attributes:
+        past_media_locations: Optional[torch.Tensor] = None,
+        past_vision_tokens: Optional[torch.Tensor] = None,
+    """
+
+    past_media_locations: Optional[torch.Tensor] = None
+    past_vision_tokens: Optional[torch.Tensor] = None
 
 
 def exists(val):
@@ -70,6 +86,7 @@ class PerceiverResampler(nn.Module):
         self,
         *,
         dim,
+        dim_inner=None,
         depth=6,
         dim_head=64,
         heads=8,
@@ -78,15 +95,39 @@ class PerceiverResampler(nn.Module):
         max_num_frames=None,
         ff_mult=4,
     ):
+        """
+        Perceiver module which takes in image features and outputs image tokens.
+        Args:
+            dim (int): final dimension of the incoming image features
+            dim_inner (int, optional): final dimension to project the incoming image features to;
+                also the final dimension of the outputted features. If None, no projection is used, and dim_inner = dim.
+            depth (int, optional): number of layers. Defaults to 6.
+            dim_head (int, optional): dimension of each head. Defaults to 64.
+            heads (int, optional): number of heads. Defaults to 8.
+            num_latents (int, optional): number of latent tokens to use in the Perceiver;
+                also corresponds to number of tokens per sequence to output. Defaults to 64.
+            max_num_media (int, optional): maximum number of media per sequence to input into the Perceiver
+                and keep positional embeddings for. If None, no positional embeddings are used.
+            max_num_frames (int, optional): maximum number of frames to input into the Perceiver
+                and keep positional embeddings for. If None, no positional embeddings are used.
+            ff_mult (int, optional): dimension multiplier for the feedforward network. Defaults to 4.
+        """
         super().__init__()
-        self.latents = nn.Parameter(torch.randn(num_latents, dim))
+        if dim_inner is not None:
+            self.projection = nn.Linear(dim, dim_inner)
+        else:
+            self.projection = None
+            dim_inner = dim
+
+        self.latents = nn.Parameter(torch.randn(num_latents, dim_inner))
+        # positional embeddings
         self.frame_embs = (
-            nn.Parameter(torch.randn(max_num_frames, dim))
+            nn.Parameter(torch.randn(max_num_frames, dim_inner))
             if exists(max_num_frames)
             else None
         )
         self.media_time_embs = (
-            nn.Parameter(torch.randn(max_num_media, 1, dim))
+            nn.Parameter(torch.randn(max_num_media, 1, dim_inner))
             if exists(max_num_media)
             else None
         )
@@ -96,13 +137,18 @@ class PerceiverResampler(nn.Module):
             self.layers.append(
                 nn.ModuleList(
                     [
-                        PerceiverAttention(dim=dim, dim_head=dim_head, heads=heads),
-                        FeedForward(dim=dim, mult=ff_mult),
+                        PerceiverAttention(
+                            dim=dim_inner, dim_head=dim_head, heads=heads
+                        ),
+                        FeedForward(dim=dim_inner, mult=ff_mult),
                     ]
                 )
             )
 
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.LayerNorm(dim_inner)
+
+        self.num_tokens_per_media = num_latents
+        self.dim_media = dim_inner
 
     def forward(self, x):
         """
@@ -113,6 +159,9 @@ class PerceiverResampler(nn.Module):
             shape (b, T, n, D) where n is self.num_latents
         """
         b, T, F, v = x.shape[:4]
+
+        if exists(self.projection):
+            x = self.projection(x)
 
         # frame and media time embeddings
         if exists(self.frame_embs):
@@ -130,6 +179,18 @@ class PerceiverResampler(nn.Module):
             latents = attn(x, latents) + latents
             latents = ff(latents) + latents
         return self.norm(latents)
+
+
+class LinearProjection(nn.Module):
+    """Linear projection from patch features to image tokens."""
+
+    def __init__(self, *, dim, dim_out):
+        super().__init__()
+        self.proj = nn.Linear(dim, dim_out)
+        self.out_dim = dim_out
+
+    def forward(self, x):
+        return self.proj(x)
 
 
 # gated cross attention
@@ -157,7 +218,7 @@ class MaskedCrossAttention(nn.Module):
         # whether for text to only attend to immediate preceding image, or all previous images
         self.only_attend_immediate_media = only_attend_immediate_media
 
-    def forward(self, x, media, media_locations=None, use_cached_media=False):
+    def forward(self, x, media, media_locations=None):
         """
         Args:
             x (torch.Tensor): text features
@@ -165,19 +226,16 @@ class MaskedCrossAttention(nn.Module):
             media (torch.Tensor): image features
                 shape (B, T_img, n, D_img) where n is the dim of the latents
             media_locations: boolean mask identifying the media tokens in x
-                shape (B, T_txt)
-            use_cached_media: bool
-                If true, treat all of x as if they occur after the last media
-                registered in media_locations. T_txt does not need to exactly
-                equal media_locations.shape[1] in this case
+                shape (B, T_txt_all)
+                T_txt_all >= T_txt
+                If T_txt_all > T_txt, then the last T_txt text_times are used
         """
 
-        if not use_cached_media:
-            assert (
-                media_locations.shape[1] == x.shape[1]
-            ), f"media_location.shape is {media_locations.shape} but x.shape is {x.shape}"
-
         T_txt = x.shape[1]
+        assert (
+            T_txt <= media_locations.shape[1]
+        ), "current text cannot be longer than conditioned media locations"
+
         _, T_img, n = media.shape[:3]
         h = self.heads
 
@@ -196,16 +254,8 @@ class MaskedCrossAttention(nn.Module):
         if exists(media_locations):
             media_time = torch.arange(T_img, device=x.device) + 1
 
-            if use_cached_media:
-                # text time is set to the last cached media location
-                text_time = repeat(
-                    torch.count_nonzero(media_locations, dim=1),
-                    "b -> b i",
-                    i=T_txt,
-                )
-            else:
-                # at each boolean of True, increment the time counter (relative to media time)
-                text_time = media_locations.cumsum(dim=-1)
+            # at each boolean of True, increment the time counter (relative to media time)
+            text_time = media_locations.cumsum(dim=-1)[:, -T_txt:]
 
             # text time must equal media time if only attending to most immediate image
             # otherwise, as long as text time is greater than media time (if attending to all previous images / media)
@@ -262,14 +312,12 @@ class GatedCrossAttentionBlock(nn.Module):
         x,
         media,
         media_locations=None,
-        use_cached_media=False,
     ):
         x = (
             self.attn(
                 x,
                 media,
                 media_locations=media_locations,
-                use_cached_media=use_cached_media,
             )
             * self.attn_gate.tanh()
             + x
@@ -277,3 +325,196 @@ class GatedCrossAttentionBlock(nn.Module):
         x = self.ff(x) * self.ff_gate.tanh() + x
 
         return x
+
+
+# Both DecoupledEmbedding and DecoupledLinear are taken from https://github.com/huggingface/transformers/blob/v4.32.1/src/transformers/models/idefics/modeling_idefics.py and renamed for clarity
+class DecoupledEmbedding(nn.Embedding):
+    # Derived from https://pytorch.org/docs/stable/_modules/torch/nn/modules/sparse.html#Embedding
+    """
+    Implements a decoupling of parameters to allow freezing (or not) a subset of the embeddings. In practise, the
+    regular `weight` can be trained or frozen (i.e. `partially_freeze=True`), and if `num_additional_embeddings` > 0,
+    then it will create `num_additional_embeddings` additional parameters that are always trained. If
+    `num_additional_embeddings=0`, then the module defaults back to the regular behavior of `nn.Embedding`.
+    """
+
+    def __init__(
+        self,
+        num_embeddings,
+        num_additional_embeddings,
+        embedding_dim,
+        partially_freeze=True,
+        device=None,
+        dtype=None,
+        padding_idx=None,
+        **kwargs,
+    ) -> None:
+        """
+        Args:
+            num_embeddings (`int`):
+                Size of the dictionary of embeddings
+            num_additional_embeddings (`int`):
+                Number of additional embeddings. Only useful when you `partially_freeze=True`.
+            embedding_dim (`int`):
+                The size of each embedding vector
+            partially_freeze: (`bool`, *optional*, defaults to `True`):
+                If `True`, the regular `weight` will be frozen. `additional_weight` is never frozen.
+            padding_idx (`int`, *optional*):
+                The padding index (needs to be less than num_embeddings)
+
+        Note: there are a lot of other parameters to initialize a standard `nn.Embedding` such as `padding_idx`,
+        `max_norm` or `norm_type`. We are not supporting these.
+        """
+        if padding_idx is not None and padding_idx > num_embeddings:
+            raise ValueError(
+                f"padding_idx must be within num_embeddings. Got {padding_idx} and {num_embeddings}"
+            )
+        super().__init__(
+            num_embeddings=num_embeddings,
+            embedding_dim=embedding_dim,
+            device=device,
+            dtype=dtype,
+            padding_idx=padding_idx,
+            **kwargs,
+        )
+        self.num_embeddings = num_embeddings
+        self.padding_idx = padding_idx
+        self.num_additional_embeddings = num_additional_embeddings
+        if self.num_additional_embeddings > 0:
+            self.additional_embedding = nn.Embedding(
+                num_embeddings=self.num_additional_embeddings,
+                embedding_dim=embedding_dim,
+                device=device,
+                dtype=dtype,
+            )
+        self.set_requires_grad(
+            require_regular_grad=not partially_freeze, require_additional_grad=True
+        )
+
+    def set_requires_grad(self, require_regular_grad, require_additional_grad):
+        """
+        Helper function to separately set the requires_grad flag for the regular weight and the additional weight.
+        """
+        self.weight.requires_grad_(require_regular_grad)
+        self.additional_embedding.requires_grad_(require_additional_grad)
+
+    def forward(self, input_ids):
+        """
+        we have 2 embeddings, with different indices - one pretrained self.weight and another
+        self.additional_embedding.weight that is being trained.
+
+        in order to make a lookup of the input ids, we:
+        1. find out the indices of the entries belonging to the 2nd embedding
+        2. extract those values while subtracting the size of the first embedding (num_embeddings), since the 2nd
+        embedding starts from 0 and not num_embeddings
+        3. perform the 2nd embedding lookup
+        4. now we handle the 1st embedding, we overwrite indices belonging to the 2nd embedding with a padding index
+        5. perform the 1st embedding lookup
+        6. now we overwrite the values in the 1st embedding lookup with the values of the 2nd embedding lookup
+
+        note: for the 1st embedding lookup we could have looked up only the low indices and not do the padding, but
+        then we have to create a new tensor and populate it with 2 tensors that are spread out across various indices -
+        i.e. not a simple concat - I haven't benchmarked the complex case if it's any faster, given that seqlens are
+        usually relatively short it's probably not faster or if faster not by much - but might be a good idea to
+        measure.
+
+        """
+        if self.num_additional_embeddings == 0:
+            return F.embedding(input_ids, self.weight)
+
+        # Clone so that we don't modify the original input_ids later on
+        input_ids = input_ids.clone()
+        additional_vocab_indices = torch.where(input_ids >= self.num_embeddings)
+        input_ids_additional_vocab = input_ids[additional_vocab_indices]
+        additional_embeddings = self.additional_embedding(
+            input_ids_additional_vocab - self.num_embeddings
+        )
+
+        # for successful lookup replace input_ids with 0, the results of these will be discarded anyway
+        input_ids[additional_vocab_indices] = 0
+        full_vector = F.embedding(input_ids, self.weight)
+
+        # overwrite the records with high indices
+        full_vector[additional_vocab_indices] = additional_embeddings
+
+        return full_vector
+
+    def extra_repr(self) -> str:
+        return "num_embeddings={}, num_additional_embeddings={}, embedding_dim={}, partially_freeze={}".format(
+            self.num_embeddings,
+            self.num_additional_embeddings,
+            self.embedding_dim,
+            (not self.weight.requires_grad),
+        )
+
+
+class DecoupledLinear(nn.Linear):
+    # Derived from https://pytorch.org/docs/stable/_modules/torch/nn/modules/linear.html#Linear
+    """
+    Implements a decoupling of parameters to allow freezing (or not) a subset of the parameters. In practise, the
+    regular `weight` can be trained or frozen (i.e. `partially_freeze=True`), and if `out_additional_features` > 0,
+    then it will create `out_additional_features * in_features` additional parameters that are always trained. If
+    `out_additional_features=0`, then the module defaults back to the regular behavior of `nn.Linear`.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        out_additional_features: int = 0,
+        bias: bool = True,
+        partially_freeze: bool = True,
+        device=None,
+        dtype=None,
+    ) -> None:
+        """
+        out_additional_features: int. Number of additional trainable dimensions. Only makes sense when
+        `partially_freeze=True`. partially_freeze: bool. If True, the regular `weight` will be frozen and extra
+        parameters (if any) will be trainable. If False, default to the regular behavior of nn.Linear.
+        """
+        super().__init__(in_features, out_features, bias, device, dtype)
+        self.out_additional_features = out_additional_features
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.has_bias = bias
+        if out_additional_features > 0:
+            self.additional_fc = nn.Linear(
+                in_features=in_features,
+                out_features=out_additional_features,
+                bias=self.has_bias,
+                device=device,
+                dtype=dtype,
+            )
+        self.set_requires_grad(
+            require_regular_grad=not partially_freeze, require_additional_grad=True
+        )
+
+    def set_requires_grad(self, require_regular_grad, require_additional_grad):
+        """
+        Helper function to separately set the requires_grad flag for the regular weight and the additional weight.
+        """
+        self.weight.requires_grad_(require_regular_grad)
+        if self.has_bias:
+            self.bias.requires_grad_(require_regular_grad)
+        self.additional_fc.requires_grad_(require_additional_grad)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = F.linear(input, self.weight, self.bias)
+
+        if self.out_additional_features > 0:
+            additional_features = F.linear(
+                input, self.additional_fc.weight, self.additional_fc.bias
+            )
+            output = torch.cat((output, additional_features), -1)
+
+        return output
+
+    def extra_repr(self) -> str:
+        """Overwriting `nn.Linear.extra_repr` to include new parameters."""
+        return "in_features={}, out_features={}, out_additional_features={}, bias={}, partially_freeze={}".format(
+            self.in_features,
+            self.out_features,
+            self.out_additional_features,
+            self.bias is not None,
+            (not self.weight.requires_grad or not self.bias.requires_grad),
+        )

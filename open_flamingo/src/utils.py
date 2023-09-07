@@ -1,3 +1,6 @@
+import torch
+
+
 def extend_instance(obj, mixin):
     """Apply mixins to a class instance after creation"""
     base_cls = obj.__class__
@@ -46,3 +49,40 @@ def apply_with_stopping_condition(
             stopping_condition=stopping_condition,
             **other_args
         )
+
+
+def stack_with_padding(list_of_tensors, padding_value=0, padding_side="right"):
+    """
+    Stack a list of tensors with padding on one side
+    Args:
+        list_of_tensors (list[torch.Tensor]): List of tensors to stack
+        padding_value (int, optional): Value to pad with. Defaults to 0.
+        padding_side (str, optional): Side to pad on. Defaults to "right".
+    Returns:
+        torch.Tensor: Stacked tensors
+    """
+    max_tokens = max(tensor.size(0) for tensor in list_of_tensors)
+    padded_tensors = []
+    for tensor in list_of_tensors:
+        num_tokens = tensor.size(0)
+        if len(tensor.size()) == 1:
+            padding = torch.full(
+                (max_tokens - num_tokens,),
+                padding_value,
+                dtype=tensor.dtype,
+                device=tensor.device,
+            )
+        else:
+            padding = torch.full(
+                (max_tokens - num_tokens, tensor.size(1)),
+                padding_value,
+                dtype=tensor.dtype,
+                device=tensor.device,
+            )
+        padded_tensor = (
+            torch.cat((tensor, padding), dim=0)
+            if padding_side == "right"
+            else torch.cat((padding, tensor), dim=0)
+        )
+        padded_tensors.append(padded_tensor)
+    return torch.stack(padded_tensors)
