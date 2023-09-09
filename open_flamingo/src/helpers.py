@@ -281,8 +281,6 @@ class GatedCrossAttentionBlock(nn.Module):
 
 
 # Both FlamingoDecoupledEmbedding and FlamingoDecoupledLinear are taken from https://github.com/huggingface/transformers/blob/v4.32.1/src/transformers/models/idefics/modeling_idefics.py and renamed for clarity
-
-
 class FlamingoDecoupledEmbedding(nn.Embedding):
     # Derived from https://pytorch.org/docs/stable/_modules/torch/nn/modules/sparse.html#Embedding
     """
@@ -382,7 +380,7 @@ class FlamingoDecoupledEmbedding(nn.Embedding):
         # for successful lookup replace input_ids with 0, the results of these will be discarded anyway
         input_ids[additional_vocab_indices] = 0
         full_vector = F.embedding(input_ids, self.weight)
-
+        
         # overwrite the records with high indices
         full_vector[additional_vocab_indices] = additional_embeddings
 
@@ -449,7 +447,12 @@ class FlamingoDecoupledLinear(nn.Linear):
             additional_features = F.linear(
                 input, self.additional_fc.weight, self.additional_fc.bias
             )
-            output = torch.cat((output, additional_features), -1)
+            # Concatenate the additional features to the output if new vocab doesn't have a placeholder token in the original embedding
+            if self.weight.shape[0] < self.out_features + self.out_additional_features:
+                output = torch.cat((output, additional_features), dim=-1)
+            else:
+                # Otherwise, overwrite the placeholder tokens with the additional features
+                output[..., self.out_features:self.out_features + self.out_additional_features] = additional_features
 
         return output
 

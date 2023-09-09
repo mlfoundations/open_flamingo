@@ -52,30 +52,35 @@ def create_model_and_transforms(
         tokenizer_path,
         local_files_only=use_local_files,
         cache_dir=cache_dir,
-        trust_remote_code=True
+        # trust_remote_code=True
     )
+    
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens(
         {"additional_special_tokens": ["<|endofchunk|>", "<image>"]}
     )
     new_tokens = 2
-    if text_tokenizer.pad_token is None:
+    if text_tokenizer.pad_token is None and text_tokenizer.pad_token_id is None: # need to check both because some tokenizers have a pad token id but not a pad token
         # Issue: GPT models don't have a pad token, which we use to
         # modify labels for the loss.
-        text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
-        new_tokens += 1
+        text_tokenizer.pad_token_id = text_tokenizer.eos_token_id
+        
+        # text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
+        # new_tokens += 1
         
     ids_for_additional_special_tokens = text_tokenizer.convert_tokens_to_ids(
-        ["<|endofchunk|>", "<image>", "<PAD>"] if new_tokens == 3 else ["<|endofchunk|>", "<image>"]
+        ["<|endofchunk|>","<image>","<PAD>"] if new_tokens == 3 else ["<|endofchunk|>", "<image>"]
     )
-    print(f"Added {new_tokens} new tokens to the tokenizer")
         
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path,
         local_files_only=use_local_files,
         cache_dir=cache_dir,
-        trust_remote_code=True
+        # trust_remote_code=True
     )
+    
+    lang_encoder.config.update({"original_vocab_size": min(ids_for_additional_special_tokens)})
+    lang_encoder.config.vocab_size = max(len(text_tokenizer), lang_encoder.config.vocab_size)
 
     # hacks for MPT-1B, which doesn't have a get_input_embeddings method
     if "mpt-1b-redpajama-200b" in lang_encoder_path:
@@ -108,15 +113,7 @@ def create_model_and_transforms(
             )
             
     if untie_embeddings:
-        new_output_embeddings_weight = lang_encoder.get_output_embeddings().weight.clone()
-        if lang_encoder.get_output_embeddings().bias is not None:
-            new_output_embeddings_bias = lang_encoder.get_output_embeddings().bias.clone()
-        else:
-            new_output_embeddings_bias = None
-        lang_encoder.get_output_embeddings().weight = nn.Parameter(new_output_embeddings_weight)
-        if new_output_embeddings_bias is not None:
-            lang_encoder.get_output_embeddings().bias = nn.Parameter(new_output_embeddings_bias)
-        
+        lang_encoder.get_output_embeddings().weight = nn.Parameter(lang_encoder.get_output_embeddings().weight.clone())
         lang_encoder.config.update({"tie_word_embeddings": False})
         
     # convert LM to FlamingoLM
@@ -125,7 +122,7 @@ def create_model_and_transforms(
     if decoder_layers_attr_name is None:
         decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
     lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
-    
+        
     model = Flamingo(
         vision_encoder,
         lang_encoder,
@@ -135,9 +132,8 @@ def create_model_and_transforms(
             "width"
         ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
-        # HACK: The tokenizer's size and model's vocab size sometimes don't match. We use this to find the smaller of the flamingo special tokens and use that as the vocab size (even though the true one might be smaller).
-        vocab_size=min(ids_for_additional_special_tokens), 
         new_tokens=new_tokens,  # number of tokens embeddings to train
+        padding_token_id=text_tokenizer.pad_token_id,
         **flamingo_kwargs,
     )
 
