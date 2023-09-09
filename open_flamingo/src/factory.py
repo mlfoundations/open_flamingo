@@ -82,6 +82,9 @@ def create_model_and_transforms(
     lang_encoder.config.update({"original_vocab_size": min(ids_for_additional_special_tokens)})
     lang_encoder.config.vocab_size = max(len(text_tokenizer), lang_encoder.config.vocab_size)
 
+    # change model's vocab size to include new tokens
+    lang_encoder.config.vocab_size = len(text_tokenizer)
+
     # hacks for MPT-1B, which doesn't have a get_input_embeddings method
     if "mpt-1b-redpajama-200b" in lang_encoder_path:
 
