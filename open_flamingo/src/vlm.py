@@ -2,7 +2,7 @@ import torch
 from einops import rearrange
 from torch import nn
 from typing import List, Optional, Tuple, Union
-from .utils import extend_instance, stack_with_padding
+from .utils import extend_instance, stack_with_padding, num_params
 from .cross_attn_lm import CrossAttentionMixin
 from .helpers import DecoupledEmbedding, DecoupledLinear, VLMOutputWithPast
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -179,6 +179,39 @@ class VLM(nn.Module):
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
         return vision_x
 
+    def _concat_vision_cache(
+        self, lang_x, vision_tokens, past_vision_tokens, past_media_locations, use_cache
+    ):
+        """Helper function to include the past vision tokens and past media locations in the output"""
+        if use_cache:
+            if past_media_locations is not None and past_vision_tokens is not None:
+                if vision_tokens is not None:
+                    updated_vision_tokens = torch.cat(
+                        [
+                            past_vision_tokens,
+                            vision_tokens,
+                        ],
+                        dim=1,
+                    )
+                else:
+                    updated_vision_tokens = past_vision_tokens
+                updated_media_locations = torch.cat(
+                    [
+                        past_media_locations,
+                        lang_x == self.media_token_id,
+                    ],
+                    dim=1,
+                )
+            else:
+                updated_vision_tokens = vision_tokens
+                updated_media_locations = lang_x == self.media_token_id
+
+        else:
+            updated_vision_tokens = None
+            updated_media_locations = None
+
+        return updated_vision_tokens, updated_media_locations
+
     def generate(
         self,
         vision_x: torch.Tensor,
@@ -239,7 +272,7 @@ class VLM(nn.Module):
     @property
     def num_trainable_params(self):
         """Print the number of trainable parameters"""
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return num_params(self, filter_to_trainable=True)
 
     def set_trainable(self):
         """
@@ -337,33 +370,13 @@ class VLMWithCrossAttention(VLM):
         use_cache: bool = False,
     ):
         """Include the past vision tokens and past media locations in the output"""
-        if use_cache:
-            if past_media_locations is not None and past_vision_tokens is not None:
-                if vision_tokens is not None:
-                    updated_vision_tokens = torch.cat(
-                        [
-                            past_vision_tokens,
-                            vision_tokens,
-                        ],
-                        dim=1,
-                    )
-                else:
-                    updated_vision_tokens = past_vision_tokens
-                updated_media_locations = torch.cat(
-                    [
-                        past_media_locations,
-                        lang_x == self.media_token_id,
-                    ],
-                    dim=1,
-                )
-            else:
-                updated_vision_tokens = vision_tokens
-                updated_media_locations = lang_x == self.media_token_id
-
-        else:
-            updated_vision_tokens = None
-            updated_media_locations = None
-
+        updated_vision_tokens, updated_media_locations = self._concat_vision_cache(
+            lang_x=lang_x,
+            vision_tokens=vision_tokens,
+            past_vision_tokens=past_vision_tokens,
+            past_media_locations=past_media_locations,
+            use_cache=use_cache,
+        )
         output = VLMOutputWithPast(
             loss=output.loss,
             logits=output.logits,
@@ -379,6 +392,34 @@ class VLMWithCrossAttention(VLM):
     def _post_forward_hook(self):
         # clear the conditioned layers
         self.lang_model.clear_conditioned_layers()
+
+    @property
+    def num_params_per_module(self):
+        """Print the number of parameters per module in the model"""
+        num_xattn_params = num_params(self.lang_model.gated_cross_attn_layers)
+        return "\n".join(
+            [
+                f"Vision encoder: {num_params(self.vision_encoder):,} parameters",
+                f"Vision tokenizer: {num_params(self.vision_tokenizer):,} parameters",
+                f"Cross attention: {num_xattn_params:,} parameters",
+                f"Language model: {num_params(self.lang_model) - num_xattn_params:,} parameters",
+            ]
+        )
+
+    @property
+    def num_trainable_params_per_module(self):
+        """Print the number of trainable parameters per module in the model"""
+        num_xattn_params = num_params(
+            self.lang_model.gated_cross_attn_layers, filter_to_trainable=True
+        )
+        return "\n".join(
+            [
+                f"Vision encoder: {num_params(self.vision_encoder, filter_to_trainable=True):,} trainable parameters",
+                f"Vision tokenizer: {num_params(self.vision_tokenizer, filter_to_trainable=True):,} trainable parameters",
+                f"Cross attention: {num_xattn_params:,} trainable parameters",
+                f"Language model: {num_params(self.lang_model, filter_to_trainable=True) - num_xattn_params:,} trainable parameters",
+            ]
+        )
 
 
 class VLMWithLanguageStream(VLM):
@@ -428,7 +469,7 @@ class VLMWithLanguageStream(VLM):
 
         # get the language embeddings
         lang_embeds = self.lang_model.get_input_embeddings()(lang_x)
-        
+
         # build up the multimodal embeddings
         B = lang_x.shape[0]
         has_labels = labels is not None
@@ -515,32 +556,13 @@ class VLMWithLanguageStream(VLM):
         use_cache: bool = False,
     ):
         # Include the past vision tokens and past media locations in the output
-        if use_cache:
-            if past_media_locations is not None and past_vision_tokens is not None:
-                if vision_tokens is not None:
-                    updated_vision_tokens = torch.cat(
-                        [
-                            past_vision_tokens,
-                            vision_tokens,
-                        ],
-                        dim=1,
-                    )
-                else:
-                    updated_vision_tokens = past_vision_tokens
-                updated_media_locations = torch.cat(
-                    [
-                        past_media_locations,
-                        lang_x == self.media_token_id,
-                    ],
-                    dim=1,
-                )
-            else:
-                updated_vision_tokens = vision_tokens
-                updated_media_locations = lang_x == self.media_token_id
-
-        else:
-            updated_vision_tokens = None
-            updated_media_locations = None
+        updated_vision_tokens, updated_media_locations = self._concat_vision_cache(
+            lang_x=lang_x,
+            vision_tokens=vision_tokens,
+            past_vision_tokens=past_vision_tokens,
+            past_media_locations=past_media_locations,
+            use_cache=use_cache,
+        )
 
         # return logits that are the same shape as the original input_ids
         logits = output.logits
@@ -580,3 +602,25 @@ class VLMWithLanguageStream(VLM):
 
     def _post_forward_hook(self):
         pass
+
+    @property
+    def num_params_per_module(self):
+        """Print the number of parameters per module in the model"""
+        return "\n".join(
+            [
+                f"Vision encoder: {num_params(self.vision_encoder):,} parameters",
+                f"Vision tokenizer: {num_params(self.vision_tokenizer):,} parameters",
+                f"Language model: {num_params(self.lang_model):,} parameters",
+            ]
+        )
+
+    @property
+    def num_trainable_params_per_module(self):
+        """Print the number of trainable parameters per module in the model"""
+        return "\n".join(
+            [
+                f"Vision encoder: {num_params(self.vision_encoder, filter_to_trainable=True):,} trainable parameters",
+                f"Vision tokenizer: {num_params(self.vision_tokenizer, filter_to_trainable=True):,} trainable parameters",
+                f"Language model: {num_params(self.lang_model, filter_to_trainable=True):,} trainable parameters",
+            ]
+        )

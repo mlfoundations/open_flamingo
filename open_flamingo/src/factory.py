@@ -129,6 +129,8 @@ def create_model_and_transforms(
     print(
         f"{model_family} model initialized with {model.num_trainable_params:,} trainable parameters"
     )
+    print(f"==========\n{model.num_trainable_params_per_module}")
+    print(f"==========\n{model.num_params_per_module}\n==========")
     return model, image_processor, text_tokenizer
 
 

@@ -86,3 +86,11 @@ def stack_with_padding(list_of_tensors, padding_value=0, padding_side="right"):
         )
         padded_tensors.append(padded_tensor)
     return torch.stack(padded_tensors)
+
+
+def num_params(module, filter_to_trainable=False):
+    """Returns the number of parameters in the module, or optionally only the trainable parameters"""
+    if filter_to_trainable:
+        return sum(p.numel() for p in module.parameters() if p.requires_grad)
+    else:
+        return sum(p.numel() for p in module.parameters())
