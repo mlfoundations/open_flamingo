@@ -419,20 +419,6 @@ class VLMWithLanguageStream(VLM):
         Insert the vision tokens directly into the language stream/
         This requires us to modify the input_ids, attention_mask, and labels.
         """
-        # handle past_key_values
-        B, _ = lang_x.shape
-        if past_key_values is not None:
-            past_len = past_key_values[0][0].shape[2]
-            attention_mask = torch.cat(
-                [
-                    torch.ones(B, past_len, dtype=torch.long).to(
-                        attention_mask.device
-                    ),  # TODO: not sure these should all be 1
-                    attention_mask,
-                ],
-                dim=1,
-            )
-
         if vision_tokens is None:
             return {
                 "input_ids": lang_x,
@@ -442,8 +428,9 @@ class VLMWithLanguageStream(VLM):
 
         # get the language embeddings
         lang_embeds = self.lang_model.get_input_embeddings()(lang_x)
-
+        
         # build up the multimodal embeddings
+        B = lang_x.shape[0]
         has_labels = labels is not None
         multimodal_embeds = []
         multimodal_attention_mask = []
