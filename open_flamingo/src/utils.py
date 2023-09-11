@@ -9,6 +9,21 @@ def extend_instance(obj, mixin):
         base_cls_name, (mixin, base_cls), {}
     )  # mixin needs to go first for our forward() logic to work
 
+def hasattr_recursive(obj, att):
+    """
+    Check if obj has nested attribute
+    Example: hasattr_recursive(obj, 'a.b.c') is equivalent to hasattr(obj, 'a') and hasattr(obj.a, 'b') and hasattr(obj.a.b, 'c')
+    """
+    if att == "":
+        return True
+    i = att.find(".")
+    if i < 0:
+        return hasattr(obj, att)
+    else:
+        try:
+            return hasattr_recursive(getattr(obj, att[:i]), att[i + 1 :])
+        except:
+            return False
 
 def getattr_recursive(obj, att):
     """

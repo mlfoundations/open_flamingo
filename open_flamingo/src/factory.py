@@ -5,7 +5,9 @@ import open_clip
 
 from .flamingo import Flamingo
 from .kosmos import Kosmos
-from .utils import extend_instance
+from .utils import extend_instance, hasattr_recursive, setattr_recursive
+
+SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos")
 
 
 def create_model_and_transforms(
@@ -18,6 +20,7 @@ def create_model_and_transforms(
     decoder_layers_attr_name: str = None,
     cache_dir: Optional[str] = None,
     gradient_checkpointing: bool = False,
+    untie_embeddings: bool = False,
     **model_kwargs,
 ):
     """
@@ -34,13 +37,14 @@ def create_model_and_transforms(
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
         cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
         gradient_checkpointing (bool, optional): whether to use gradient checkpointing. Defaults to False.
+        untie_embeddings (bool, optional): whether to untie the input and output embeddings of the language model. Defaults to False.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
         Image processor: Pipeline to preprocess input images
         Tokenizer: A tokenizer for the language model
     """
 
-    assert model_family in ("flamingo", "kosmos")
+    assert model_family in SUPPORTED_MODEL_FAMILIES
 
     # load vision encoder
     vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
@@ -68,18 +72,12 @@ def create_model_and_transforms(
         trust_remote_code=True,
         cache_dir=cache_dir,
     )
-
-    ## hacks for MPT-1B, which doesn't have a get_input_embeddings method
-    if "mpt-1b-redpajama-200b" in lang_model_path:
-
-        class EmbeddingFnMixin:
-            def get_input_embeddings(self):
-                return self.transformer.wte
-
-            def set_input_embeddings(self, new_embeddings):
-                self.transformer.wte = new_embeddings
-
-        extend_instance(lang_model, EmbeddingFnMixin)
+    check_embedding_fns(lang_model)
+    if untie_embeddings:
+        lang_model.get_output_embeddings().weight = nn.Parameter(
+            lang_model.get_output_embeddings().weight.clone()
+        )
+        lang_model.config.update({"tie_word_embeddings": False})
 
     # init the model
     if model_family == "flamingo":
@@ -154,3 +152,42 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "mpt": "transformer.blocks",
     "mosaicgpt": "transformer.blocks",
 }
+
+
+def check_embedding_fns(lang_model):
+    """Checks for and attempts to set {get/set}_{input/output}_embeddings functions to the model"""
+    if not hasattr_recursive(lang_model, "get_input_embeddings"):
+        if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
+            lang_model.get_input_embeddings = lambda: lang_model.transformer.wte
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_input_embeddings method but we couldn't determine the name of the input embeddings attribute. Please supply this manually in factory.py."
+            )
+
+    if not hasattr_recursive(lang_model, "set_input_embeddings"):
+        if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
+            lang_model.set_input_embeddings = lambda x: setattr_recursive(
+                lang_model, "transformer.wte", x
+            )
+        else:
+            raise ValueError(
+                "We require the language encoder to have a set_input_embeddings method but we couldn't determine the name of the input embeddings attribute. Please supply this manually in factory.py."
+            )
+
+    if not hasattr_recursive(lang_model, "get_output_embeddings"):
+        if hasattr_recursive(lang_model, "lm_head"):
+            lang_model.get_output_embeddings = lambda: lang_model.lm_head
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
+            )
+
+    if not hasattr_recursive(lang_model, "set_output_embeddings"):
+        if hasattr_recursive(lang_model, "lm_head"):
+            lang_model.set_output_embeddings = lambda x: setattr_recursive(
+                lang_model, "lm_head", x
+            )
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
+            )

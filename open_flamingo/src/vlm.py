@@ -305,6 +305,8 @@ class VLM(nn.Module):
             setattr(self, f"{att_name}_id", token_id)
             setattr(self.lang_model, f"{att_name}_id", token_id)
 
+    def wrap_fsdp(self, wrapper_kwargs, device_id):
+        raise NotImplementedError
 
 class VLMWithCrossAttention(VLM):
     """

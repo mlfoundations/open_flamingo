@@ -44,3 +44,6 @@ class Kosmos(VLMWithLanguageStream):
         """
         self.requires_grad_(True)
         self.vision_encoder.requires_grad_(False)
+
+    def wrap_fsdp(self, wrapper_kwargs, device_id):
+        raise NotImplementedError
