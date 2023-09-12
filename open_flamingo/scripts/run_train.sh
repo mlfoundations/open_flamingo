@@ -18,8 +18,6 @@ export HF_DATASETS_CACHE="/gscratch/efml/anasa2/.huggingface" TRANSFORMERS_CACHE
 export PYTHONPATH="$PYTHONPATH:open_flamingo"
 srun --cpu_bind=v --accel-bind=gn python 
 
-
-
 deepspeed open_flamingo/open_flamingo/train/train.py \
     --lm_path meta-llama/Llama-2-13b \
     --tokenizer_path meta-llama/Llama-2-13b \

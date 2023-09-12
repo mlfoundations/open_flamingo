@@ -321,11 +321,11 @@ def main():
 
     # Initialize model
     model, image_processor, tokenizer = create_model_and_transforms(
-        args.model_family,
         args.vision_encoder_path,
         args.vision_encoder_pretrained,
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
+        model_family = args.model_family,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         untie_embeddings=args.fsdp, # untie embeddings for FSDP
         use_local_files=args.offline,

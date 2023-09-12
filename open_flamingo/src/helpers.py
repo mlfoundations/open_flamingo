@@ -37,6 +37,12 @@ def FeedForward(dim, mult=4):
         nn.Linear(inner_dim, dim, bias=False),
     )
 
+class VisionTokenizer(nn.Module):
+    def __init__(self, dim_media, num_tokens_per_media):
+        super().__init__()
+        self.dim_media = dim_media
+        self.num_tokens_per_media = num_tokens_per_media
+
 
 class PerceiverAttention(nn.Module):
     def __init__(self, *, dim, dim_head=64, heads=8):
@@ -81,7 +87,7 @@ class PerceiverAttention(nn.Module):
         return self.to_out(out)
 
 
-class PerceiverResampler(nn.Module):
+class PerceiverResampler(VisionTokenizer):
     def __init__(
         self,
         *,
@@ -112,7 +118,7 @@ class PerceiverResampler(nn.Module):
                 and keep positional embeddings for. If None, no positional embeddings are used.
             ff_mult (int, optional): dimension multiplier for the feedforward network. Defaults to 4.
         """
-        super().__init__()
+        super().__init__(dim_media=dim_inner, num_tokens_per_media=num_latents)
         if dim_inner is not None:
             self.projection = nn.Linear(dim, dim_inner)
         else:
@@ -146,9 +152,6 @@ class PerceiverResampler(nn.Module):
             )
 
         self.norm = nn.LayerNorm(dim_inner)
-
-        self.num_tokens_per_media = num_latents
-        self.dim_media = dim_inner
 
     def forward(self, x):
         """
@@ -325,6 +328,87 @@ class GatedCrossAttentionBlock(nn.Module):
         x = self.ff(x) * self.ff_gate.tanh() + x
 
         return x
+
+
+class QFormerWithProjection(VisionTokenizer):
+    """
+    Based on BLIP-2 (https://arxiv.org/pdf/2301.12597.pdf)
+    In the BLIP-2 paper, Q-former is initialized with BERT-base weights, 
+    so dim_inner = 768, num_hidden_layers = 12, and intermediate_size = 3072
+    """
+    def __init__(
+        self,
+        dim_input,
+        dim_out,
+        dim_inner=768,
+        num_hidden_layers=12,
+        num_query_tokens=32,
+        pretrained_path=None,
+    ):
+        super().__init__(dim_media=dim_out, num_tokens_per_media=num_query_tokens)
+        # initialize the qformer
+        from transformers import Blip2Model, Blip2QFormerModel, Blip2QFormerConfig
+
+        if pretrained_path is None:
+            self.qformer = Blip2QFormerModel(Blip2QFormerConfig(
+                encoder_hidden_size=dim_input,
+                hidden_size=dim_inner,
+                num_hidden_layers=num_hidden_layers,
+            ))
+            self.query_tokens = nn.Parameter(torch.zeros(1, num_query_tokens, dim_inner))
+            self.proj = LinearProjection(dim=dim_inner, dim_out=dim_out)
+        else:
+            model = Blip2Model.from_pretrained(
+                pretrained_path,
+            )
+            self.qformer = model.qformer
+            self.query_tokens = model.query_tokens
+            self.proj = model.language_projection
+            assert (
+                self.qformer.config.hidden_size == dim_inner
+            ), f"dim_inner={dim_inner} but pretrained model expects {self.qformer.config.hidden_size}"
+            assert (
+                self.qformer.config.encoder_hidden_size == dim_input
+            ), f"dim_input={dim_input} but pretrained model expects {self.qformer.config.encoder_hidden_size}"
+            assert (
+                self.qformer.config.num_hidden_layers == num_hidden_layers
+            ), f"num_hidden_layers={num_hidden_layers} but pretrained model expects {self.qformer.config.num_hidden_layers}"
+            assert (
+                self.query_tokens.shape[1] == num_query_tokens
+            ), f"num_query_tokens={num_query_tokens} but pretrained model expects {self.query_tokens.shape[1]}"
+
+
+    def forward(self, x):
+        """
+        Args:
+            x (torch.Tensor): image features
+                shape (B, T, F, v, D)
+        Returns:
+            shape (B, T, n, D) where n is num_query_tokens
+        """
+        # HF class expects three dimensional input
+        B, T = x.shape[:2]
+        x = rearrange(x, "b T F v d -> (b T) (F v) d")
+
+        # get the outputs
+        image_attention_mask = torch.ones(
+            x.size()[:-1], dtype=torch.long, device=x.device
+        )
+        query_tokens = self.query_tokens.expand(x.shape[0], -1, -1)
+        query_outputs = self.qformer(
+            query_embeds=query_tokens,
+            encoder_hidden_states=x,
+            encoder_attention_mask=image_attention_mask,
+            output_attentions=False,
+            output_hidden_states=False,
+            return_dict=True,
+        )
+        query_output = query_outputs[0]
+        query_output = self.proj(query_output)
+
+        # reshape
+        query_output = rearrange(query_output, "(b T) n d -> b T n d", b=B)
+        return query_output
 
 
 # Both DecoupledEmbedding and DecoupledLinear are taken from https://github.com/huggingface/transformers/blob/v4.32.1/src/transformers/models/idefics/modeling_idefics.py and renamed for clarity

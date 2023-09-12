@@ -15,7 +15,7 @@ class VLM(nn.Module):
         1. A vision encoder that extracts features from pixels, e.g. CLIP
             input: (B, T_img, F, C, H, W)
             output: (B, T_img, F, v, d)
-        2. An image tokenizer that converts these features to visual token-like embeddings, e.g. Perceiver, or a linear projection head
+        2. A vision tokenizer that converts these features to visual token-like embeddings, e.g. Perceiver, or a linear projection head
             input: (B, T_img, F, v, d)
             output: (B, T_img, n, d)
         3. A fusion method that allows the language model to attend to these tokens, e.g. cross-attention, or placing the tokens directly in the language model's input sequence

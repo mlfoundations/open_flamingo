@@ -45,6 +45,7 @@ class EvalModel(BaseEvalModel):
             model_args["vision_encoder_pretrained"],
             model_args["lm_path"],
             model_args["lm_tokenizer_path"],
+            model_family="flamingo",
             cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
         checkpoint = torch.load(model_args["checkpoint_path"], map_location=self.device)

@@ -5,17 +5,18 @@ import open_clip
 
 from .flamingo import Flamingo
 from .kosmos import Kosmos
+from .blip import BLIP
 from .utils import extend_instance, hasattr_recursive, setattr_recursive
 
-SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos")
+SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos", "blip")
 
 
 def create_model_and_transforms(
-    model_family: str,
     clip_vision_encoder_path: str,
     clip_vision_encoder_pretrained: str,
     lang_model_path: str,
     tokenizer_path: str,
+    model_family: str = "flamingo",
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
     cache_dir: Optional[str] = None,
@@ -54,6 +55,9 @@ def create_model_and_transforms(
     )
     vision_encoder.visual.output_tokens = True
     vision_encoder = vision_encoder.visual
+    vis_hidden_dim = open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+        "width"
+    ]
 
     # load tokenizer and ensure there is a pad token
     text_tokenizer = AutoTokenizer.from_pretrained(
@@ -87,9 +91,7 @@ def create_model_and_transforms(
         model = Flamingo(
             vision_encoder=vision_encoder,
             lang_model=lang_model,
-            vis_feature_dim=open_clip.get_model_config(clip_vision_encoder_path)[
-                "vision_cfg"
-            ]["width"],
+            vis_feature_dim=vis_hidden_dim,
             tokenizer_vocab_size=len(text_tokenizer),
             gradient_checkpointing=gradient_checkpointing,
             decoder_layers_attr_name=decoder_layers_attr_name,
@@ -101,13 +103,21 @@ def create_model_and_transforms(
         model = Kosmos(
             vision_encoder=vision_encoder,
             lang_model=lang_model,
-            vis_feature_dim=open_clip.get_model_config(clip_vision_encoder_path)[
-                "vision_cfg"
-            ]["width"],
+            vis_feature_dim=vis_hidden_dim,
             tokenizer_vocab_size=len(text_tokenizer),
             gradient_checkpointing=gradient_checkpointing,
             pad_token=text_tokenizer.pad_token,
             **model_kwargs,
+        )
+
+    elif model_family == "blip":
+        model = BLIP(
+            vision_encoder=vision_encoder,
+            lang_model=lang_model,
+            vis_feature_dim=vis_hidden_dim,
+            tokenizer_vocab_size=len(text_tokenizer),
+            gradient_checkpointing=gradient_checkpointing,
+            pad_token=text_tokenizer.pad_token,
         )
 
     # add special tokens to the tokenizer and language models
