@@ -98,7 +98,7 @@ def train_one_epoch(
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
         labels[labels == tokenizer.eos_token] = -100
-        labels[labels == model.media_token_id] = -100
+        labels[labels == unwrap_model(model).media_token_id] = -100
         labels = labels.to(device_id)
 
         # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
@@ -363,3 +363,13 @@ def ds_save_checkpoint(model, epoch, args):
         if args.delete_previous_checkpoint:
             if epoch > 0:  # remove checkpoint dir epoch_{epoch-1}
                 shutil.rmtree(f"{args.run_name}/epoch_{epoch-1}")
+
+
+def unwrap_model(model):
+    """
+    Unwrap a model from a DataParallel or DistributedDataParallel wrapper.
+    """
+    if isinstance(model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)):
+        return model.module
+    else:
+        return model

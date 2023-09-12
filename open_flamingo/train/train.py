@@ -320,16 +320,17 @@ def main():
         print("Untying embeddings for FSDP")
 
     # Initialize model
+    additional_kwargs = {"cross_attn_every_n_layers": args.cross_attn_every_n_layers} if args.model_family == "flamingo" else {}
     model, image_processor, tokenizer = create_model_and_transforms(
         args.vision_encoder_path,
         args.vision_encoder_pretrained,
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         model_family = args.model_family,
-        cross_attn_every_n_layers=args.cross_attn_every_n_layers,
         untie_embeddings=args.fsdp, # untie embeddings for FSDP
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
+        **additional_kwargs,
     )
     random_seed(args.seed, args.rank)
 

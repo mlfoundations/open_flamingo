@@ -37,6 +37,7 @@ def FeedForward(dim, mult=4):
         nn.Linear(inner_dim, dim, bias=False),
     )
 
+
 class VisionTokenizer(nn.Module):
     def __init__(self, dim_media, num_tokens_per_media):
         super().__init__()
@@ -118,13 +119,13 @@ class PerceiverResampler(VisionTokenizer):
                 and keep positional embeddings for. If None, no positional embeddings are used.
             ff_mult (int, optional): dimension multiplier for the feedforward network. Defaults to 4.
         """
-        super().__init__(dim_media=dim_inner, num_tokens_per_media=num_latents)
         if dim_inner is not None:
-            self.projection = nn.Linear(dim, dim_inner)
+            projection = nn.Linear(dim, dim_inner)
         else:
-            self.projection = None
+            projection = None
             dim_inner = dim
-
+        super().__init__(dim_media=dim_inner, num_tokens_per_media=num_latents)
+        self.projection = projection
         self.latents = nn.Parameter(torch.randn(num_latents, dim_inner))
         # positional embeddings
         self.frame_embs = (
@@ -333,9 +334,10 @@ class GatedCrossAttentionBlock(nn.Module):
 class QFormerWithProjection(VisionTokenizer):
     """
     Based on BLIP-2 (https://arxiv.org/pdf/2301.12597.pdf)
-    In the BLIP-2 paper, Q-former is initialized with BERT-base weights, 
+    In the BLIP-2 paper, Q-former is initialized with BERT-base weights,
     so dim_inner = 768, num_hidden_layers = 12, and intermediate_size = 3072
     """
+
     def __init__(
         self,
         dim_input,
@@ -350,12 +352,16 @@ class QFormerWithProjection(VisionTokenizer):
         from transformers import Blip2Model, Blip2QFormerModel, Blip2QFormerConfig
 
         if pretrained_path is None:
-            self.qformer = Blip2QFormerModel(Blip2QFormerConfig(
-                encoder_hidden_size=dim_input,
-                hidden_size=dim_inner,
-                num_hidden_layers=num_hidden_layers,
-            ))
-            self.query_tokens = nn.Parameter(torch.zeros(1, num_query_tokens, dim_inner))
+            self.qformer = Blip2QFormerModel(
+                Blip2QFormerConfig(
+                    encoder_hidden_size=dim_input,
+                    hidden_size=dim_inner,
+                    num_hidden_layers=num_hidden_layers,
+                )
+            )
+            self.query_tokens = nn.Parameter(
+                torch.zeros(1, num_query_tokens, dim_inner)
+            )
             self.proj = LinearProjection(dim=dim_inner, dim_out=dim_out)
         else:
             model = Blip2Model.from_pretrained(
@@ -376,7 +382,6 @@ class QFormerWithProjection(VisionTokenizer):
             assert (
                 self.query_tokens.shape[1] == num_query_tokens
             ), f"num_query_tokens={num_query_tokens} but pretrained model expects {self.query_tokens.shape[1]}"
-
 
     def forward(self, x):
         """
