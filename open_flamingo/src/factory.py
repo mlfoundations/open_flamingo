@@ -1,4 +1,5 @@
 from typing import Optional
+import torch.nn as nn
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import open_clip
@@ -6,7 +7,7 @@ import open_clip
 from .flamingo import Flamingo
 from .kosmos import Kosmos
 from .blip import BLIP
-from .utils import extend_instance, hasattr_recursive, setattr_recursive
+from .utils import hasattr_recursive, setattr_recursive
 
 SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos", "blip")
 
@@ -67,7 +68,7 @@ def create_model_and_transforms(
         cache_dir=cache_dir,
     )
     if text_tokenizer.pad_token is None:
-        text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
+        text_tokenizer.pad_token_id = text_tokenizer.eos_token_id
 
     # load langauge model
     lang_model = AutoModelForCausalLM.from_pretrained(
@@ -82,6 +83,12 @@ def create_model_and_transforms(
             lang_model.get_output_embeddings().weight.clone()
         )
         lang_model.config.update({"tie_word_embeddings": False})
+    
+    # vocab sizes: note that lang_model.config.vocab_size is not necessarily = len(text_tokenizer)
+    # the current input_embedding / output_embedding weights probably use lang_model.config.vocab_size
+    # but the tokenizer will assign additional ids based on len(text_tokenizer)
+    model_vocab_size = lang_model.get_input_embeddings().num_embeddings
+    tokenizer_len = len(text_tokenizer)
 
     # init the model
     if model_family == "flamingo":
@@ -92,10 +99,10 @@ def create_model_and_transforms(
             vision_encoder=vision_encoder,
             lang_model=lang_model,
             vis_feature_dim=vis_hidden_dim,
-            tokenizer_vocab_size=len(text_tokenizer),
+            initial_tokenizer_len=len(text_tokenizer),
             gradient_checkpointing=gradient_checkpointing,
             decoder_layers_attr_name=decoder_layers_attr_name,
-            pad_token=text_tokenizer.pad_token,
+            pad_token_id=text_tokenizer.pad_token_id,
             **model_kwargs,
         )
 
@@ -104,9 +111,9 @@ def create_model_and_transforms(
             vision_encoder=vision_encoder,
             lang_model=lang_model,
             vis_feature_dim=vis_hidden_dim,
-            tokenizer_vocab_size=len(text_tokenizer),
+            initial_tokenizer_len=len(text_tokenizer),
             gradient_checkpointing=gradient_checkpointing,
-            pad_token=text_tokenizer.pad_token,
+            pad_token_id=text_tokenizer.pad_token_id,
             **model_kwargs,
         )
 
@@ -115,9 +122,9 @@ def create_model_and_transforms(
             vision_encoder=vision_encoder,
             lang_model=lang_model,
             vis_feature_dim=vis_hidden_dim,
-            tokenizer_vocab_size=len(text_tokenizer),
+            initial_tokenizer_len=len(text_tokenizer),
             gradient_checkpointing=gradient_checkpointing,
-            pad_token=text_tokenizer.pad_token,
+            pad_token_id=text_tokenizer.pad_token_id,
         )
 
     # add special tokens to the tokenizer and language models

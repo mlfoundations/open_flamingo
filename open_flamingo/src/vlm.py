@@ -27,7 +27,8 @@ class VLM(nn.Module):
         vision_encoder: nn.Module,
         vision_tokenizer: nn.Module,
         lang_model: nn.Module,
-        tokenizer_vocab_size: int,
+        initial_tokenizer_len: int,
+        pad_token_id: int,
         gradient_checkpointing: bool = False,
     ):
         """
@@ -35,8 +36,9 @@ class VLM(nn.Module):
             vision_encoder (nn.Module): e.g. CLIP
             vision_tokenizer (nn.Module): e.g. PerceiverResampler
             lang_model (nn.Module): e.g. MPT
+            initial_tokenizer_len (int): size of the original tokenizer vocab
+            pad_token_id (int): id of the pad token
             gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            cross_attn_every_n_layers (int, optional): If using cross-attention, perform cross-attention every n layers. Defaults to None.
         """
         super().__init__()
 
@@ -55,25 +57,21 @@ class VLM(nn.Module):
         self.lang_model = lang_model
 
         # lm embeddings
+        self.pad_token_id = pad_token_id
         input_embeds = DecoupledEmbedding(
-            num_embeddings=tokenizer_vocab_size,
+            max_original_id=initial_tokenizer_len - 1,
             num_additional_embeddings=len(self.special_tokens),
-            embedding_dim=self.lang_embedding_dim,
+            _weight=self.lang_model.get_input_embeddings().weight,
+            pad_token_id=self.pad_token_id,
         )
-        input_embeds.weight = self.lang_model.get_input_embeddings().weight
         self.lang_model.set_input_embeddings(input_embeds)
 
-        lang_model_bias = self.lang_model.get_output_embeddings().bias
         out_embeds = DecoupledLinear(
-            in_features=self.lang_embedding_dim,
-            out_features=tokenizer_vocab_size,
-            bias=lang_model_bias is not None,
-            out_additional_features=len(self.special_tokens),
+            max_original_id=initial_tokenizer_len - 1,
+            additional_out_features=len(self.special_tokens),
+            _weight = self.lang_model.get_output_embeddings().weight,
+            _bias = self.lang_model.get_output_embeddings().bias,
         )
-        if lang_model_bias is not None:
-            out_embeds.bias = lang_model_bias
-
-        out_embeds.weight = self.lang_model.get_output_embeddings().weight
         self.lang_model.set_output_embeddings(out_embeds)
 
         # gradient checkpointing
@@ -289,9 +287,6 @@ class VLM(nn.Module):
         assert (
             "media_token" in self._special_tokens
         ), "VLMs need to request that the tokenizer add a media_token and call set_special_token_ids to set self.media_token_id"
-        assert (
-            "pad_token" in self._special_tokens
-        ), "VLMs need to request that the tokenizer call set_special_token_ids and set self.pad_token_id"
         return self._special_tokens
 
     def set_special_token_ids(self, string_to_ids):
@@ -318,7 +313,8 @@ class VLMWithCrossAttention(VLM):
         vision_encoder: nn.Module,
         vision_tokenizer: nn.Module,
         lang_model: nn.Module,
-        tokenizer_vocab_size: int,
+        initial_tokenizer_len: int,
+        pad_token_id: int,
         gradient_checkpointing: bool = False,
         decoder_layers_attr_name: str = None,
         cross_attn_every_n_layers: int = None,
@@ -328,7 +324,8 @@ class VLMWithCrossAttention(VLM):
             vision_encoder=vision_encoder,
             vision_tokenizer=vision_tokenizer,
             lang_model=lang_model,
-            tokenizer_vocab_size=tokenizer_vocab_size,
+            initial_tokenizer_len=initial_tokenizer_len,
+            pad_token_id=pad_token_id,
             gradient_checkpointing=gradient_checkpointing,
         )
         self.lang_model.set_decoder_layers_attr_name(decoder_layers_attr_name)
@@ -434,14 +431,16 @@ class VLMWithLanguageStream(VLM):
         vision_encoder: nn.Module,
         vision_tokenizer: nn.Module,
         lang_model: nn.Module,
-        tokenizer_vocab_size: int,
+        initial_tokenizer_len: int,
+        pad_token_id: int,
         gradient_checkpointing: bool = False,
     ):
         super().__init__(
             vision_encoder=vision_encoder,
             vision_tokenizer=vision_tokenizer,
             lang_model=lang_model,
-            tokenizer_vocab_size=tokenizer_vocab_size,
+            initial_tokenizer_len=initial_tokenizer_len,
+            pad_token_id=pad_token_id,
             gradient_checkpointing=gradient_checkpointing,
         )
         assert (

@@ -9,8 +9,8 @@ class Kosmos(VLMWithLanguageStream):
         vision_encoder: nn.Module,
         lang_model: nn.Module,
         vis_feature_dim: int,
-        tokenizer_vocab_size: int,
-        pad_token: str,
+        initial_tokenizer_len: int,
+        pad_token_id: int,
         gradient_checkpointing: bool = False,
     ):
         """
@@ -18,14 +18,13 @@ class Kosmos(VLMWithLanguageStream):
             vision_encoder (nn.Module): HF CLIPModel
             lang_encoder (nn.Module): HF causal language model
             vis_feature_dim (int): final dimension of the visual features outputted by the vision_encoder
-            tokenizer_vocab_size (int): size of the tokenizer vocab
+            initial_tokenizer_len (int): size of the tokenizer vocab
             padding_token_id (int): id of the padding token. None if no padding token; then a padding token
                 will be inserted into self.special_tokens, which factory.py fills after creating new tokens
             gradient_checkpointing (bool, optional): whether to use gradient checkpointing. Defaults to False.
         """
         self._special_tokens = {
             "media_token": "<image>",
-            "pad_token": pad_token,
         }
         lang_embedding_dim = lang_model.get_input_embeddings().weight.shape[1]
         super().__init__(
@@ -34,8 +33,9 @@ class Kosmos(VLMWithLanguageStream):
                 dim=vis_feature_dim, dim_inner=lang_embedding_dim
             ),
             lang_model=lang_model,
-            tokenizer_vocab_size=tokenizer_vocab_size,
+            initial_tokenizer_len=initial_tokenizer_len,
             gradient_checkpointing=gradient_checkpointing,
+            pad_token_id=pad_token_id,
         )
 
     def set_trainable(self):

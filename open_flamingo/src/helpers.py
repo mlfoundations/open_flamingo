@@ -428,21 +428,28 @@ class DecoupledEmbedding(nn.Embedding):
 
     def __init__(
         self,
-        num_embeddings,
-        num_additional_embeddings,
-        embedding_dim,
+        max_original_id: int,
+        num_additional_embeddings: int = 0,
+        _weight: torch.Tensor = None,
+        num_original_embeddings: int = None,
+        embedding_dim: int = None,
         partially_freeze=True,
         device=None,
         dtype=None,
-        padding_idx=None,
-        **kwargs,
+        pad_token_id=None,
     ) -> None:
         """
         Args:
-            num_embeddings (`int`):
-                Size of the dictionary of embeddings
+            max_original_id (`int`):
+                The largest token id that should be embedded using the regular embedding (regular `weight`).
+                This is usually len(tokenizer) - 1 before additional tokens are added.
+                Note that this may not equal self.weight.shape[0]
             num_additional_embeddings (`int`):
-                Number of additional embeddings. Only useful when you `partially_freeze=True`.
+                Number of additional tokens to initialize an Embedding matrix for (`additional_weight`).
+            _weight (`torch.Tensor`, *optional*, defaults to `None`): The regular weight tensor.
+                If provided, this sets the `num_original_embeddings` and `embedding_dim` parameters.
+            num_original_embeddings (`int`):
+                self.weight.shape[0]
             embedding_dim (`int`):
                 The size of each embedding vector
             partially_freeze: (`bool`, *optional*, defaults to `True`):
@@ -453,20 +460,39 @@ class DecoupledEmbedding(nn.Embedding):
         Note: there are a lot of other parameters to initialize a standard `nn.Embedding` such as `padding_idx`,
         `max_norm` or `norm_type`. We are not supporting these.
         """
-        if padding_idx is not None and padding_idx > num_embeddings:
+        # validate args
+        if pad_token_id is not None and pad_token_id > max_original_id:
             raise ValueError(
-                f"padding_idx must be within num_embeddings. Got {padding_idx} and {num_embeddings}"
+                f"pad_token_id must be <= max_original_id. Got {pad_token_id} and {max_original_id}."
+                + "If the original tokenizer does not have a pad_token_id, use pad_token_id=None."
             )
+        if _weight is not None:
+            assert (num_original_embeddings is None) or (
+                _weight.shape[0] == num_original_embeddings
+            ), f"num_original_embeddings={num_original_embeddings} but _weight.shape[0]={_weight.shape[0]}"
+            assert (embedding_dim is None) or (
+                _weight.shape[1] == embedding_dim
+            ), f"embedding_dim={embedding_dim} but _weight.shape[1]={_weight.shape[1]}"
+            num_original_embeddings = _weight.shape[0]
+            embedding_dim = _weight.shape[1]
+        else:
+            assert (
+                num_original_embeddings is not None
+            ), "num_original_embeddings must be provided if _weight is not provided"
+            assert (
+                embedding_dim is not None
+            ), "embedding_dim must be provided if _weight is not provided"
+
         super().__init__(
-            num_embeddings=num_embeddings,
+            num_embeddings=num_original_embeddings,
             embedding_dim=embedding_dim,
             device=device,
             dtype=dtype,
-            padding_idx=padding_idx,
-            **kwargs,
+            padding_idx=pad_token_id,
+            _weight=_weight,
         )
-        self.num_embeddings = num_embeddings
-        self.padding_idx = padding_idx
+        self.max_original_id = max_original_id
+        self.padding_idx = pad_token_id
         self.num_additional_embeddings = num_additional_embeddings
         if self.num_additional_embeddings > 0:
             self.additional_embedding = nn.Embedding(
@@ -512,10 +538,10 @@ class DecoupledEmbedding(nn.Embedding):
 
         # Clone so that we don't modify the original input_ids later on
         input_ids = input_ids.clone()
-        additional_vocab_indices = torch.where(input_ids >= self.num_embeddings)
+        additional_vocab_indices = torch.where(input_ids > self.max_original_id)
         input_ids_additional_vocab = input_ids[additional_vocab_indices]
         additional_embeddings = self.additional_embedding(
-            input_ids_additional_vocab - self.num_embeddings
+            input_ids_additional_vocab - self.max_original_id - 1
         )
 
         # for successful lookup replace input_ids with 0, the results of these will be discarded anyway
@@ -528,8 +554,8 @@ class DecoupledEmbedding(nn.Embedding):
         return full_vector
 
     def extra_repr(self) -> str:
-        return "num_embeddings={}, num_additional_embeddings={}, embedding_dim={}, partially_freeze={}".format(
-            self.num_embeddings,
+        return "num_original_embeddings={}, num_additional_embeddings={}, embedding_dim={}, partially_freeze={}".format(
+            self.max_original_id + 1,
             self.num_additional_embeddings,
             self.embedding_dim,
             (not self.weight.requires_grad),
@@ -540,36 +566,72 @@ class DecoupledLinear(nn.Linear):
     # Derived from https://pytorch.org/docs/stable/_modules/torch/nn/modules/linear.html#Linear
     """
     Implements a decoupling of parameters to allow freezing (or not) a subset of the parameters. In practise, the
-    regular `weight` can be trained or frozen (i.e. `partially_freeze=True`), and if `out_additional_features` > 0,
-    then it will create `out_additional_features * in_features` additional parameters that are always trained. If
-    `out_additional_features=0`, then the module defaults back to the regular behavior of `nn.Linear`.
+    regular `weight` can be trained or frozen (i.e. `partially_freeze=True`), and if `additional_out_features` > 0,
+    then it will create `additional_out_features * in_features` additional parameters that are always trained. If
+    `additional_out_features=0`, then the module defaults back to the regular behavior of `nn.Linear`.
     """
 
     def __init__(
         self,
-        in_features: int,
-        out_features: int,
-        out_additional_features: int = 0,
+        max_original_id: int,
+        additional_out_features: int = 0,
+        _weight: torch.Tensor = None,
+        _bias: torch.Tensor = None,
+        in_features: int = None,
+        original_out_features: int = None,
         bias: bool = True,
         partially_freeze: bool = True,
         device=None,
         dtype=None,
     ) -> None:
         """
-        out_additional_features: int. Number of additional trainable dimensions. Only makes sense when
-        `partially_freeze=True`. partially_freeze: bool. If True, the regular `weight` will be frozen and extra
-        parameters (if any) will be trainable. If False, default to the regular behavior of nn.Linear.
+        Args:
+            max_original_id (`int`): The largest token id that should be extracted from the regular weight.
+                This is usually len(tokenizer) - 1 before additional tokens are added.
+                Note that this may not equal original_out_features - 1
+            _weight: torch.Tensor, *optional*, defaults to `None`. The regular weight tensor.
+                If provided, this sets the `in_features` and `original_out_features` parameters.
+            _bias: torch.Tensor, *optional*, defaults to `None`. The regular bias tensor.
+            in_features: int. Input hidden size.
+            original_out_features: int. Original out_features of the language model's get_output_embeddings() function.
+            additional_out_features: int. Number of additional trainable dimensions.
+            bias: bool. Whether to include a bias term.
+            partially_freeze: bool, *optional*, defaults to `True`): If `True`, the regular `weight` will be frozen.
         """
-        super().__init__(in_features, out_features, bias, device, dtype)
-        self.out_additional_features = out_additional_features
+        # argument validation
+        if _weight is not None:
+            assert (_weight.shape[0] == original_out_features) or (
+                original_out_features is None
+            ), f"original_out_features={original_out_features} but _weight.shape[0]={_weight.shape[0]}"
+            assert (_weight.shape[1] == in_features) or (
+                in_features is None
+            ), f"in_features={in_features} but _weight.shape[1]={_weight.shape[1]}"
+            in_features = _weight.shape[1]
+            original_out_features = _weight.shape[0]
+        else:
+            assert (
+                in_features is not None
+            ), "in_features must be provided if _weight is not provided"
+            assert (
+                original_out_features is not None
+            ), "original_out_features must be provided if _weight is not provided"
 
+        if _bias is not None:
+            assert bias is True, "bias must be True if _bias is provided"
+
+        # initialize original linear
+        super().__init__(in_features, original_out_features, bias, device, dtype)
         self.in_features = in_features
-        self.out_features = out_features
+        self.original_out_features = original_out_features
+        self.max_original_id = max_original_id
+
+        # initialize additional linear
+        self.additional_out_features = additional_out_features
         self.has_bias = bias
-        if out_additional_features > 0:
+        if additional_out_features > 0:
             self.additional_fc = nn.Linear(
                 in_features=in_features,
-                out_features=out_additional_features,
+                out_features=additional_out_features,
                 bias=self.has_bias,
                 device=device,
                 dtype=dtype,
@@ -589,21 +651,23 @@ class DecoupledLinear(nn.Linear):
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         output = F.linear(input, self.weight, self.bias)
+        output = output[..., : self.max_original_id + 1]
 
-        if self.out_additional_features > 0:
+        if self.additional_out_features > 0:
             additional_features = F.linear(
                 input, self.additional_fc.weight, self.additional_fc.bias
             )
             output = torch.cat((output, additional_features), -1)
 
+        print(output.shape)
         return output
 
     def extra_repr(self) -> str:
         """Overwriting `nn.Linear.extra_repr` to include new parameters."""
-        return "in_features={}, out_features={}, out_additional_features={}, bias={}, partially_freeze={}".format(
+        return "in_features={}, out_features={}, additional_out_features={}, bias={}, partially_freeze={}".format(
             self.in_features,
-            self.out_features,
-            self.out_additional_features,
+            self.max_original_id + 1,
+            self.additional_out_features,
             self.bias is not None,
             (not self.weight.requires_grad or not self.bias.requires_grad),
         )
