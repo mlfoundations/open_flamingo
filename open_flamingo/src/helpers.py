@@ -659,7 +659,6 @@ class DecoupledLinear(nn.Linear):
             )
             output = torch.cat((output, additional_features), -1)
 
-        print(output.shape)
         return output
 
     def extra_repr(self) -> str:

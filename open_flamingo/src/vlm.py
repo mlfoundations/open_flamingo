@@ -443,6 +443,7 @@ class VLMWithLanguageStream(VLM):
             pad_token_id=pad_token_id,
             gradient_checkpointing=gradient_checkpointing,
         )
+        self.lang_model._use_gradient_checkpointing = gradient_checkpointing
         assert (
             self.vis_embedding_dim == self.lang_embedding_dim
         ), "To place visual tokens direclty in the language stream, the visual and language tokens need to be the same dim."

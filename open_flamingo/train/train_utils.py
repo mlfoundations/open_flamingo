@@ -134,7 +134,7 @@ def train_one_epoch(
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
         labels[labels == tokenizer.eos_token] = -100
-        labels[labels == model.media_token_id] = -100
+        labels[labels == unwrap_model(model).media_token_id] = -100
         labels = labels.to(device_id)
 
         # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
