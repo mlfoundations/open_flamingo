@@ -2,6 +2,7 @@ from typing import Optional
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import open_clip
+import torch.nn as nn
 
 from .flamingo import Flamingo
 from .flamingo_lm import FlamingoLMMixin
@@ -14,9 +15,9 @@ def create_model_and_transforms(
     lang_encoder_path: str,
     tokenizer_path: str,
     cross_attn_every_n_layers: int = 1,
+    untie_embeddings: bool = False,
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
-    freeze_lm_embeddings: bool = False,
     cache_dir: Optional[str] = None,
     **flamingo_kwargs,
 ):
@@ -30,9 +31,9 @@ def create_model_and_transforms(
         lang_encoder_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
         cross_attn_every_n_layers (int, optional): determines how often to add a cross-attention layer. Defaults to 1.
+        untie_embeddings (bool, optional): whether to untie the input and output embeddings if they are tied. This is required for training using FSDP. Defaults to False.
         use_local_files (bool, optional): whether to use local files. Defaults to False.
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
-        freeze_lm_embeddings (bool, optional): whether to freeze LM input embeddings when configuring Perceiver.
         cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
@@ -50,24 +51,39 @@ def create_model_and_transforms(
     text_tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         local_files_only=use_local_files,
-        trust_remote_code=True,
         cache_dir=cache_dir,
+        # trust_remote_code=True
     )
+    
     # add Flamingo special tokens to the tokenizer
     text_tokenizer.add_special_tokens(
         {"additional_special_tokens": ["<|endofchunk|>", "<image>"]}
     )
-    if text_tokenizer.pad_token is None:
+    new_tokens = 2
+    if text_tokenizer.pad_token is None and text_tokenizer.pad_token_id is None: # need to check both because some tokenizers have a pad token id but not a pad token
         # Issue: GPT models don't have a pad token, which we use to
         # modify labels for the loss.
-        text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
-
+        text_tokenizer.pad_token_id = text_tokenizer.eos_token_id
+        
+        # text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
+        # new_tokens += 1
+        
+    ids_for_additional_special_tokens = text_tokenizer.convert_tokens_to_ids(
+        ["<|endofchunk|>","<image>","<PAD>"] if new_tokens == 3 else ["<|endofchunk|>", "<image>"]
+    )
+        
     lang_encoder = AutoModelForCausalLM.from_pretrained(
         lang_encoder_path,
         local_files_only=use_local_files,
-        trust_remote_code=True,
         cache_dir=cache_dir,
+        # trust_remote_code=True
     )
+    
+    lang_encoder.config.update({"original_vocab_size": min(ids_for_additional_special_tokens)})
+    lang_encoder.config.vocab_size = max(len(text_tokenizer), lang_encoder.config.vocab_size)
+
+    # change model's vocab size to include new tokens
+    lang_encoder.config.vocab_size = len(text_tokenizer)
 
     # hacks for MPT-1B, which doesn't have a get_input_embeddings method
     if "mpt-1b-redpajama-200b" in lang_encoder_path:
@@ -81,6 +97,28 @@ def create_model_and_transforms(
 
         extend_instance(lang_encoder, EmbeddingFnMixin)
 
+    if not hasattr(lang_encoder, "get_output_embeddings"):
+        if hasattr(lang_encoder, "lm_head"):
+            lang_encoder.get_output_embeddings = lambda: lang_encoder.lm_head
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
+            )
+
+    if not hasattr(lang_encoder, "set_output_embeddings"):
+        if hasattr(lang_encoder, "lm_head"):
+            lang_encoder.set_output_embeddings = lambda x: setattr(
+                lang_encoder, "lm_head", x
+            )
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
+            )
+            
+    if untie_embeddings:
+        lang_encoder.get_output_embeddings().weight = nn.Parameter(lang_encoder.get_output_embeddings().weight.clone())
+        lang_encoder.config.update({"tie_word_embeddings": False})
+        
     # convert LM to FlamingoLM
     extend_instance(lang_encoder, FlamingoLMMixin)
 
@@ -100,19 +138,24 @@ def create_model_and_transforms(
             "width"
         ],
         cross_attn_every_n_layers=cross_attn_every_n_layers,
+        new_tokens=new_tokens,  # number of tokens embeddings to train
+        padding_token_id=text_tokenizer.pad_token_id,
         **flamingo_kwargs,
     )
 
     # Freeze all parameters
-    model.requires_grad_(False)
-    assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+    model.vision_encoder.requires_grad_(False)
+    model.lang_encoder.requires_grad_(False)
 
-    # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
+    # Unfreeze gated_cross_attn_layers and perceiver
     model.perceiver.requires_grad_(True)
     model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
-    if not freeze_lm_embeddings:
-        model.lang_encoder.get_input_embeddings().requires_grad_(True)
-        # TODO: investigate also training the output embeddings when untied
+    
+    if hasattr(model.lang_encoder.get_output_embeddings(), "additional_fc"):
+        model.lang_encoder.get_output_embeddings().additional_fc.requires_grad_(True)
+        
+    if hasattr(model.lang_encoder.get_input_embeddings(), "additional_embedding"):
+        model.lang_encoder.get_input_embeddings().additional_embedding.requires_grad_(True)
 
     print(
         f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"

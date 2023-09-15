@@ -123,11 +123,6 @@ def main():
     )
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
-        "--freeze_lm_embeddings",
-        action="store_true",
-        help="if True, we freeze the LM embeddings during training. Otherwise, we train the <image> and <|endofchunk|> embeddings.",
-    )
-    parser.add_argument(
         "--logging_steps", type=int, default=100, help="log loss every n steps"
     )
 
@@ -237,8 +232,7 @@ def main():
     )
 
     args = parser.parse_args()
-    
-    args.local_rank = int(os.environ.get('LOCAL_RANK', -1)) # for deepspeed
+    args.local_rank, args.rank, args.world_size = world_info_from_env()
 
     # Validate args
     if args.laion_shards.startswith("s3"):
@@ -253,8 +247,7 @@ def main():
     if args.fsdp and not args.fsdp_use_orig_params:
         print(
             "Warning: FSDP is running without fsdp_use_orig_params flag. "
-            + "This is not recommended because it means we will use uniform weight decay"
-            + " and train all embeddings, not just the newly added ones. "
+            + "This is not recommended because it means we will use uniform weight decay."
             + "Note: OPT models are not compatible with fsdp_use_orig_params flag."
         )
 
@@ -275,7 +268,6 @@ def main():
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-    args.local_rank, args.rank, args.world_size = world_info_from_env()
     if args.deepspeed:
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
@@ -322,6 +314,9 @@ def main():
         device_id = init_distributed_device(args)
 
     random_seed(args.seed)
+    
+    if args.fsdp:
+        print("Untying embeddings for FSDP")
 
     # Initialize model
     model, image_processor, tokenizer = create_model_and_transforms(
@@ -330,9 +325,9 @@ def main():
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         cross_attn_every_n_layers=args.cross_attn_every_n_layers,
+        untie_embeddings=args.fsdp, # untie embeddings for FSDP
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
-        freeze_lm_embeddings=args.freeze_lm_embeddings,
     )
     random_seed(args.seed, args.rank)
 
@@ -440,9 +435,31 @@ def main():
     elif not args.deepspeed:
         model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
+        
+    # Initialize gradient checkpointing
+    if args.gradient_checkpointing:
+        if args.deepspeed:
+            raise ValueError(
+                "gradient checkpointing currently not supported with deepspeed"
+            )
+        non_reentrant_wrapper = functools.partial(
+            checkpoint_wrapper,
+            offload_to_cpu=True,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        )
+        apply_activation_checkpointing(
+            ddp_model,
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
+            and not isinstance(m, FSDP)
+            and not isinstance(m, CheckpointWrapper),
+        )
 
     # Initialize optimizer
-    params_to_optimize = model.named_parameters()
+    params_to_optimize = (
+        ddp_model.named_parameters() if not args.deepspeed else model.named_parameters()
+    )
+            
     params_to_optimize = list(
         filter(
             lambda x: x[1].requires_grad
@@ -526,6 +543,9 @@ def main():
         print(
             f"After deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
         )
+        print(
+            f"After deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
+        )
 
         if args.resume_from_checkpoint is not None:
             if args.rank == 0:
@@ -540,25 +560,6 @@ def main():
             with open(latest_file, "r") as f:
                 checkpoint_epoch = int(f.read().split("_")[-1])
             resume_from_epoch = checkpoint_epoch + 1
-
-    # Initialize gradient checkpointing
-    if args.gradient_checkpointing:
-        if args.deepspeed:
-            raise ValueError(
-                "gradient checkpointing currently not supported with deepspeed"
-            )
-        non_reentrant_wrapper = functools.partial(
-            checkpoint_wrapper,
-            offload_to_cpu=True,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        )
-        apply_activation_checkpointing(
-            ddp_model,
-            checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
-            and not isinstance(m, FSDP)
-            and not isinstance(m, CheckpointWrapper),
-        )
 
     for epoch in range(resume_from_epoch, args.num_epochs):
         laion_dataset.set_epoch(epoch)

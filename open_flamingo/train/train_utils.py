@@ -72,9 +72,6 @@ def train_one_epoch(
 
     # setup model
     media_token_id = tokenizer("<image>", add_special_tokens=False)["input_ids"][-1]
-    endofchunk_token_id = tokenizer("<|endofchunk|>", add_special_tokens=False)[
-        "input_ids"
-    ][-1]
     model.train()
 
     # setup logging
@@ -165,31 +162,6 @@ def train_one_epoch(
             model.backward(divided_loss_mmc4 * args.loss_multiplier_mmc4)
         else:
             (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
-
-        # TODO: investigate whether this is necessary
-        if (not args.freeze_lm_embeddings) and (
-            not args.fsdp or args.fsdp_use_orig_params
-        ):
-            # Mask gradients for input embeddings s.t. we only update the added tokens <image> and <|endofchunk|>
-            if args.fsdp or args.deepspeed:
-                embed_grad = model.lang_encoder.get_input_embeddings().weight.grad
-            else:
-                embed_grad = (
-                    model.module.lang_encoder.get_input_embeddings().weight.grad
-                )
-            zero_mask = torch.zeros_like(embed_grad)
-            zero_mask[media_token_id] = torch.ones_like(zero_mask[media_token_id])
-            zero_mask[endofchunk_token_id] = torch.ones_like(
-                zero_mask[endofchunk_token_id]
-            )
-            if args.fsdp or args.deepspeed:
-                model.lang_encoder.get_input_embeddings().weight.grad = (
-                    embed_grad * zero_mask
-                )
-            else:
-                model.module.lang_encoder.get_input_embeddings().weight.grad = (
-                    embed_grad * zero_mask
-                )
 
         # clip gradient norm
         if args.fsdp:
