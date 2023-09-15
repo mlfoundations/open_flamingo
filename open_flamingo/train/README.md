@@ -58,8 +58,6 @@ To use [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html), us
 
 Some notes on FSDP:
 
-* We recommend using the `--fsdp_use_orig_params` flag. If `--fsdp` is on without this flag, all language model embeddings will be unfrozen during training. (In contrast, the default behavior is to only train the newly added `<image>` and `<|endofchunk|>` tokens.)
-    * Note: we've encountered issues using OPT with this flag. Other language models should be compatible.
 * Our current FSDP wrapping strategy does not permit training language model embeddings that use tied weights (i.e., tied input / output embeddings). To train such models with FSDP, the language model embeddings must be frozen with the `--freeze_lm_embeddings` flag.
 
 We also implement gradient checkpointing and mixed precision training. Use the `--gradient_checkpointing` and `--precision` arguments respectively.

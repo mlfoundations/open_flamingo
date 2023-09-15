@@ -69,8 +69,8 @@ class VLM(nn.Module):
         out_embeds = DecoupledLinear(
             max_original_id=initial_tokenizer_len - 1,
             additional_out_features=len(self.special_tokens),
-            _weight = self.lang_model.get_output_embeddings().weight,
-            _bias = self.lang_model.get_output_embeddings().bias,
+            _weight=self.lang_model.get_output_embeddings().weight,
+            _bias=self.lang_model.get_output_embeddings().bias,
         )
         self.lang_model.set_output_embeddings(out_embeds)
 
@@ -278,6 +278,24 @@ class VLM(nn.Module):
         """
         raise NotImplementedError
 
+    def group_params_by_weight_decay(self):
+        """
+        Return a tuple of (params to optimize w/ weight decay, params to optimize w/o weight decay)
+        """
+        params_with_wd, params_without_wd = [], []
+        for n, p in self.named_parameters():
+            if self._should_apply_weight_decay(n):
+                params_with_wd.append(p)
+            else:
+                params_without_wd.append(p)
+        return params_with_wd, params_without_wd
+
+    def _should_apply_weight_decay(self, parameter_name):
+        """
+        Return whether weight decay should be applied to a parameter.
+        """
+        raise NotImplementedError
+
     @property
     def special_tokens(self):
         """
@@ -288,6 +306,13 @@ class VLM(nn.Module):
             "media_token" in self._special_tokens
         ), "VLMs need to request that the tokenizer add a media_token and call set_special_token_ids to set self.media_token_id"
         return self._special_tokens
+
+    @property
+    def special_token_ids(self):
+        """
+        Returns a list of the special token ids
+        """
+        return [getattr(self, f"{att_name}_id") for att_name in self.special_tokens]
 
     def set_special_token_ids(self, string_to_ids):
         """
@@ -302,6 +327,28 @@ class VLM(nn.Module):
 
     def wrap_fsdp(self, wrapper_kwargs, device_id):
         raise NotImplementedError
+
+    def init_gradient_checkpointing(self):
+        from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+            checkpoint_wrapper,
+            CheckpointWrapper,
+            CheckpointImpl,
+            apply_activation_checkpointing,
+        )
+        from functools import partial
+
+        non_reentrant_wrapper = partial(
+            checkpoint_wrapper,
+            offload_to_cpu=True,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        )
+        apply_activation_checkpointing(
+            self,
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
+            and not isinstance(m, CheckpointWrapper),
+        )
+
 
 class VLMWithCrossAttention(VLM):
     """

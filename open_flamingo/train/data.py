@@ -1,5 +1,9 @@
 """
 Preprocess and load datasets for training.
+All datasets are expected to return batches of the form:
+    (images, (text_input_ids, text_attention_mask))
+    where images is of a tensor of shape (B, T_img, F, C, H, W)
+    and text_input_ids and text_attention_mask are tensors of shape (B, T_txt)
 """
 
 import functools
@@ -14,8 +18,11 @@ import torchvision
 import webdataset as wds
 from PIL import Image
 import base64
+from einops import rearrange
 
 from data_utils import *
+
+SUPPORTED_DATASETS = ["laion", "mmc4"]
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 N_CHANNELS = 3
@@ -51,6 +58,12 @@ def filter_no_caption_or_no_image(sample):
         "png" in sample or "jpg" in sample or "jpeg" in sample
     )
 
+def preprocess_laion_image(sample, image_processor):
+    """
+    Preprocess image for LAION.
+    """
+    sample = preprocess_image(sample, image_processor)
+    return rearrange(sample, "(b t f) c h w -> b t f c h w", t=1, f=1)
 
 def preprocess_laion_text(sample, tokenizer, max_tokens=32):
     """
@@ -246,7 +259,7 @@ def preprocess_interleaved(
         )
 
     return (
-        images_tensors,
+        rearrange(images_tensors, "b (t f) c h w -> b t f c h w", f=1),
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
     )
 
@@ -349,7 +362,13 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+    return DataInfo(
+        name="mmc4",
+        dataloader=dataloader,
+        batch_size=args.batch_size_mmc4,
+        shared_epoch=shared_epoch,
+        loss_multiplier=args.loss_multiplier_mmc4,
+    )
 
 
 def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
@@ -380,9 +399,7 @@ def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # create two preprocess functions that take in the passed in image_processor and tokenizer
-    preprocess_image_fn = functools.partial(
-        preprocess_image, image_processor=image_processor
-    )
+    preprocess_image_fn  = functools.partial(preprocess_laion_image, image_processor=image_processor)
     preprocess_text_fn = functools.partial(preprocess_laion_text, tokenizer=tokenizer)
 
     # at this point we have an iterator over all the shards
@@ -451,25 +468,26 @@ def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
-
-
-def get_dataset_fn(dataset_type):
-    """
-    Helper function to get the dataset function based on the dataset type
-    """
-    if dataset_type == "image_text":
-        return get_laion_dataset
-    elif dataset_type == "mmc4":
-        return get_mmc4_dataset
-    else:
-        raise ValueError(f"Unsupported dataset type: {dataset_type}")
+    return DataInfo(
+        name="laion",
+        dataloader=dataloader,
+        batch_size=args.batch_size_laion,
+        shared_epoch=shared_epoch,
+        loss_multiplier=args.loss_multiplier_laion,
+    )
 
 
 def get_data(args, image_processor, tokenizer, dataset_type, epoch=0):
     """
     Interface for getting the webdatasets
     """
-    return get_dataset_fn(dataset_type)(
-        args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
-    )
+    if dataset_type == "laion":
+        return get_laion_dataset(
+            args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
+        )
+    elif dataset_type == "mmc4":
+        return get_mmc4_dataset(
+            args, image_processor=image_processor, epoch=epoch, tokenizer=tokenizer
+        )
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_type}")

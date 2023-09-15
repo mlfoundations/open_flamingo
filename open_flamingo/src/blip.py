@@ -55,5 +55,9 @@ class BLIP(VLMWithLanguageStream):
             require_additional_grad=True,
         )
 
+    def _should_apply_weight_decay(self, parameter_name):
+        """BLIP applies 0.05 weight decay to everything"""
+        return True
+    
     def wrap_fsdp(self, wrapper_kwargs, device_id):
         raise NotImplementedError

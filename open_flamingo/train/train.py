@@ -1,22 +1,31 @@
 """ Main training script """
-
 import argparse
-import glob
 import os
-import random
-
-import numpy as np
 import torch
 import wandb
-from data import get_data
-from distributed import init_distributed_device, world_info_from_env
+import deepspeed
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+from open_flamingo import create_model_and_transforms, SUPPORTED_MODEL_FAMILIES
+from data import get_data, SUPPORTED_DATASETS
+from distributed import (
+    init_distributed_device,
+    world_info_from_env,
+    get_fsdp_config,
+    get_deepspeed_config,
+)
 from train_utils import (
     train_one_epoch,
-    get_mp_policy_dtype,
+    random_seed,
+    load_deepspeed_checkpoint,
+    find_most_recent_checkpoint,
+    load_checkpoint,
     save_checkpoint,
-    ds_save_checkpoint,
+    save_deepspeed_checkpoint,
+)
+from losses import (
+    NextTokenPrediction,
 )
 from transformers import (
     get_constant_schedule_with_warmup,
@@ -24,38 +33,13 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from torch.distributed.fsdp import (
-    CPUOffload,
-    MixedPrecision,
-    ShardingStrategy,
-    BackwardPrefetch,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    checkpoint_wrapper,
-    CheckpointWrapper,
-    CheckpointImpl,
-    apply_activation_checkpointing,
-)
-
-import deepspeed
-
-from torch.distributed.fsdp._init_utils import _init_intra_and_inter_node_groups
-from torch.distributed.distributed_c10d import _get_default_group
-import functools
-
-from open_flamingo import create_model_and_transforms, SUPPORTED_MODEL_FAMILIES
-
-
-def random_seed(seed=42, rank=0):
-    torch.manual_seed(seed + rank)
-    np.random.seed(seed + rank)
-    random.seed(seed + rank)
-
 
 def main():
     parser = argparse.ArgumentParser()
     # model configuration args
-    parser.add_argument("--model_family", default="flamingo", type=str, choices=SUPPORTED_MODEL_FAMILIES)
+    parser.add_argument(
+        "--model_family", default="flamingo", type=str, choices=SUPPORTED_MODEL_FAMILIES
+    )
     parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
     parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
@@ -90,8 +74,6 @@ def main():
         action="store_true",
         help="delete previous checkpoint when saving new checkpoint",
     )
-    parser.add_argument("--batch_size_mmc4", type=int, default=128)
-    parser.add_argument("--batch_size_laion", type=int, default=128)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
@@ -101,8 +83,6 @@ def main():
         type=str,
         help="constant, linear, or cosine",
     )
-    parser.add_argument("--loss_multiplier_mmc4", type=float, default=1.0)
-    parser.add_argument("--loss_multiplier_laion", type=float, default=1.0)
     parser.add_argument("--warmup_steps", default=5000, type=int)
     parser.add_argument("--weight_decay", default=0.1, type=float)
     parser.add_argument(
@@ -128,19 +108,23 @@ def main():
     )
 
     # data args
-    parser.add_argument(
-        "--laion_shards",
-        type=str,
-        help="path to laion shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
-    )
-    parser.add_argument(
-        "--mmc4_shards",
-        type=str,
-        help="path to c4 shards, this should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar",
-    )
+    for dataset_name in SUPPORTED_DATASETS:
+        parser.add_argument(f"--batch_size_{dataset_name}", type=int, default=128)
+        parser.add_argument(
+            f"--loss_multiplier_{dataset_name}", type=float, default=1.0
+        )
+        parser.add_argument(
+            f"--train_num_samples_{dataset_name}",
+            type=int,
+            default=10000,
+            help="Number of samples in an 'epoch' for this dataset. Note that train_num_samples/batch_size must be the same for all datasets.",
+        )
+        parser.add_argument(
+            f"--{dataset_name}_shards",
+            type=str,
+            help="Should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar. If None, we will not train on this dataset.",
+        )
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--train_num_samples_mmc4", type=int, default=10000)
-    parser.add_argument("--train_num_samples_laion", type=int, default=10000)
     parser.add_argument("--dataset_resampled", action="store_true")
     parser.add_argument(
         "--mmc4_textsim_threshold",
@@ -189,13 +173,7 @@ def main():
         "--fsdp",
         default=False,
         action="store_true",
-        help="Use FullyShardedDataParallel for distributed training.",
-    )
-    parser.add_argument(
-        "--fsdp_use_orig_params",
-        default=False,
-        action="store_true",
-        help="Passed into the FSDP constructor. Enables param_groups and gradient masking for weight_decay. Does not work with OPT.",
+        help="Use FullyShardedDataParallel for distributed training. Not supported for some models, e.g. OPT.",
     )
     parser.add_argument(
         "--fsdp_sharding_strategy", default="full", type=str, choices=["full", "hybrid"]
@@ -233,108 +211,76 @@ def main():
     )
 
     args = parser.parse_args()
-    args.local_rank, args.rank, args.world_size = world_info_from_env()
 
     # Validate args
-    if args.laion_shards.startswith("s3"):
-        args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
+    for dataset_name in SUPPORTED_DATASETS:
+        shards_path = getattr(args, f"{dataset_name}_shards")
+        if shards_path is not None and shards_path.startswith("s3"):
+            args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
 
-    if args.mmc4_shards.startswith("s3"):
-        args.mmc4_shards = f"pipe:aws s3 cp {args.mmc4_shards} -"
+    datasets_to_train_on = [
+        dataset_name
+        for dataset_name in SUPPORTED_DATASETS
+        if getattr(args, f"{dataset_name}_shards") is not None
+    ]
+    for i in range(len(datasets_to_train_on) - 1):
+        assert getattr(args, f"train_num_samples_{datasets_to_train_on[i]}") // getattr(
+            args, f"batch_size_{datasets_to_train_on[i]}"
+        ) == getattr(
+            args, f"train_num_samples_{datasets_to_train_on[i + 1]}"
+        ) // getattr(
+            args, f"batch_size_{datasets_to_train_on[i + 1]}"
+        ), "Number of batches in each dataloader must be the same"
 
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
-    if args.fsdp and not args.fsdp_use_orig_params:
-        print(
-            "Warning: FSDP is running without fsdp_use_orig_params flag. "
-            + "This is not recommended because it means we will use uniform weight decay."
-            + "Note: OPT models are not compatible with fsdp_use_orig_params flag."
-        )
+    if args.fsdp and args.deepspeed:
+        raise ValueError("Select either FSDP or deepspeed for distributed training.")
 
-    if args.fsdp and args.fsdp_sharding_strategy == "hybrid":
+    if args.fsdp:
         print(
-            "Warning: As of torch=2.0.1, the FSDP logic for optim_state_dict() is broken for hybrid sharding."
-            + "To make this method work, we need to modify torch.distributed.fsdp._optim_utils.py"
-            + "Copy and paste the code from the _optim_utils.py in this repo into the torch file."
-            + "The main issue was the missing group kwarg on line 1596 in _all_gather_optim_state."
+            "Warning: FSDP is experimental and not fully supported. Preference should be given to Deepspeed."
         )
-
-    assert (args.train_num_samples_laion // args.batch_size_laion) == (
-        args.train_num_samples_mmc4 // args.batch_size_mmc4
-    ), "number of samples per epoch must be equal for mmc4 and laion"
+        assert (
+            "dev" in torch.__version__ and torch.__version__ > "2.0.1"
+        ), "FSDP requires torch nightly > 2.0.1"
 
     # Set up distributed training
+    args.local_rank, args.rank, args.world_size = world_info_from_env()
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
     if args.deepspeed:
         torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
-        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         deepspeed.init_distributed()
-
-        zero_opt_dict = {
-            "stage": args.deepspeed_stage,
-            "overlap_comm": True,
-            "contiguous_gradients": True,
-            "offload_param": {"device": "none"},  # TODO: Support CPU offload
-            "offload_optimizer": {"device": "none"},
-            "stage3_param_persistence_threshold": 1e4,
-            "stage3_max_live_parameters": 3e7,
-            "stage3_prefetch_bucket_size": 3e7,
-            "memory_efficient_linear": False,
-        }
-        ds_config = {
-            "train_batch_size": (args.batch_size_mmc4 + args.batch_size_laion)
-            * args.world_size
-            * args.gradient_accumulation_steps,
-            "train_micro_batch_size_per_gpu": (
-                args.batch_size_mmc4 + args.batch_size_laion
-            )
-            * args.gradient_accumulation_steps,
-            "steps_per_print": 100,
-            "zero_optimization": zero_opt_dict,
-            "gradient_clipping": 1.0,
-            "prescale_gradients": False,
-            "wall_clock_breakdown": False,
-        }
-
-        if args.precision == "fp16":
-            ds_config["fp16"] = {"enabled": True, "loss_scale_window": 100}
-        elif args.precision == "bf16":
-            ds_config["bf16"] = {"enabled": True}
-        # amp not supported with DeepSpeed
-        elif "amp" in args.precision:
-            raise ValueError("amp not supported with DeepSpeed")
-
+        ds_config = get_deepspeed_config(args)
         device_id = args.local_rank
-
     else:
         device_id = init_distributed_device(args)
 
     random_seed(args.seed)
-    
-    if args.fsdp:
-        print("Untying embeddings for FSDP")
 
     # Initialize model
-    additional_kwargs = {"cross_attn_every_n_layers": args.cross_attn_every_n_layers} if args.model_family == "flamingo" else {}
+    additional_kwargs = (
+        {"cross_attn_every_n_layers": args.cross_attn_every_n_layers}
+        if args.model_family == "flamingo"
+        else {}
+    )
     model, image_processor, tokenizer = create_model_and_transforms(
         args.vision_encoder_path,
         args.vision_encoder_pretrained,
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
-        model_family = args.model_family,
-        untie_embeddings=args.fsdp, # untie embeddings for FSDP
+        model_family=args.model_family,
+        untie_embeddings=args.fsdp,  # untie embeddings for FSDP
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
         **additional_kwargs,
     )
     random_seed(args.seed, args.rank)
 
-    # Initialize logging
+    # Initialize wandb logging
     print(f"Start running training on rank {args.rank}.")
     if args.rank == 0 and args.report_to_wandb:
         wandb.init(
@@ -344,156 +290,43 @@ def main():
             config=vars(args),
         )
 
-    # Load model checkpoint on CPU
+    # Load model checkpoint (on CPU)
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
-        # if args do not specify a checkpoint to resume from, check if checkpoints exist for this run
-        # and automatically resume from the latest checkpoint
-        if args.deepspeed:
-            if os.path.exists(f"{args.run_name}/latest"):
-                args.resume_from_checkpoint = args.run_name
-                print(
-                    f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
-                )
-            else:
-                print(f"Found no checkpoints for run {args.run_name}.")
-        else:
-            checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
-            if len(checkpoint_list) == 0:
-                print(f"Found no checkpoints for run {args.run_name}.")
-            else:
-                args.resume_from_checkpoint = sorted(
-                    checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
-                )[-1]
-                print(
-                    f"Found checkpoint {args.resume_from_checkpoint} for run {args.run_name}."
-                )
-
-    resume_from_epoch = 0
-    if args.resume_from_checkpoint is not None and not args.deepspeed:
-        if args.rank == 0:
-            print(f"Loading checkpoint from {args.resume_from_checkpoint}")
-        checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
-        msd = checkpoint["model_state_dict"]
-        msd = {k.replace("module.", ""): v for k, v in msd.items()}
-        resume_from_epoch = checkpoint["epoch"] + 1
-
-        # for fsdp, only one rank needs to load the state dict
-        if not args.fsdp or args.rank == 0:
-            model.load_state_dict(msd, False)
+        # if args do not specify a checkpoint to resume from, resume from most recent checkpoint
+        args.resume_from_checkpoint = find_most_recent_checkpoint(args)
+    if (
+        args.resume_from_checkpoint is not None and not args.deepspeed
+    ):  # deepspeed handles checkpoint loading
+        resume_from_epoch, checkpoint = load_checkpoint(args, model)
 
     # Initialize FSDP / DDP, and ensure the model is on GPU
     print(f"Initializing distributed training with {args.world_size} GPUs.")
     if args.fsdp:
-        print(
-            f"Before FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
-        )
-
-        # init MixedPrecision
-        if args.precision != "fp32":
-            cast_dtype = get_mp_policy_dtype(args.precision)
-            mp_policy = MixedPrecision(
-                param_dtype=torch.float32,
-                reduce_dtype=cast_dtype,  # gradient communication
-                buffer_dtype=cast_dtype,
-            )
-        else:
-            mp_policy = None
-
-        # init process groups
-        if args.fsdp_sharding_strategy == "hybrid":
-            intra_node_group, inter_node_group = _init_intra_and_inter_node_groups(
-                _get_default_group()
-            )
-            args.my_group = intra_node_group  # for optimizer saving
-            process_group = (intra_node_group, inter_node_group)  # for FSDP init
-        else:
-            args.my_group = None  # for optimizer saving
-            process_group = None  # for FSDP init
-
-        # init FSDP
-        wrapper_kwargs = dict(
-            process_group=process_group,
-            cpu_offload=CPUOffload(offload_params=False),
-            device_id=device_id,
-            sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
-            sharding_strategy=ShardingStrategy.FULL_SHARD
-            if args.fsdp_sharding_strategy == "full"
-            else ShardingStrategy.HYBRID_SHARD,
-            use_orig_params=args.fsdp_use_orig_params,
-            mixed_precision=mp_policy,
-            forward_prefetch=True,
-            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-            limit_all_gathers=True,
-        )
-        model.wrap_fsdp(wrapper_kwargs, device_id)
+        model.wrap_fsdp(
+            get_fsdp_config(args, device_id), device_id
+        )  # moves model to device_id
         ddp_model = model
-
-        print(
-            f"After FSDP parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
-        )
-        print(
-            f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
-        )
-
     elif not args.deepspeed:
         model = model.to(device_id)
         ddp_model = DDP(model, device_ids=[device_id])
-        
+
     # Initialize gradient checkpointing
     if args.gradient_checkpointing:
         if args.deepspeed:
             raise ValueError(
                 "gradient checkpointing currently not supported with deepspeed"
             )
-        non_reentrant_wrapper = functools.partial(
-            checkpoint_wrapper,
-            offload_to_cpu=True,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        )
-        apply_activation_checkpointing(
-            ddp_model,
-            checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=lambda m: getattr(m, "_use_gradient_checkpointing", False)
-            and not isinstance(m, FSDP)
-            and not isinstance(m, CheckpointWrapper),
-        )
+        model.init_gradient_checkpointing()
 
     # Initialize optimizer
-    params_to_optimize = (
-        ddp_model.named_parameters() if not args.deepspeed else model.named_parameters()
+    params_with_wd, params_without_wd = model.group_params_by_weight_decay()
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": params_with_wd, "weight_decay": args.weight_decay},
+            {"params": params_without_wd, "weight_decay": 0.0},
+        ],
+        lr=args.learning_rate,
     )
-            
-    params_to_optimize = list(
-        filter(
-            lambda x: x[1].requires_grad
-            and not getattr(x[1], "exclude_from_optimizer", False),
-            params_to_optimize,
-        )
-    )
-    if not args.fsdp or args.fsdp_use_orig_params:
-        # apply weight decay only to params in the xattn layers
-        def get_grouped_params(model):
-            params_with_wd, params_without_wd = [], []
-            for n, p in params_to_optimize:
-                if "gated_cross_attn" in n:
-                    params_with_wd.append(p)
-                else:
-                    params_without_wd.append(p)
-            return [
-                {"params": params_with_wd, "weight_decay": args.weight_decay},
-                {"params": params_without_wd, "weight_decay": 0.0},
-            ]
-
-        optimizer = torch.optim.AdamW(
-            get_grouped_params(params_to_optimize), lr=args.learning_rate
-        )
-    else:
-        # unclear if we should be using no weight decay or small weight decay for all parameters
-        optimizer = torch.optim.AdamW(
-            (p for _, p in params_to_optimize),
-            lr=args.learning_rate,
-            weight_decay=args.weight_decay,
-        )
 
     # load optimizer checkpoint
     if args.resume_from_checkpoint is not None and not args.deepspeed:
@@ -502,9 +335,11 @@ def main():
             osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
         optimizer.load_state_dict(osd)
 
-    # Initialize data loaders
-    laion_dataset = get_data(args, image_processor, tokenizer, "image_text")
-    mmc4_dataset = get_data(args, image_processor, tokenizer, "mmc4")
+    # Initialize datasets
+    datasets = [
+        get_data(args, image_processor, tokenizer, dataset_name)
+        for dataset_name in datasets_to_train_on
+    ]
     total_training_steps = (
         (args.train_num_samples_mmc4) // (args.batch_size_mmc4 * args.world_size)
     ) * args.num_epochs
@@ -543,48 +378,28 @@ def main():
             lr_scheduler=lr_scheduler,
             dist_init_required=True,
         )
-        print(
-            f"After deepspeed {torch.cuda.memory_allocated()/1024**3:.3} GB on rank {args.rank}"
-        )
-        print(
-            f"After deepspeed parameter num: {sum(p.numel() for p in model.parameters())} on rank {args.rank}"
-        )
-
         if args.resume_from_checkpoint is not None:
-            if args.rank == 0:
-                print(f"Loading checkpoint from {args.resume_from_checkpoint}")
-            # We will not pass in a 'tag' and instead rely on 'latest' file in the checkpoint directory
-            ddp_model.load_checkpoint(
-                load_dir=args.resume_from_checkpoint,  # Note: this is the dir, not the file
-                load_module_strict=False,
-            )
-            # read latest file to get epoch
-            latest_file = os.path.join(args.resume_from_checkpoint, "latest")
-            with open(latest_file, "r") as f:
-                checkpoint_epoch = int(f.read().split("_")[-1])
-            resume_from_epoch = checkpoint_epoch + 1
+            resume_from_epoch = load_deepspeed_checkpoint(args, ddp_model)
 
+    # Start training!
     for epoch in range(resume_from_epoch, args.num_epochs):
-        laion_dataset.set_epoch(epoch)
-        laion_loader = laion_dataset.dataloader
-        mmc4_dataset.set_epoch(epoch)
-        mmc4_loader = mmc4_dataset.dataloader
-
+        for dataset in datasets:
+            dataset.set_epoch(epoch)
         train_one_epoch(
             args=args,
             model=ddp_model,
             epoch=epoch,
+            datasets=datasets,
+            compute_loss_fn=NextTokenPrediction(),
             tokenizer=tokenizer,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            laion_loader=laion_loader,
-            mmc4_loader=mmc4_loader,
             device_id=device_id,
             wandb=wandb,
         )
 
         if args.deepspeed:
-            ds_save_checkpoint(ddp_model, epoch, args)
+            save_deepspeed_checkpoint(ddp_model, epoch, args)
         else:
             save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
 

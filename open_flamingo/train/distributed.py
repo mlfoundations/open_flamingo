@@ -1,5 +1,5 @@
 """
-Util functions for setting up distributed training.
+Util functions for distributed training, FSDP, and Deepspeed.
 Credit: https://github.com/mlfoundations/open_clip/blob/main/src/training/distributed.py
 """
 
@@ -130,3 +130,123 @@ def init_distributed_device(args):
     args.device = device
     device = torch.device(device)
     return device
+
+
+def get_fsdp_mixed_precision_policy(
+    precision: str,
+    reduce_param_precision=False,
+    reduce_communication_precision=True,
+    reduce_buffer_precision=True,
+):
+    """
+    Returns the FSDP mixed precision policy for a given precision.
+    """
+    if "bfloat16" in precision or "bf16" in precision:
+        cast_dtype = torch.bfloat16
+    elif precision == "fp16":
+        cast_dtype = torch.float16
+    else:
+        cast_dtype = torch.float32
+
+    if cast_dtype == torch.float32:
+        return None
+
+    from torch.distributed.fsdp import MixedPrecision
+
+    return MixedPrecision(
+        param_dtype=cast_dtype if reduce_param_precision else torch.float32,
+        reduce_dtype=cast_dtype if reduce_communication_precision else torch.float32,
+        buffer_dtype=cast_dtype if reduce_buffer_precision else torch.float32,
+    )
+
+
+def get_fsdp_config(
+    args,
+    device_id,
+):
+    """
+    Return kwargs for FSDP wrapper.
+    This includes some hard-coded settings.
+    """
+    # init MixedPrecision
+    mp_policy = get_fsdp_mixed_precision_policy(
+        args.precision,
+        reduce_param_precision=False,
+        reduce_communication_precision=True,
+        reduce_buffer_precision=True,
+    )
+
+    # init process groups
+    from torch.distributed.fsdp._init_utils import _init_intra_and_inter_node_groups
+    from torch.distributed.distributed_c10d import _get_default_group
+
+    if args.fsdp_sharding_strategy == "hybrid":
+        intra_node_group, inter_node_group = _init_intra_and_inter_node_groups(
+            _get_default_group()
+        )
+        args.my_group = intra_node_group  # for optimizer saving
+        process_group = (intra_node_group, inter_node_group)  # for FSDP init
+    else:
+        args.my_group = None  # for optimizer saving
+        process_group = None  # for FSDP init
+
+    # init FSDP
+    from torch.distributed.fsdp import (
+        CPUOffload,
+        ShardingStrategy,
+        BackwardPrefetch,
+    )
+
+    return dict(
+        process_group=process_group,
+        cpu_offload=CPUOffload(offload_params=False),
+        device_id=device_id,
+        sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
+        sharding_strategy=ShardingStrategy.FULL_SHARD
+        if args.fsdp_sharding_strategy == "full"
+        else ShardingStrategy.HYBRID_SHARD,
+        use_orig_params=True,
+        mixed_precision=mp_policy,
+        forward_prefetch=True,
+        backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+        limit_all_gathers=True,
+    )
+
+
+def get_deepspeed_config(
+    args,
+):
+    zero_opt_dict = {
+        "stage": args.deepspeed_stage,
+        "overlap_comm": True,
+        "contiguous_gradients": True,
+        "offload_param": {"device": "none"},  # TODO: Support CPU offload
+        "offload_optimizer": {"device": "none"},
+        "stage3_param_persistence_threshold": 1e4,
+        "stage3_max_live_parameters": 3e7,
+        "stage3_prefetch_bucket_size": 3e7,
+        "memory_efficient_linear": False,
+    }
+    ds_config = {
+        "train_batch_size": (args.batch_size_mmc4 + args.batch_size_laion)
+        * args.world_size
+        * args.gradient_accumulation_steps,
+        "train_micro_batch_size_per_gpu": (args.batch_size_mmc4 + args.batch_size_laion)
+        * args.gradient_accumulation_steps,
+        "steps_per_print": args.logging_steps,
+        "zero_optimization": zero_opt_dict,
+        "gradient_clipping": 1.0,
+        "prescale_gradients": False,
+        "wall_clock_breakdown": False,
+    }
+
+    if args.precision == "fp16":
+        ds_config["fp16"] = {"enabled": True, "loss_scale_window": 100}
+    elif args.precision == "bf16":
+        ds_config["bf16"] = {"enabled": True}
+    # amp not supported with DeepSpeed
+    elif "amp" in args.precision:
+        raise ValueError("amp not supported with DeepSpeed")
+
+    return ds_config
+

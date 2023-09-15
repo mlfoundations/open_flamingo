@@ -45,5 +45,11 @@ class Kosmos(VLMWithLanguageStream):
         self.requires_grad_(True)
         self.vision_encoder.requires_grad_(False)
 
+    def _should_apply_weight_decay(self, parameter_name):
+        """
+        Kosmos applies 0.01 weight deacy to everything
+        """
+        return True
+
     def wrap_fsdp(self, wrapper_kwargs, device_id):
         raise NotImplementedError

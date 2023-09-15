@@ -11,172 +11,108 @@ from torch.distributed.fsdp.api import FullOptimStateDictConfig
 import os
 import shutil
 import wandb
-from einops import rearrange
-
-
-def get_cast_dtype(precision: str):
-    cast_dtype = None
-    if precision == "bf16":
-        cast_dtype = torch.bfloat16
-    elif precision == "fp16":
-        cast_dtype = torch.float16
-    return cast_dtype
-
-
-def get_mp_policy_dtype(precision: str):
-    if "bfloat16" in precision or "bf16" in precision:
-        return torch.bfloat16
-    elif precision == "fp16":
-        return torch.float16
-    else:
-        return torch.float32
-
-
-def get_autocast(precision, cache_enabled=True):
-    if precision == "amp":
-        return torch.cuda.amp.autocast(cache_enabled=cache_enabled)
-    elif precision == "amp_bfloat16" or precision == "amp_bf16":
-        # amp_bfloat16 is more stable than amp float16 for clip training
-        return lambda: torch.cuda.amp.autocast(
-            dtype=torch.bfloat16, cache_enabled=cache_enabled
-        )
-    else:
-        return suppress
+import glob
+from data_utils import DataInfo
+import random
+import numpy as np
 
 
 def train_one_epoch(
     args,
     model,
     epoch,
-    laion_loader,
-    mmc4_loader,
+    datasets: [DataInfo],
+    compute_loss_fn: callable,
     tokenizer,
     optimizer,
     lr_scheduler,
     device_id,
     wandb,
 ):
-    # setup loaders
-    num_batches_per_epoch_laion = laion_loader.num_batches
-    num_batches_per_epoch_mmc4 = mmc4_loader.num_batches
-    assert (
-        num_batches_per_epoch_laion == num_batches_per_epoch_mmc4
-    ), "Number of batches in laion and mmc4 datasets must be the same"
-    num_batches_per_epoch = num_batches_per_epoch_mmc4
+    """
+    Helper function for running one epoch of training.
+    Handles logging, calling forward, backward, gradient clipping, and optimizer step.
+    """
+    # calculate the number of steps in an epoch
+    num_batches_per_epoch = datasets[0].dataloader.num_batches
     total_training_steps = num_batches_per_epoch * args.num_epochs
 
-    autocast = get_autocast(
-        args.precision, cache_enabled=(not args.fsdp)
-    )  # if fsdp, disable cache to save memory
+    # set up model, autocast, and dtypes
+    model.train()
+    autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
 
-    # setup model
-    model.train()
-
-    # setup logging
+    # set up logging
     step_time_m = AverageMeter()
     data_time_m = AverageMeter()
     end = time.time()
 
-    # loop through dataloader
-    for num_steps, (batch_laion, batch_mmc4) in tqdm(
-        enumerate(zip(laion_loader, mmc4_loader)),
+    # loop through the batches in this epoch
+    for step_num, batches in tqdm(
+        enumerate(zip(*[dataset.dataloader for dataset in datasets])),
         disable=args.rank != 0,
         total=total_training_steps,
         initial=(epoch * num_batches_per_epoch),
     ):
         data_time_m.update(time.time() - end)
-        global_step = num_steps + epoch * num_batches_per_epoch
+        global_step = step_num + epoch * num_batches_per_epoch
 
-        #### LAION FORWARD PASS ####
-        images = batch_laion[0].to(device_id, dtype=cast_dtype, non_blocking=True)
-        images = rearrange(images, "(b t f) c h w -> b t f c h w", t=1, f=1)
-        input_ids = batch_laion[1][0].to(device_id, non_blocking=True)
-        attention_mask = batch_laion[1][1].to(device_id, non_blocking=True)
+        # call compute_loss_fn on each dataset; call backward before continuing
+        losses_to_log = {}
+        batch_metadata_to_log = {}
+        for dataset_ix, batch in enumerate(batches):
+            # unpack the batch and move to device
+            images = batch[0].to(device_id, dtype=cast_dtype, non_blocking=True)
+            input_ids = batch[1][0].to(device_id, non_blocking=True)
+            attention_mask = batch[1][1].to(device_id, non_blocking=True)
 
-        # set up labels; language model is expected to handle shifting
-        labels = input_ids.clone()
-        labels[labels == tokenizer.pad_token_id] = -100
-        labels[labels == tokenizer.eos_token] = -100
-        labels[labels == unwrap_model(model).media_token_id] = -100
-        labels = labels.to(device_id)
+            # save some metadata for logging
+            batch_metadata_to_log[
+                f"{datasets[dataset_ix].name}_num_tokens"
+            ] = attention_mask.sum().item()
+            batch_metadata_to_log[f"{datasets[dataset_ix].name}_num_images"] = (
+                (input_ids == model.media_token_id).sum().item()
+            )
 
-        # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
-        with autocast():
-            loss_laion = model(
-                vision_x=images,
-                lang_x=input_ids,
+            # forward pass
+            dataset_loss = compute_loss_fn(
+                model=model,
+                tokenizer=tokenizer,
+                images=images,
+                input_ids=input_ids,
                 attention_mask=attention_mask,
-                labels=labels,
-            )[0]
-
-        divided_loss_laion = loss_laion / args.gradient_accumulation_steps
-        if args.deepspeed:
-            model.backward(divided_loss_laion * args.loss_multiplier_laion)
-        else:
-            (divided_loss_laion * args.loss_multiplier_laion).backward()
-
-        #### MMC4 FORWARD PASS ####
-        images = batch_mmc4[0].to(device_id, dtype=cast_dtype, non_blocking=True)
-        images = rearrange(images, "b (t f) c h w -> b t f c h w", f=1)
-        input_ids = (
-            torch.stack([x[0] for x in batch_mmc4[1]])
-            .squeeze(1)
-            .to(device_id, non_blocking=True)
-        )
-        attention_mask = (
-            torch.stack([x[1] for x in batch_mmc4[1]])
-            .squeeze(1)
-            .to(device_id, non_blocking=True)
-        )
-
-        # set up labels; language model is expected to handle shifting
-        labels = input_ids.clone()
-        labels[labels == tokenizer.pad_token_id] = -100
-        labels[labels == tokenizer.eos_token] = -100
-        labels[labels == unwrap_model(model).media_token_id] = -100
-        labels = labels.to(device_id)
-
-        # gradient accumulation w/ fsdp cpu offloading requires a no_sync context manager
-        with autocast():
-            loss_mmc4 = model(
-                vision_x=images,
-                lang_x=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )[0]
+                autocast=autocast,
+            )
 
             # if loss is nan, skip this batch
             # this hack of skipping the batch is not FSDP-compatible
-            if torch.isnan(loss_mmc4):
+            if torch.isnan(dataset_loss):
                 print("loss is nan, skipping this batch")
                 print("input_ids: ", tokenizer.batch_decode(input_ids))
-                print("labels: ", labels)
                 print("images: ", images)
                 optimizer.zero_grad(set_to_none=True)
                 continue
 
-        divided_loss_mmc4 = loss_mmc4 / args.gradient_accumulation_steps
-        if args.deepspeed:
-            model.backward(divided_loss_mmc4 * args.loss_multiplier_mmc4)
-        else:
-            (divided_loss_mmc4 * args.loss_multiplier_mmc4).backward()
+            losses_to_log[f"loss_{datasets[dataset_ix].name}"] = dataset_loss.item()
+
+            # scale loss and call backward
+            dataset_loss *= (
+                datasets[dataset_ix].loss_multiplier / args.gradient_accumulation_steps
+            )
+            if args.deepspeed:
+                model.backward(dataset_loss)
+            else:
+                (dataset_loss).backward()
 
         # clip gradient norm
         if args.fsdp:
-            """
-            The way we clip gradients with FSDP is different than the non-FSDP case,
-            because during FSDP, gradient norms are computed over certain submodules,
-            rather than the entire model.
-            At least for OPT-125M, this didn't seem to make a difference in performance.
-            """
             model.clip_grad_norm_(1.0)
         elif not args.deepspeed:  # deepspeed handles clipping internally
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         # step optimizer and log
-        if (((num_steps + 1) % args.gradient_accumulation_steps) == 0) or (
-            num_steps == num_batches_per_epoch - 1
+        if (((step_num + 1) % args.gradient_accumulation_steps) == 0) or (
+            step_num == num_batches_per_epoch - 1
         ):
             if args.deepspeed:
                 model.step()
@@ -191,61 +127,66 @@ def train_one_epoch(
 
             # rank 0 logging
             if args.rank == 0 and args.report_to_wandb:
-                laion_samples_per_second = (
-                    args.gradient_accumulation_steps
-                    * args.batch_size_laion
-                    * args.world_size
-                    / step_time_m.val
-                )
-                laion_samples_per_second_per_gpu = (
-                    args.gradient_accumulation_steps
-                    * args.batch_size_laion
-                    / step_time_m.val
-                )
-                c4_samples_per_second = (
-                    args.gradient_accumulation_steps
-                    * args.batch_size_mmc4
-                    * args.world_size
-                    / step_time_m.val
-                )
-                c4_samples_per_second_per_gpu = (
-                    args.gradient_accumulation_steps
-                    * args.batch_size_mmc4
-                    / step_time_m.val
+                # calculate samples per second
+                throughput_metrics = compute_throughput(
+                    args,
+                    datasets,
+                    batch_metadata_to_log,
+                    step_time_m,
                 )
                 wandb.log(
                     {
+                        "global_step": global_step,
+                        "lr": optimizer.param_groups[0]["lr"],
                         "data_time": data_time_m.avg,
                         "step_time": step_time_m.avg,
-                        "laion_samples_per_second": laion_samples_per_second,
-                        "laion_samples_per_second_per_gpu": laion_samples_per_second_per_gpu,
-                        "c4_samples_per_second": c4_samples_per_second,
-                        "c4_samples_per_second_per_gpu": c4_samples_per_second_per_gpu,
-                        "lr": optimizer.param_groups[0]["lr"],
+                        **throughput_metrics,
+                        **losses_to_log,
                     },
                     commit=False,
                 )
                 step_time_m.reset()
                 data_time_m.reset()
 
-                wandb.log(
-                    {
-                        "loss_laion": loss_laion.item(),
-                        "global_step": global_step,
-                    },
-                    commit=False,
-                )
-                wandb.log(
-                    {"loss_mmc4": loss_mmc4.item(), "global_step": global_step},
-                    commit=True,
-                )
-
         # Log loss to console
-        if ((num_steps + 1) % args.logging_steps == 0) and args.rank == 0:
+        if ((step_num + 1) % args.logging_steps == 0) and args.rank == 0:
             print(
-                f"Step {num_steps+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Loss LAION: {loss_laion.item():.3f} // Loss MMC4: {loss_mmc4.item():.3f}"
+                f"Step {step_num+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete."
+                + "//".join([f"{k}: {v:.3f}" for k, v in losses_to_log])
             )
 
+
+def get_cast_dtype(precision: str):
+    """
+    Returns the dtype to cast inputs to for a given precision.
+    """
+    cast_dtype = None
+    if precision == "bf16":
+        cast_dtype = torch.bfloat16
+    elif precision == "fp16":
+        cast_dtype = torch.float16
+    return cast_dtype
+
+
+def get_autocast(precision, cache_enabled=True):
+    if precision == "amp":
+        return torch.cuda.amp.autocast(cache_enabled=cache_enabled)
+    elif precision == "amp_bfloat16" or precision == "amp_bf16":
+        # amp_bfloat16 is more stable than amp float16 for clip training
+        return lambda: torch.cuda.amp.autocast(
+            dtype=torch.bfloat16, cache_enabled=cache_enabled
+        )
+    else:
+        return suppress
+    
+def random_seed(seed=42, rank=0):
+    torch.manual_seed(seed + rank)
+    np.random.seed(seed + rank)
+    random.seed(seed + rank)
+
+################################
+# Helper functions for logging #
+################################
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -264,6 +205,94 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+def compute_throughput(
+    args,
+    datasets,
+    batch_metadata,
+    step_time_m,
+):
+    log = {}
+    for dataset in datasets:
+        log[f"{dataset.name}_samples_per_second_per_gpu"] = (
+            args.gradient_accumulation_steps * dataset.batch_size / step_time_m.val
+        )
+        log[f"{dataset.name}_samples_per_second"] = (
+            log[f"{dataset.name}_samples_per_second_per_gpu"] * args.world_size
+        )
+        log[f"{dataset.name}_tokens_per_second_per_gpu"] = (
+            args.gradient_accumulation_steps
+            * batch_metadata[f"{dataset.name}_num_tokens"]
+            / step_time_m.val
+        )
+        log[f"{dataset.name}_tokens_per_second"] = (
+            log[f"{dataset.name}_tokens_per_second_per_gpu"] * args.world_size
+        )  # this is an estimate based on rank 0
+        log[f"{dataset.name}_images_per_second_per_gpu"] = (
+            args.gradient_accumulation_steps
+            * batch_metadata[f"{dataset.name}_num_images"]
+            / step_time_m.val
+        )
+        log[f"{dataset.name}_images_per_second"] = (
+            log[f"{dataset.name}_images_per_second_per_gpu"] * args.world_size
+        )  # this is an estimate based on rank 0
+
+    return log
+
+
+####################################################
+# Helper functions for checkpoint loading / saving #
+####################################################
+
+def find_most_recent_checkpoint(args):
+    """
+    Returns the path of the most recent checkpoint for a given run name.
+    """
+    if args.deepspeed:
+        if os.path.exists(f"{args.run_name}/latest"):
+            resume_from_checkpoint = args.run_name
+            print(f"Found checkpoint {resume_from_checkpoint} for run {args.run_name}.")
+        else:
+            print(f"Found no checkpoints for run {args.run_name}.")
+    else:
+        checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
+        if len(checkpoint_list) == 0:
+            print(f"Found no checkpoints for run {args.run_name}.")
+        else:
+            resume_from_checkpoint = sorted(
+                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
+            )[-1]
+            print(f"Found checkpoint {resume_from_checkpoint} for run {args.run_name}.")
+    return resume_from_checkpoint
+
+def load_checkpoint(args, model):
+    """Loads a (non-Deepspeed) checkpoint and returns the checkpoint + epoch to resume from."""
+    if args.rank == 0:
+        print(f"Loading checkpoint from {args.resume_from_checkpoint}")
+    checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
+    msd = checkpoint.pop("model_state_dict")
+    msd = {k.replace("module.", ""): v for k, v in msd.items()}
+    resume_from_epoch = checkpoint["epoch"] + 1
+
+    # for fsdp, only one rank needs to load the state dict
+    if not args.fsdp or args.rank == 0:
+        model.load_state_dict(msd, False)
+    return resume_from_epoch, checkpoint
+
+def load_deepspeed_checkpoint(args, ddp_model):
+    """Loads a deepspeed checkpoint and returns the epoch to resume from."""   
+    if args.rank == 0:
+        print(f"Loading checkpoint from {args.resume_from_checkpoint}")
+    # We will not pass in a 'tag' and instead rely on 'latest' file in the checkpoint directory
+    ddp_model.load_checkpoint(
+        load_dir=args.resume_from_checkpoint,  # Note: this is the dir, not the file
+        load_module_strict=False,
+    )
+    # read latest file to get epoch
+    latest_file = os.path.join(args.resume_from_checkpoint, "latest")
+    with open(latest_file, "r") as f:
+        checkpoint_epoch = int(f.read().split("_")[-1])
+    return checkpoint_epoch + 1
 
 
 def filter_state_dict_to_trainable(model, state_dict):
@@ -321,8 +350,7 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
         optim_state = optimizer.state_dict()
 
     if args.rank == 0:
-        if not (args.fsdp and not args.fsdp_use_orig_params):
-            model_state = filter_state_dict_to_trainable(model, model_state)
+        model_state = filter_state_dict_to_trainable(model, model_state)
 
         if not os.path.exists(args.run_name):
             os.makedirs(args.run_name)
@@ -344,7 +372,7 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
                 os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
 
 
-def ds_save_checkpoint(model, epoch, args):
+def save_deepspeed_checkpoint(model, epoch, args):
     """
     Save training checkpoint for deepspeed.
     """
@@ -363,13 +391,3 @@ def ds_save_checkpoint(model, epoch, args):
         if args.delete_previous_checkpoint:
             if epoch > 0:  # remove checkpoint dir epoch_{epoch-1}
                 shutil.rmtree(f"{args.run_name}/epoch_{epoch-1}")
-
-
-def unwrap_model(model):
-    """
-    Unwrap a model from a DataParallel or DistributedDataParallel wrapper.
-    """
-    if isinstance(model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)):
-        return model.module
-    else:
-        return model

@@ -56,6 +56,12 @@ class Flamingo(VLMWithCrossAttention):
             require_additional_grad=True,
         )
 
+    def _should_apply_weight_decay(self, parameter_name):
+        """
+        Flamingo applies 0.1 weight decay to cross attention parameters
+        """
+        return "gated_cross_attn" in parameter_name
+
     def wrap_fsdp(self, wrapper_kwargs, device_id):
         """
         Manually wraps submodules for FSDP and move other parameters to device_id.
@@ -72,7 +78,7 @@ class Flamingo(VLMWithCrossAttention):
             - FSDP(FSDP(perceiver))
             - lang_model
                 - FSDP(FSDP(input_embeddings))
-                - FlamingoLayers
+                - CrossAttentionLayers
                     - FSDP(FSDP(gated_cross_attn_layer))
                     - FSDP(FSDP(decoder_layer))
                 - FSDP(FSDP(output_embeddings))
@@ -89,26 +95,6 @@ class Flamingo(VLMWithCrossAttention):
         Why double wrap?
         As of torch==2.0.1, FSDP's _post_forward_hook and _post_backward_hook
         only free gathered parameters if the module is NOT FSDP root.
-
-        Why unfreeze the decoder_layers?
-        See https://github.com/pytorch/pytorch/issues/95805
-        As of torch==2.0.1, FSDP's _post_backward_hook is only registed if the flat param
-        requires_grad=True. We need the postback to fire to avoid OOM.
-        To effectively freeze the decoder layers, we exclude them from the optimizer.
-
-        What is assumed to be frozen v. unfrozen?
-        We assume that the model is being trained under normal Flamingo settings
-        with these lines being called in factory.py:
-            ```
-            # Freeze all parameters
-            model.requires_grad_(False)
-            assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
-
-            # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
-            model.perceiver.requires_grad_(True)
-            model.lang_model.gated_cross_attn_layers.requires_grad_(True)
-            [optional] model.lang_model.get_input_embeddings().requires_grad_(True)
-            ```
         """
         print(
             "WARNING: FSDP is not designed for training with a mix of frozen and unfrozen parameters. "
@@ -123,10 +109,6 @@ class Flamingo(VLMWithCrossAttention):
             FullyShardedDataParallel as FSDP,
         )
         from .utils import apply_with_stopping_condition
-
-        # unfreeze the decoder layers
-        for block in self.lang_model.old_decoder_blocks:
-            block.requires_grad_(True)
 
         # wrap in FSDP
         with enable_wrap(wrapper_cls=FSDP, **wrapper_kwargs):
@@ -179,11 +161,6 @@ class Flamingo(VLMWithCrossAttention):
             apply_condition=lambda m: len(list(m.children())) == 0,
             stopping_condition=lambda m: isinstance(m, FSDP),
         )
-
-        # exclude the original decoder layers from the optimizer
-        for block in self.lang_model.old_decoder_blocks:
-            for p in block.parameters():
-                p.exclude_from_optimizer = True
 
         # set up clip_grad_norm_ function
         def clip_grad_norm_(max_norm):
