@@ -3,11 +3,6 @@ from contextlib import suppress
 import torch
 from tqdm import tqdm
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import (
-    FullStateDictConfig,
-    StateDictType,
-)
-from torch.distributed.fsdp.api import FullOptimStateDictConfig
 import os
 import shutil
 import wandb
@@ -32,6 +27,18 @@ def train_one_epoch(
     """
     Helper function for running one epoch of training.
     Handles logging, calling forward, backward, gradient clipping, and optimizer step.
+    Args:
+        args (argparse.Namespace): arguments from command line
+        model: DDP / FSDP / Deepspeed wrapped model     
+        epoch (int): epoch number
+        datasets (list): list of DataInfos, one for each dataset, to train on
+        compute_loss_fn (callable): function that given the model and inputs, calls forward
+            and returns a loss
+        tokenizer: tokenizer for the language model
+        optimizer: optimizer to step
+        lr_scheduler: learning rate scheduler
+        device_id (int): GPU device ID for this rank
+        wandb: wandb object for logging
     """
     # calculate the number of steps in an epoch
     num_batches_per_epoch = datasets[0].dataloader.num_batches
@@ -60,11 +67,13 @@ def train_one_epoch(
         # call compute_loss_fn on each dataset; call backward before continuing
         losses_to_log = {}
         batch_metadata_to_log = {}
-        for dataset_ix, batch in enumerate(batches):
+        for dataset_ix, (images, (input_ids, attention_mask)) in enumerate(batches):
+            print(">> Dataset: ", datasets[dataset_ix].name, "Step: ", step_num)
+
             # unpack the batch and move to device
-            images = batch[0].to(device_id, dtype=cast_dtype, non_blocking=True)
-            input_ids = batch[1][0].to(device_id, non_blocking=True)
-            attention_mask = batch[1][1].to(device_id, non_blocking=True)
+            images = images.to(device_id, dtype=cast_dtype, non_blocking=True)
+            input_ids = input_ids.to(device_id, non_blocking=True)
+            attention_mask = attention_mask.to(device_id, non_blocking=True)
 
             # save some metadata for logging
             batch_metadata_to_log[
@@ -151,14 +160,14 @@ def train_one_epoch(
         # Log loss to console
         if ((step_num + 1) % args.logging_steps == 0) and args.rank == 0:
             print(
-                f"Step {step_num+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete."
-                + "//".join([f"{k}: {v:.3f}" for k, v in losses_to_log])
+                f"Step {step_num+1}/{num_batches_per_epoch} of epoch {epoch+1}/{args.num_epochs} complete. Losses: "
+                + "// ".join([f"{k}: {v:.3f}" for k, v in losses_to_log.items()])
             )
 
 
 def get_cast_dtype(precision: str):
     """
-    Returns the dtype to cast inputs to for a given precision.
+    Parses the precision argument and returns the dtype to cast inputs to.
     """
     cast_dtype = None
     if precision == "bf16":
@@ -169,6 +178,9 @@ def get_cast_dtype(precision: str):
 
 
 def get_autocast(precision, cache_enabled=True):
+    """
+    Parses the precision argument and returns an autocast context manager.
+    """
     if precision == "amp":
         return torch.cuda.amp.autocast(cache_enabled=cache_enabled)
     elif precision == "amp_bfloat16" or precision == "amp_bf16":
@@ -178,15 +190,19 @@ def get_autocast(precision, cache_enabled=True):
         )
     else:
         return suppress
-    
+
+
 def random_seed(seed=42, rank=0):
+    """Seed everything"""
     torch.manual_seed(seed + rank)
     np.random.seed(seed + rank)
     random.seed(seed + rank)
 
+
 ################################
 # Helper functions for logging #
 ################################
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -206,12 +222,16 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def compute_throughput(
     args,
     datasets,
     batch_metadata,
     step_time_m,
 ):
+    """
+    Computes throughput metrics for logging, including samples per second and tokens per second.
+    """
     log = {}
     for dataset in datasets:
         log[f"{dataset.name}_samples_per_second_per_gpu"] = (
@@ -244,6 +264,7 @@ def compute_throughput(
 # Helper functions for checkpoint loading / saving #
 ####################################################
 
+
 def find_most_recent_checkpoint(args):
     """
     Returns the path of the most recent checkpoint for a given run name.
@@ -265,22 +286,29 @@ def find_most_recent_checkpoint(args):
             print(f"Found checkpoint {resume_from_checkpoint} for run {args.run_name}.")
     return resume_from_checkpoint
 
+
 def load_checkpoint(args, model):
-    """Loads a (non-Deepspeed) checkpoint and returns the checkpoint + epoch to resume from."""
+    """
+    Loads a (non-Deepspeed) checkpoint into the model and returns the checkpoint + epoch to resume from.
+    Does not load the optimizer or learning rate checkpoints, but these are included in the returned checkpoint dict.
+    """
     if args.rank == 0:
         print(f"Loading checkpoint from {args.resume_from_checkpoint}")
     checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
     msd = checkpoint.pop("model_state_dict")
     msd = {k.replace("module.", ""): v for k, v in msd.items()}
     resume_from_epoch = checkpoint["epoch"] + 1
-
-    # for fsdp, only one rank needs to load the state dict
-    if not args.fsdp or args.rank == 0:
-        model.load_state_dict(msd, False)
+    if args.fsdp:
+        FSDP.set_state_dict_type(
+            model,
+            **args.fsdp_checkpoint_config,
+        )
+    model.load_state_dict(msd, False)
     return resume_from_epoch, checkpoint
 
+
 def load_deepspeed_checkpoint(args, ddp_model):
-    """Loads a deepspeed checkpoint and returns the epoch to resume from."""   
+    """Loads a deepspeed checkpoint and returns the epoch to resume from."""
     if args.rank == 0:
         print(f"Loading checkpoint from {args.resume_from_checkpoint}")
     # We will not pass in a 'tag' and instead rely on 'latest' file in the checkpoint directory
@@ -302,34 +330,25 @@ def filter_state_dict_to_trainable(model, state_dict):
     This is because we need the new <image> <|endofchunk|> tokens to
     be consistent across initializations.
     """
-    for (
-        name,
-        p,
-    ) in model.named_parameters():  # won't work for fsdp + use_orig_params=False
+    # first, remove frozen params
+    for name, p in model.named_parameters():
         if "fsdp" in name:
             continue
-        if "embed" in name or isinstance(p, torch.nn.Embedding):
-            continue
-        if not p.requires_grad:
+        if not p.requires_grad or to_delete(name):
             name = name.replace("._checkpoint_wrapped_module", "")
             if name in state_dict:
                 del state_dict[name]
             else:
                 print(f"WARNING: filtering but {name} not in state_dict")
-
-    # also remove the keys in state_dict generated from
-    # lang_encoder.old_decoder_blocks and lang_encoder.gated_cross_attn_layers
-    # because these are already saved in lang_encoder.model...
-    to_delete = [
-        n
-        for n in state_dict.keys()
-        if ("lang_encoder.old_decoder_blocks" in n)
-        or ("lang_encoder.gated_cross_attn_layers" in n)
-        or ("vision_encoder" in n)
-    ]
-    for name in to_delete:
-        del state_dict[name]
-    return state_dict
+    # second, remove additional duplicate params
+    duplicate = lambda k: (
+        "lang_model.old_decoder_blocks" in k
+        or "lang_model.gated_cross_attn_layers" in k
+    )
+    filtered_dict = {
+        key: value for key, value in state_dict.items() if not duplicate(key)
+    }
+    return filtered_dict
 
 
 def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
@@ -339,12 +358,10 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
     if args.fsdp:
         FSDP.set_state_dict_type(
             model,
-            StateDictType.FULL_STATE_DICT,
-            FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
-            FullOptimStateDictConfig(rank0_only=True),
+            **args.fsdp_checkpoint_config,
         )
         model_state = model.state_dict()
-        optim_state = FSDP.optim_state_dict(model, optimizer, group=args.my_group)
+        optim_state = FSDP.optim_state_dict(model, optimizer)
     else:
         model_state = model.state_dict()
         optim_state = optimizer.state_dict()

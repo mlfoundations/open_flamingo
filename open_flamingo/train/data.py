@@ -58,16 +58,18 @@ def filter_no_caption_or_no_image(sample):
         "png" in sample or "jpg" in sample or "jpeg" in sample
     )
 
+
 def preprocess_laion_image(sample, image_processor):
     """
-    Preprocess image for LAION.
+    Preprocess image for LAION. Applied to a batch of images.
     """
     sample = preprocess_image(sample, image_processor)
     return rearrange(sample, "(b t f) c h w -> b t f c h w", t=1, f=1)
 
+
 def preprocess_laion_text(sample, tokenizer, max_tokens=32):
     """
-    Preprocess text for LAION.
+    Preprocess text for LAION. Applied to a batch of captions.
     Captions are truncated to 32 tokens by default.
     """
     tokenizer.padding_side = "right"
@@ -159,6 +161,7 @@ def preprocess_interleaved(
     """
     Preprocess an interleaved image-text sequence, either by calling preprocess_gpt_interleaved (if the sequence
     is ChatGPT-generated) or by preprocessing in this function (if the sequences is from MMC4).
+    Applied to a single sequence.
     """
     info = json.loads(sample[0])
     if "is_gpt" in info:
@@ -244,7 +247,7 @@ def preprocess_interleaved(
     elif (
         num_images == 1 and random.random() <= 0.5
     ):  # 50% chance of keeping single image samples
-        raise ValueError("Only one image in sample")
+        raise ValueError("Only one images in sample")
 
     # avoid the situation where there's one <image> token and it's at the end
     if (
@@ -259,7 +262,7 @@ def preprocess_interleaved(
         )
 
     return (
-        rearrange(images_tensors, "b (t f) c h w -> b t f c h w", f=1),
+        rearrange(images_tensors, "(t f) c h w -> t f c h w", f=1),
         (text_tensor["input_ids"], text_tensor["attention_mask"]),
     )
 
@@ -326,11 +329,17 @@ def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         ]
     )
 
+    def zip_text(batch):
+        """Unpack from [(input_ids, attention_mask), ...] to (input_ids, attention_mask)"""
+        input_ids, attention_mask = tuple(zip(*batch))
+        return torch.stack(input_ids).squeeze(1), torch.stack(attention_mask).squeeze(1)
+
     pipeline.extend(
         [
             wds.to_tuple("json", handler=log_and_continue),
             wds.map(preprocess_fn, handler=log_and_continue),
             wds.batched(args.batch_size_mmc4, partial=False),
+            wds.map_tuple(lambda x: x, zip_text, handler=log_and_continue),
         ]
     )
 
@@ -399,7 +408,9 @@ def get_laion_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
         pipeline = [wds.SimpleShardList(input_shards)]
 
     # create two preprocess functions that take in the passed in image_processor and tokenizer
-    preprocess_image_fn  = functools.partial(preprocess_laion_image, image_processor=image_processor)
+    preprocess_image_fn = functools.partial(
+        preprocess_laion_image, image_processor=image_processor
+    )
     preprocess_text_fn = functools.partial(preprocess_laion_text, tokenizer=tokenizer)
 
     # at this point we have an iterator over all the shards

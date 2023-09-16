@@ -1,6 +1,17 @@
 from open_flamingo.src.vlm import VLM
 import torch
 
+SUPPORTED_LOSSES = ["next_token_prediction"]
+
+
+def get_loss_fn(loss_name):
+    if loss_name == "next_token_prediction":
+        return NextTokenPrediction()
+    else:
+        raise ValueError(
+            f"Loss {loss_name} not supported. Supported losses: {SUPPORTED_LOSSES}"
+        )
+
 
 class Loss:
     @property
@@ -48,9 +59,10 @@ class NextTokenPrediction(Loss):
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
         labels[labels == tokenizer.eos_token] = -100
-        labels[
-            torch.isin(labels, torch.Tensor(unwrap_model(model).special_token_ids))
-        ] = -100
+        special_token_ids = torch.Tensor(unwrap_model(model).special_token_ids).to(
+            labels.device
+        )
+        labels[torch.isin(labels, special_token_ids)] = -100
         labels = labels.to(input_ids.device)
 
         # call forward

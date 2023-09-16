@@ -50,6 +50,3 @@ class Kosmos(VLMWithLanguageStream):
         Kosmos applies 0.01 weight deacy to everything
         """
         return True
-
-    def wrap_fsdp(self, wrapper_kwargs, device_id):
-        raise NotImplementedError

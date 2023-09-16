@@ -2,6 +2,7 @@ from torch import nn
 from .helpers import QFormerWithProjection
 from .vlm import VLMWithLanguageStream
 
+
 class BLIP(VLMWithLanguageStream):
     def __init__(
         self,
@@ -58,6 +59,3 @@ class BLIP(VLMWithLanguageStream):
     def _should_apply_weight_decay(self, parameter_name):
         """BLIP applies 0.05 weight decay to everything"""
         return True
-    
-    def wrap_fsdp(self, wrapper_kwargs, device_id):
-        raise NotImplementedError

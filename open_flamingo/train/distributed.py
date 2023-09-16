@@ -1,10 +1,14 @@
 """
 Util functions for distributed training, FSDP, and Deepspeed.
-Credit: https://github.com/mlfoundations/open_clip/blob/main/src/training/distributed.py
 """
 
 import os
 import torch
+from data import SUPPORTED_DATASETS
+
+##################################
+# SLURM setup; Credit: open_clip #
+##################################
 
 try:
     import horovod.torch as hvd
@@ -132,6 +136,11 @@ def init_distributed_device(args):
     return device
 
 
+#####################################
+# FSDP and Deepspeed util functions #
+#####################################
+
+
 def get_fsdp_mixed_precision_policy(
     precision: str,
     reduce_param_precision=False,
@@ -176,30 +185,14 @@ def get_fsdp_config(
         reduce_buffer_precision=True,
     )
 
-    # init process groups
-    from torch.distributed.fsdp._init_utils import _init_intra_and_inter_node_groups
-    from torch.distributed.distributed_c10d import _get_default_group
-
-    if args.fsdp_sharding_strategy == "hybrid":
-        intra_node_group, inter_node_group = _init_intra_and_inter_node_groups(
-            _get_default_group()
-        )
-        args.my_group = intra_node_group  # for optimizer saving
-        process_group = (intra_node_group, inter_node_group)  # for FSDP init
-    else:
-        args.my_group = None  # for optimizer saving
-        process_group = None  # for FSDP init
-
     # init FSDP
     from torch.distributed.fsdp import (
-        CPUOffload,
         ShardingStrategy,
         BackwardPrefetch,
     )
 
     return dict(
-        process_group=process_group,
-        cpu_offload=CPUOffload(offload_params=False),
+        cpu_offload=None,
         device_id=device_id,
         sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
         sharding_strategy=ShardingStrategy.FULL_SHARD
@@ -213,9 +206,33 @@ def get_fsdp_config(
     )
 
 
+def get_fsdp_checkpoint_config(args):
+    """
+    Return kwargs for FSDP checkpointing.
+    """
+    from torch.distributed.fsdp import (
+        FullStateDictConfig,
+        StateDictType,
+    )
+    from torch.distributed.fsdp.api import FullOptimStateDictConfig
+
+    # to avoid GPU OOM when loading/saving ckpts, load/save on CPU
+    # this is slow
+    return dict(
+        state_dict_type=StateDictType.FULL_STATE_DICT,
+        state_dict_config=FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
+        optim_state_dict_config=FullOptimStateDictConfig(
+            rank0_only=True, offload_to_cpu=True
+        ),
+    )
+
+
 def get_deepspeed_config(
     args,
 ):
+    """
+    Return kwargs for Deepspeed config.
+    """
     zero_opt_dict = {
         "stage": args.deepspeed_stage,
         "overlap_comm": True,
@@ -227,11 +244,15 @@ def get_deepspeed_config(
         "stage3_prefetch_bucket_size": 3e7,
         "memory_efficient_linear": False,
     }
+    # sum all the args that start with batch_size_ to get the total batch size
+    total_batch_size = sum(
+        [getattr(args, arg) for arg in vars(args) if arg.startswith("batch_size_")]
+    )
     ds_config = {
-        "train_batch_size": (args.batch_size_mmc4 + args.batch_size_laion)
+        "train_batch_size": total_batch_size
         * args.world_size
         * args.gradient_accumulation_steps,
-        "train_micro_batch_size_per_gpu": (args.batch_size_mmc4 + args.batch_size_laion)
+        "train_micro_batch_size_per_gpu": total_batch_size
         * args.gradient_accumulation_steps,
         "steps_per_print": args.logging_steps,
         "zero_optimization": zero_opt_dict,
@@ -249,4 +270,3 @@ def get_deepspeed_config(
         raise ValueError("amp not supported with DeepSpeed")
 
     return ds_config
-

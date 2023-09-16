@@ -23,6 +23,7 @@ def create_model_and_transforms(
     cache_dir: Optional[str] = None,
     gradient_checkpointing: bool = False,
     untie_embeddings: bool = False,
+    verbose: bool = True,
     **model_kwargs,
 ):
     """
@@ -40,6 +41,7 @@ def create_model_and_transforms(
         cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
         gradient_checkpointing (bool, optional): whether to use gradient checkpointing. Defaults to False.
         untie_embeddings (bool, optional): whether to untie the input and output embeddings of the language model. Defaults to False.
+        verbose (bool, optional): whether to print model info. Defaults to True.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
         Image processor: Pipeline to preprocess input images
@@ -79,11 +81,12 @@ def create_model_and_transforms(
     )
     check_embedding_fns(lang_model)
     if untie_embeddings:
+        print("Untying language model embeddings...")
         lang_model.get_output_embeddings().weight = nn.Parameter(
             lang_model.get_output_embeddings().weight.clone()
         )
         lang_model.config.update({"tie_word_embeddings": False})
-    
+
     # vocab sizes: note that lang_model.config.vocab_size is not necessarily = len(text_tokenizer)
     # the current input_embedding / output_embedding weights probably use lang_model.config.vocab_size
     # but the tokenizer will assign additional ids based on len(text_tokenizer)
@@ -139,13 +142,16 @@ def create_model_and_transforms(
         }
     )
 
-    # freeze appropraite parameters
+    # freeze appropriate parameters
     model.set_trainable()
-    print(
-        f"{model_family} model initialized with {model.num_trainable_params:,} trainable parameters"
-    )
-    print(f"==========\n{model.num_trainable_params_per_module}")
-    print(f"==========\n{model.num_params_per_module}\n==========")
+
+    # log model info
+    if verbose:
+        print(
+            f"{model_family} model initialized with {model.num_trainable_params:,} trainable parameters"
+        )
+        print(f"==========\n{model.num_trainable_params_per_module}")
+        print(f"==========\n{model.num_params_per_module}\n==========")
     return model, image_processor, text_tokenizer
 
 

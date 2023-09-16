@@ -54,7 +54,10 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
 ## Distributed training
 
 By default, `train.py` uses Pytorch's [DistributedDataParallel](https://pytorch.org/docs/stable/torch.nn.parallel.DistributedDataParallel.html) for training. 
-To use [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html), use the `--fsdp` flag. 
+To use [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html), make sure to use Pytorch Nightly (> 2.0.1), and use the `--fsdp` flag. 
+To use [DeepSpeed](https://github.com/microsoft/DeepSpeed), use the `--deepspeed` flag. 
+(Note that you should use *either* FSDP or Deepspeed, not both.)
+
 
 Some notes on FSDP:
 

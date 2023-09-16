@@ -4,8 +4,10 @@ import os
 import torch
 import wandb
 import deepspeed
+import functools
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
 from open_flamingo import create_model_and_transforms, SUPPORTED_MODEL_FAMILIES
 from data import get_data, SUPPORTED_DATASETS
@@ -13,6 +15,7 @@ from distributed import (
     init_distributed_device,
     world_info_from_env,
     get_fsdp_config,
+    get_fsdp_checkpoint_config,
     get_deepspeed_config,
 )
 from train_utils import (
@@ -25,7 +28,8 @@ from train_utils import (
     save_deepspeed_checkpoint,
 )
 from losses import (
-    NextTokenPrediction,
+    SUPPORTED_LOSSES,
+    get_loss_fn,
 )
 from transformers import (
     get_constant_schedule_with_warmup,
@@ -57,6 +61,9 @@ def main():
     )
 
     # training args
+    parser.add_argument(
+        "--loss", type=str, choices=SUPPORTED_LOSSES, default="next_token_prediction"
+    )
     parser.add_argument(
         "--run_name",
         type=str,
@@ -122,6 +129,7 @@ def main():
         parser.add_argument(
             f"--{dataset_name}_shards",
             type=str,
+            default=None,
             help="Should be a glob pattern such as /path/to/shards/shard-{0000..0999}.tar. If None, we will not train on this dataset.",
         )
     parser.add_argument("--workers", type=int, default=1)
@@ -212,17 +220,22 @@ def main():
 
     args = parser.parse_args()
 
+    # Parse which datasets to train on and which to exclude
+    datasets_to_train_on = []
+    for dataset_name in SUPPORTED_DATASETS:
+        if getattr(args, f"{dataset_name}_shards") is None:
+            setattr(args, f"train_num_samples_{dataset_name}", 0)
+            setattr(args, f"batch_size_{dataset_name}", 0)
+        else:
+            datasets_to_train_on.append(dataset_name)
+    assert len(datasets_to_train_on) > 0, "Must train on at least one dataset"
+
     # Validate args
     for dataset_name in SUPPORTED_DATASETS:
         shards_path = getattr(args, f"{dataset_name}_shards")
         if shards_path is not None and shards_path.startswith("s3"):
             args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
 
-    datasets_to_train_on = [
-        dataset_name
-        for dataset_name in SUPPORTED_DATASETS
-        if getattr(args, f"{dataset_name}_shards") is not None
-    ]
     for i in range(len(datasets_to_train_on) - 1):
         assert getattr(args, f"train_num_samples_{datasets_to_train_on[i]}") // getattr(
             args, f"batch_size_{datasets_to_train_on[i]}"
@@ -240,7 +253,7 @@ def main():
 
     if args.fsdp:
         print(
-            "Warning: FSDP is experimental and not fully supported. Preference should be given to Deepspeed."
+            "Warning: FSDP is experimental and not fully tested. Preference should be given to Deepspeed."
         )
         assert (
             "dev" in torch.__version__ and torch.__version__ > "2.0.1"
@@ -248,6 +261,8 @@ def main():
 
     # Set up distributed training
     args.local_rank, args.rank, args.world_size = world_info_from_env()
+    if args.rank == 0:
+        print(f"Initializing distributed training with {args.world_size} GPUs.")
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -273,15 +288,15 @@ def main():
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         model_family=args.model_family,
-        untie_embeddings=args.fsdp,  # untie embeddings for FSDP
+        untie_embeddings=False,  # untie embeddings for FSDP
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
+        verbose=(args.rank == 0),
         **additional_kwargs,
     )
     random_seed(args.seed, args.rank)
 
     # Initialize wandb logging
-    print(f"Start running training on rank {args.rank}.")
     if args.rank == 0 and args.report_to_wandb:
         wandb.init(
             project=args.wandb_project,
@@ -291,32 +306,46 @@ def main():
         )
 
     # Load model checkpoint (on CPU)
+    if args.fsdp:
+        args.fsdp_checkpoint_config = get_fsdp_checkpoint_config(args)
+
+    # if args do not specify a checkpoint to resume from, resume from most recent checkpoint
     if os.path.exists(f"{args.run_name}") and args.resume_from_checkpoint is None:
-        # if args do not specify a checkpoint to resume from, resume from most recent checkpoint
         args.resume_from_checkpoint = find_most_recent_checkpoint(args)
+
     if (
         args.resume_from_checkpoint is not None and not args.deepspeed
     ):  # deepspeed handles checkpoint loading
         resume_from_epoch, checkpoint = load_checkpoint(args, model)
-
-    # Initialize FSDP / DDP, and ensure the model is on GPU
-    print(f"Initializing distributed training with {args.world_size} GPUs.")
-    if args.fsdp:
-        model.wrap_fsdp(
-            get_fsdp_config(args, device_id), device_id
-        )  # moves model to device_id
-        ddp_model = model
-    elif not args.deepspeed:
-        model = model.to(device_id)
-        ddp_model = DDP(model, device_ids=[device_id])
+    else:
+        resume_from_epoch = 0
 
     # Initialize gradient checkpointing
     if args.gradient_checkpointing:
         if args.deepspeed:
             raise ValueError(
-                "gradient checkpointing currently not supported with deepspeed"
+                "Gradient checkpointing currently not supported with deepspeed"
             )
         model.init_gradient_checkpointing()
+
+    # Initialize FSDP / DDP, and ensure the model is on GPU
+    # Deepspeed is initialized later
+    if args.fsdp:
+        auto_wrap_policy = functools.partial(
+            lambda_auto_wrap_policy, lambda_fn=model.get_fsdp_lambda_fn()
+        )
+        wrapper_kwargs = get_fsdp_config(args, device_id)
+        # to save on communication, we may choose to not shard some params
+        unsharded_params = model.get_fsdp_unsharded_params()
+        for p in unsharded_params:
+            p = p.to(device_id)
+        wrapper_kwargs["ignored_states"] = unsharded_params
+        distributed_model = FSDP(
+            model, auto_wrap_policy=auto_wrap_policy, **wrapper_kwargs
+        )
+    elif not args.deepspeed:
+        model = model.to(device_id)
+        distributed_model = DDP(model, device_ids=[device_id])
 
     # Initialize optimizer
     params_with_wd, params_without_wd = model.group_params_by_weight_decay()
@@ -332,7 +361,13 @@ def main():
     if args.resume_from_checkpoint is not None and not args.deepspeed:
         osd = checkpoint["optimizer_state_dict"]
         if args.fsdp:
-            osd = FSDP.optim_state_dict_to_load(osd, ddp_model, optimizer)
+            FSDP.set_state_dict_type(
+                distributed_model,
+                **args.fsdp_checkpoint_config,
+            )
+            osd = FSDP.optim_state_dict_to_load(
+                model=distributed_model, optim=optimizer, optim_state_dict=osd
+            )
         optimizer.load_state_dict(osd)
 
     # Initialize datasets
@@ -370,7 +405,7 @@ def main():
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
 
     if args.deepspeed:
-        ddp_model, optimizer, _, lr_scheduler = deepspeed.initialize(
+        distributed_model, optimizer, _, lr_scheduler = deepspeed.initialize(
             model=model,
             optimizer=optimizer,
             args=args,
@@ -379,18 +414,22 @@ def main():
             dist_init_required=True,
         )
         if args.resume_from_checkpoint is not None:
-            resume_from_epoch = load_deepspeed_checkpoint(args, ddp_model)
+            resume_from_epoch = load_deepspeed_checkpoint(args, distributed_model)
+
+    # Initialize the loss fn
+    loss_fn = get_loss_fn(args.loss)
 
     # Start training!
+    print(f"Start running training on rank {args.rank}.")
     for epoch in range(resume_from_epoch, args.num_epochs):
         for dataset in datasets:
             dataset.set_epoch(epoch)
         train_one_epoch(
             args=args,
-            model=ddp_model,
+            model=distributed_model,
             epoch=epoch,
             datasets=datasets,
-            compute_loss_fn=NextTokenPrediction(),
+            compute_loss_fn=loss_fn,
             tokenizer=tokenizer,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
@@ -399,9 +438,9 @@ def main():
         )
 
         if args.deepspeed:
-            save_deepspeed_checkpoint(ddp_model, epoch, args)
+            save_deepspeed_checkpoint(distributed_model, epoch, args)
         else:
-            save_checkpoint(ddp_model, optimizer, lr_scheduler, epoch, args)
+            save_checkpoint(distributed_model, optimizer, lr_scheduler, epoch, args)
 
 
 if __name__ == "__main__":

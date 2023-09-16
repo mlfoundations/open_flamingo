@@ -45,11 +45,11 @@ class DataInfo:
     """
     DataInfo is a dataclass that holds information about a dataset.
     """
+
     name: str
     dataloader: DataLoader
     batch_size: int
     loss_multiplier: int
-    max_tokens: int
     sampler: DistributedSampler = None
     shared_epoch: SharedEpoch = None
 
@@ -93,7 +93,8 @@ def get_dataset_size(shards):
 
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
-    logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
+    if "images in sample" not in repr(exn):
+        logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
     return True
 
 

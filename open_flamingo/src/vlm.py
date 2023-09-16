@@ -2,7 +2,7 @@ import torch
 from einops import rearrange
 from torch import nn
 from typing import List, Optional, Tuple, Union
-from .utils import extend_instance, stack_with_padding, num_params
+from .utils import extend_instance, stack_with_padding, num_params, getattr_recursive
 from .cross_attn_lm import CrossAttentionMixin
 from .helpers import DecoupledEmbedding, DecoupledLinear, VLMOutputWithPast
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -325,8 +325,12 @@ class VLM(nn.Module):
             setattr(self, f"{att_name}_id", token_id)
             setattr(self.lang_model, f"{att_name}_id", token_id)
 
-    def wrap_fsdp(self, wrapper_kwargs, device_id):
-        raise NotImplementedError
+    def get_fsdp_unsharded_params(self):
+        """
+        Returns a list of parameters that should not be sharded by FSDP.
+        These will occupy GPU memory, but we'll save on communication costs.
+        """
+        return []
 
     def init_gradient_checkpointing(self):
         from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
@@ -339,7 +343,6 @@ class VLM(nn.Module):
 
         non_reentrant_wrapper = partial(
             checkpoint_wrapper,
-            offload_to_cpu=True,
             checkpoint_impl=CheckpointImpl.NO_REENTRANT,
         )
         apply_activation_checkpointing(
@@ -439,6 +442,29 @@ class VLMWithCrossAttention(VLM):
         # clear the conditioned layers
         self.lang_model.clear_conditioned_layers()
 
+    def get_fsdp_lambda_fn(self):
+        """
+        Returns the lambda function used to decide how to perform FSDP wrapping.
+        """
+        from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+            CheckpointWrapper,
+        )
+        from .helpers import GatedCrossAttentionBlock
+
+        original_decoder_block_class = self.lang_model.old_decoder_blocks[0].__class__
+
+        def lambda_fn(module: nn.Module):
+            if isinstance(module, CheckpointWrapper):
+                return False
+            if module is self.vision_tokenizer:
+                return True
+            if isinstance(module, GatedCrossAttentionBlock):
+                return True
+            if isinstance(module, original_decoder_block_class):
+                return True
+
+        return lambda_fn
+
     @property
     def num_params_per_module(self):
         """Print the number of parameters per module in the model"""
@@ -480,6 +506,7 @@ class VLMWithLanguageStream(VLM):
         lang_model: nn.Module,
         initial_tokenizer_len: int,
         pad_token_id: int,
+        decoder_layers_attr_name: str = None,
         gradient_checkpointing: bool = False,
     ):
         super().__init__(
@@ -491,6 +518,7 @@ class VLMWithLanguageStream(VLM):
             gradient_checkpointing=gradient_checkpointing,
         )
         self.lang_model._use_gradient_checkpointing = gradient_checkpointing
+        self.decoder_layers_attr_name = decoder_layers_attr_name
         assert (
             self.vis_embedding_dim == self.lang_embedding_dim
         ), "To place visual tokens direclty in the language stream, the visual and language tokens need to be the same dim."
@@ -651,6 +679,28 @@ class VLMWithLanguageStream(VLM):
 
     def _post_forward_hook(self):
         pass
+
+    def get_fsdp_lambda_fn(self):
+        """
+        Returns the lambda function used to decide how to perform FSDP wrapping.
+        """
+        from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+            CheckpointWrapper,
+        )
+
+        decoder_block_class = getattr_recursive(
+            self.lang_model, self.decoder_layers_attr_name
+        )[0].__class__
+
+        def lambda_fn(module: nn.Module):
+            if isinstance(module, CheckpointWrapper):
+                return False
+            if module is self.vision_tokenizer:
+                return True
+            if isinstance(module, decoder_block_class):
+                return True
+
+        return lambda_fn
 
     @property
     def num_params_per_module(self):
