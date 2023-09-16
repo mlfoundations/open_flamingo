@@ -13,9 +13,6 @@ class EvalModel(BaseEvalModel):
     """BLIP-2 model evaluation."""
 
     def __init__(self, model_args, init_on_device=False):
-        assert (
-            "processor_path" in model_args and "lm_path" in model_args
-        ), "BLIP-2 requires processor_path, lm_path, and device arguments to be specified"
         super().__init__(model_args, init_on_device)
         with self.init_ctx:
             self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
@@ -24,6 +21,10 @@ class EvalModel(BaseEvalModel):
             )
             self.tokenizer = self.processor.tokenizer
         self._check_init()
+
+    @property
+    def required_args(self):
+        return ["processor_path", "lm_path"]
 
     def prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
         batch_images = None
@@ -58,6 +59,7 @@ class EvalModel(BaseEvalModel):
         max_length=2000,
         add_special_tokens=True,
     ):
+        self._validate_text(batch)
         encodings = self.tokenizer(
             batch,
             padding=padding,
@@ -95,39 +97,20 @@ class EvalModel(BaseEvalModel):
 
         return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
-    def get_vqa_prompt(self, question, answer=None) -> str:
-        return (
-            f"Question:{question} Short answer:{answer if answer is not None else ''}"
-        )
+    def get_vqav2_prompt(self, question, answer=None) -> str:
+        return f"Question:{question} Short answer:{answer if answer is not None else ''}"
+    
+    def get_ok_vqa_prompt(self, question, answer=None) -> str:
+        return f"Question:{question} Short answer:{answer if answer is not None else ''}"
+    
+    def get_vizwiz_prompt(self, question, answer=None) -> str:
+        return f"Question:{question} Short answer:{answer if answer is not None else ''}"
+    
+    def get_textvqa_prompt(self, question, answer=None) -> str:
+        return f"Question:{question} Short answer:{answer if answer is not None else ''}"
 
-    def get_caption_prompt(self, caption=None) -> str:
+    def get_coco_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
-
-    def __call__(
-        self,
-        lang_x: torch.Tensor,
-        vision_x: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ):
-        with self.autocast():
-            outputs = self.model(
-                pixel_values=vision_x,
-                input_ids=lang_x,
-                attention_mask=attention_mask,
-            )
-
-        # remove vision tokens
-        outputs.logits = outputs.logits[:, -lang_x.size(1) :, :]
-        return outputs
-
-    def get_rank_classifications(
-        self,
-        batch_text: List[str],
-        batch_images: List[List[Image.Image]],
-        all_class_names: List[str],
-        use_cache: bool,
-        normalize_length: bool,
-    ):
-        raise NotImplementedError(
-            "BLIP-2 classification-based evaluation not implemented"
-        )
+    
+    def get_flickr_prompt(self, caption=None) -> str:
+        return f"A photo of {caption if caption is not None else ''}"

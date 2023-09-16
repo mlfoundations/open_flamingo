@@ -18,15 +18,16 @@ class EvalModel(BaseEvalModel):
     """IDEFICS model evaluation."""
 
     def __init__(self, model_args, init_on_device=False):
-        assert (
-            "lm_path" in model_args and "processor_path" in model_args
-        ), "IDEFICS requires lm_path and lm_tokenizer_path"
         super().__init__(model_args, init_on_device)
         with self.init_ctx:
             self.model = IdeficsForVisionText2Text.from_pretrained(model_args["lm_path"])
             self.processor = AutoProcessor.from_pretrained(model_args["processor_path"])
             self.tokenizer = self.processor.tokenizer
         self._check_init()
+
+    @property
+    def required_args(self):
+        return ["lm_path", "processor_path"]
 
     def prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
         batch_images = self.processor(batch)["pixel_values"]
@@ -44,6 +45,7 @@ class EvalModel(BaseEvalModel):
         max_length=2000,
         add_special_tokens=True,
     ):
+        self._validate_text(batch)
         # check to see if there any <image> without <fake_token_around_image> wrapping it
         for i, text in enumerate(batch):
             if "<image>" in text and "<fake_token_around_image>" not in text:
@@ -87,19 +89,6 @@ class EvalModel(BaseEvalModel):
                 batch_tokens.shape[0], batch_tokens.shape[1], 1, dtype=torch.bool
             )
         return image_attention_mask
-
-    def get_rank_classifications(
-        self,
-        batch_text: List[str],
-        batch_images: List[List[Image.Image]],
-        all_class_names: List[str],
-        use_cache: bool,
-        normalize_length: bool,
-    ):
-        """
-        Returns a (B, |all_class_names|) tensor containing the logprobs for each class name.
-        """
-        raise NotImplementedError
 
     def get_outputs(
         self,
@@ -176,18 +165,26 @@ class EvalModel(BaseEvalModel):
             past_key_values=past_key_values,
         )
 
-    def get_vqa_prompt(self, question, answer=None) -> str:
+    def get_vqav2_prompt(self, question, answer=None) -> str:
+        # TODO: handle prefix prompts
+        return f"<image>Question:{question} Answer: {answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
+    
+    def get_ok_vqa_prompt(self, question, answer=None) -> str:
+        # TODO: handle prefix prompts
+        return f"<image>Question:{question} Answer: {answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
+    
+    def get_vizwiz_prompt(self, question, answer=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Question:{question} Answer: {answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
 
-    def get_caption_prompt(self, caption=None) -> str:
+    def get_textvqa_prompt(self, question, answer=None) -> str:
+        # TODO: handle prefix prompts
+        return f"<image>Question:{question} Answer: {answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
+
+    def get_coco_prompt(self, caption=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Caption: {caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
-
-    def get_imagenet_prompt(self, label=None) -> str:
+    
+    def get_flickr_prompt(self, caption=None) -> str:
         # TODO: handle prefix prompts
-        return f"<image>Output:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
-
-    def get_hateful_memes_prompt(self, text, label=None) -> str:
-        # TODO: handle prefix prompts
-        return f"<image>is an image with: '{text}' written on it. Is it hateful? Answer: {label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+        return f"<image>Caption: {caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"

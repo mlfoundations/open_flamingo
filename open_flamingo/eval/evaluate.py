@@ -5,43 +5,38 @@ import os
 import uuid
 import random
 from collections import defaultdict
-
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
 import utils
 import math
+from tqdm import tqdm
 
+from open_flamingo.eval.eval_models import SUPPORTED_MODELS, ZERO_SHOT_ONLY_MODELS, get_eval_model, BaseEvalModel
+from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
+
+from rices import RICES
+from classification_utils import (
+    IMAGENET_CLASSNAMES,
+    HM_CLASSNAMES,
+)
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import (
+    SUPPORTED_TASKS,
     CaptionDataset,
     VQADataset,
     ImageNetDataset,
     HatefulMemesDataset,
 )
-from rices import RICES
-from tqdm import tqdm
-
-
-from classification_utils import (
-    IMAGENET_CLASSNAMES,
-    HM_CLASSNAMES,
-)
-
-from eval_model import BaseEvalModel
-
 from ok_vqa_utils import postprocess_ok_vqa_generation
-from open_flamingo.src.flamingo import Flamingo
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
-from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
-
 parser = argparse.ArgumentParser()
-
 parser.add_argument(
     "--model",
     type=str,
-    help="Model name. Currently only `OpenFlamingo` is supported.",
+    choices=SUPPORTED_MODELS,
+    help="Model to evaluate.",
     default="open_flamingo",
 )
 parser.add_argument(
@@ -403,7 +398,6 @@ parser.add_argument(
 
 def main():
     args, leftovers = parser.parse_known_args()
-    module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
 
     # set up distributed evaluation
     args.local_rank, args.rank, args.world_size = world_info_from_env()
@@ -412,17 +406,25 @@ def main():
         leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
     }
     model_args['device'] = device_id
-    eval_model = module.EvalModel(model_args, init_on_device=args.deepspeed)
+
+    # initialize model
+    eval_model = get_eval_model(args.model, model_args, init_on_device=args.deepspeed)
     eval_model.init_distributed(
         local_rank=args.local_rank, world_size=args.world_size, use_deepspeed=args.deepspeed
     )
 
-    if args.model != "open_flamingo" and args.shots != [0]:
-        raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
+    # Validate args
+    if args.model in ZERO_SHOT_ONLY_MODELS and args.shots != [0]:
+        raise ValueError(f"Only 0 shot eval is supported for {args.model}")
 
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
+    
+    for dataset in SUPPORTED_TASKS:
+        if getattr(args, f"eval_{dataset}") and dataset not in eval_model.supported_tasks:
+            raise ValueError(f"Model {args.model} does not support {dataset}.")
 
+    # Run through datasets and evaluate
     results = defaultdict(list)
 
     if args.eval_flickr30:
