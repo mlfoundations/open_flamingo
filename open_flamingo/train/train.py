@@ -107,7 +107,7 @@ def main():
         "--num_epochs",
         type=int,
         default=1,
-        help="we define an 'epoch' as a fixed number of examples (train_num_samples_mmc4, train_num_samples_laion), not a pass through the entire dataset",
+        help="we define an 'epoch' as a fixed number of examples specified by train_num_samples, not a pass through the entire dataset",
     )
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
@@ -224,18 +224,21 @@ def main():
     datasets_to_train_on = []
     for dataset_name in SUPPORTED_DATASETS:
         if getattr(args, f"{dataset_name}_shards") is None:
+            print(f"Excluding {dataset_name} from training")
             setattr(args, f"train_num_samples_{dataset_name}", 0)
             setattr(args, f"batch_size_{dataset_name}", 0)
         else:
             datasets_to_train_on.append(dataset_name)
+            shards_path = getattr(args, f"{dataset_name}_shards")
+            if shards_path.startswith("s3"):
+                setattr(
+                    args,
+                    f"{dataset_name}_shards",
+                    f"pipe:aws s3 cp {shards_path} -",
+                )
     assert len(datasets_to_train_on) > 0, "Must train on at least one dataset"
 
     # Validate args
-    for dataset_name in SUPPORTED_DATASETS:
-        shards_path = getattr(args, f"{dataset_name}_shards")
-        if shards_path is not None and shards_path.startswith("s3"):
-            args.laion_shards = f"pipe:aws s3 cp {args.laion_shards} -"
-
     for i in range(len(datasets_to_train_on) - 1):
         assert getattr(args, f"train_num_samples_{datasets_to_train_on[i]}") // getattr(
             args, f"batch_size_{datasets_to_train_on[i]}"
@@ -376,7 +379,8 @@ def main():
         for dataset_name in datasets_to_train_on
     ]
     total_training_steps = (
-        (args.train_num_samples_mmc4) // (args.batch_size_mmc4 * args.world_size)
+        getattr(args, f"train_num_samples_{datasets_to_train_on[0]}")
+        // getattr(args, f"batch_size_{datasets_to_train_on[0]}")
     ) * args.num_epochs
 
     if args.rank == 0:

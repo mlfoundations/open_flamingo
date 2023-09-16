@@ -37,6 +37,8 @@ class Loss:
             attention_mask: attention mask tensor, already moved to device and cast to appropriate dtype
                 shape (B, T_text)
             autocast: autocast context manager
+        Return:
+            loss: scalar loss
         """
         raise NotImplementedError
 
