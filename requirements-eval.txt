@@ -5,8 +5,6 @@ inflection
 pycocoevalcap
 pycocotools
 tqdm
-
-black
 mypy
 pylint
 pytest

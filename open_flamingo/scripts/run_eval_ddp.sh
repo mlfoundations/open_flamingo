@@ -9,6 +9,7 @@ Notes:
 - VQAv2 test-dev and test-std annotations are not publicly available. 
   To evaluate on these splits, please follow the VQAv2 instructions and submit to EvalAI.
   This script will evaluate on the val split.
+- Vizwiz test-dev annotations are also not publicly available; please go through EvalAI.
 com
 
 export PYTHONFAULTHANDLER=1
