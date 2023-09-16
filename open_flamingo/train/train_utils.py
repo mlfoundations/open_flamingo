@@ -68,8 +68,6 @@ def train_one_epoch(
         losses_to_log = {}
         batch_metadata_to_log = {}
         for dataset_ix, (images, (input_ids, attention_mask)) in enumerate(batches):
-            print(">> Dataset: ", datasets[dataset_ix].name, "Step: ", step_num)
-
             # unpack the batch and move to device
             images = images.to(device_id, dtype=cast_dtype, non_blocking=True)
             input_ids = input_ids.to(device_id, non_blocking=True)

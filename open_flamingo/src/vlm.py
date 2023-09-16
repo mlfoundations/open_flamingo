@@ -75,7 +75,6 @@ class VLM(nn.Module):
         self.lang_model.set_output_embeddings(out_embeds)
 
         # gradient checkpointing
-        self._use_gradient_checkpointing = gradient_checkpointing
         self.vision_tokenizer._use_gradient_checkpointing = gradient_checkpointing
 
     def forward(
@@ -513,8 +512,9 @@ class VLMWithLanguageStream(VLM):
             pad_token_id=pad_token_id,
             gradient_checkpointing=gradient_checkpointing,
         )
-        self.lang_model._use_gradient_checkpointing = gradient_checkpointing
         self.decoder_layers_attr_name = decoder_layers_attr_name
+        for block in getattr_recursive(self.lang_model, self.decoder_layers_attr_name):
+            block._use_gradient_checkpointing = gradient_checkpointing
         assert (
             self.vis_embedding_dim == self.lang_embedding_dim
         ), "To place visual tokens direclty in the language stream, the visual and language tokens need to be the same dim."

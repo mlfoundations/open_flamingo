@@ -181,6 +181,8 @@ def check_embedding_fns(lang_model):
     if not has_fn(lang_model, "get_input_embeddings"):
         if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
             lang_model.get_input_embeddings = lambda: lang_model.transformer.wte
+        elif hasattr_recursive(lang_model, "model.decoder.embed_tokens"):  # OPT
+            lang_model.get_input_embeddings = lambda: lang_model.decoder.embed_tokens
         else:
             raise ValueError(
                 "We require the language encoder to have a get_input_embeddings method but we couldn't determine the name of the input embeddings attribute. Please supply this manually in factory.py."
@@ -190,6 +192,10 @@ def check_embedding_fns(lang_model):
         if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
             lang_model.set_input_embeddings = lambda x: setattr_recursive(
                 lang_model, "transformer.wte", x
+            )
+        elif hasattr_recursive(lang_model, "model.decoder.embed_tokens"):  # OPT
+            lang_model.set_input_embeddings = lambda x: setattr_recursive(
+                lang_model, "model.decoder.embed_tokens", x
             )
         else:
             raise ValueError(
@@ -211,8 +217,9 @@ def check_embedding_fns(lang_model):
             )
         else:
             raise ValueError(
-                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
+                "We require the language encoder to have a set_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
             )
+
 
 def has_fn(model, fn_name):
     """Try to call the fn_name function on the model"""
