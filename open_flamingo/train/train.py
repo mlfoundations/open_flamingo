@@ -291,7 +291,6 @@ def main():
         args.lm_path,
         args.tokenizer_path if args.tokenizer_path else args.lm_path,
         model_family=args.model_family,
-        untie_embeddings=False,  # untie embeddings for FSDP
         use_local_files=args.offline,
         gradient_checkpointing=args.gradient_checkpointing,
         verbose=(args.rank == 0),

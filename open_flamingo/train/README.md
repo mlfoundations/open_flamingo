@@ -57,10 +57,4 @@ By default, `train.py` uses Pytorch's [DistributedDataParallel](https://pytorch.
 To use [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html), make sure to use Pytorch Nightly (> 2.0.1), and use the `--fsdp` flag. 
 To use [DeepSpeed](https://github.com/microsoft/DeepSpeed), use the `--deepspeed` flag. 
 (Note that you should use *either* FSDP or Deepspeed, not both.)
-
-
-Some notes on FSDP:
-
-* Our current FSDP wrapping strategy does not permit training language model embeddings that use tied weights (i.e., tied input / output embeddings). To train such models with FSDP, the language model embeddings must be frozen with the `--freeze_lm_embeddings` flag.
-
 We also implement gradient checkpointing and mixed precision training. Use the `--gradient_checkpointing` and `--precision` arguments respectively.

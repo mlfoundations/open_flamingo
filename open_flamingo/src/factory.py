@@ -22,7 +22,6 @@ def create_model_and_transforms(
     decoder_layers_attr_name: str = None,
     cache_dir: Optional[str] = None,
     gradient_checkpointing: bool = False,
-    untie_embeddings: bool = False,
     verbose: bool = True,
     **model_kwargs,
 ):
@@ -40,7 +39,6 @@ def create_model_and_transforms(
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
         cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
         gradient_checkpointing (bool, optional): whether to use gradient checkpointing. Defaults to False.
-        untie_embeddings (bool, optional): whether to untie the input and output embeddings of the language model. Defaults to False.
         verbose (bool, optional): whether to print model info. Defaults to True.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
@@ -80,12 +78,6 @@ def create_model_and_transforms(
         cache_dir=cache_dir,
     )
     check_embedding_fns(lang_model)
-    if untie_embeddings:
-        print("Untying language model embeddings...")
-        lang_model.get_output_embeddings().weight = nn.Parameter(
-            lang_model.get_output_embeddings().weight.clone()
-        )
-        lang_model.config.update({"tie_word_embeddings": False})
 
     # init the model
     if decoder_layers_attr_name is None:
