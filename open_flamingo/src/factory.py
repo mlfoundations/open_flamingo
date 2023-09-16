@@ -116,6 +116,7 @@ def create_model_and_transforms(
             gradient_checkpointing=gradient_checkpointing,
             pad_token_id=text_tokenizer.pad_token_id,
             decoder_layers_attr_name=decoder_layers_attr_name,
+            **model_kwargs,
         )
 
     # add special tokens to the tokenizer and language models
