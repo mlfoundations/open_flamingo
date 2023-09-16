@@ -29,7 +29,7 @@ def train_one_epoch(
     Handles logging, calling forward, backward, gradient clipping, and optimizer step.
     Args:
         args (argparse.Namespace): arguments from command line
-        model: DDP / FSDP / Deepspeed wrapped model     
+        model: DDP / FSDP / Deepspeed wrapped model
         epoch (int): epoch number
         datasets (list): list of DataInfos, one for each dataset, to train on
         compute_loss_fn (callable): function that given the model and inputs, calls forward
@@ -152,7 +152,7 @@ def train_one_epoch(
                         **throughput_metrics,
                         **losses_to_log,
                     },
-                    commit=False,
+                    commit=True,
                 )
                 step_time_m.reset()
                 data_time_m.reset()

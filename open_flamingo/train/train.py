@@ -338,11 +338,6 @@ def main():
             lambda_auto_wrap_policy, lambda_fn=model.get_fsdp_lambda_fn()
         )
         wrapper_kwargs = get_fsdp_config(args, device_id)
-        # to save on communication, we may choose to not shard some params
-        unsharded_params = model.get_fsdp_unsharded_params()
-        for p in unsharded_params:
-            p = p.to(device_id)
-        wrapper_kwargs["ignored_states"] = unsharded_params
         distributed_model = FSDP(
             model, auto_wrap_policy=auto_wrap_policy, **wrapper_kwargs
         )
@@ -422,6 +417,9 @@ def main():
 
     # Initialize the loss fn
     loss_fn = get_loss_fn(args.loss)
+
+    # check wrapping
+    print(distributed_model)
 
     # Start training!
     print(f"Start running training on rank {args.rank}.")

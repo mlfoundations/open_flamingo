@@ -325,13 +325,6 @@ class VLM(nn.Module):
             setattr(self, f"{att_name}_id", token_id)
             setattr(self.lang_model, f"{att_name}_id", token_id)
 
-    def get_fsdp_unsharded_params(self):
-        """
-        Returns a list of parameters that should not be sharded by FSDP.
-        These will occupy GPU memory, but we'll save on communication costs.
-        """
-        return []
-
     def init_gradient_checkpointing(self):
         from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
             checkpoint_wrapper,
@@ -454,7 +447,10 @@ class VLMWithCrossAttention(VLM):
         original_decoder_block_class = self.lang_model.old_decoder_blocks[0].__class__
 
         def lambda_fn(module: nn.Module):
-            if isinstance(module, CheckpointWrapper):
+            # we want FSDP(ckpt(module)), not ckpt(FSDP(module))
+            if getattr(module, "_use_gradient_checkpointing", False) and not isinstance(
+                module, CheckpointWrapper
+            ):
                 return False
             if module is self.vision_tokenizer:
                 return True
@@ -693,7 +689,9 @@ class VLMWithLanguageStream(VLM):
         )[0].__class__
 
         def lambda_fn(module: nn.Module):
-            if isinstance(module, CheckpointWrapper):
+            if getattr(module, "_use_gradient_checkpointing", False) and not isinstance(
+                module, CheckpointWrapper
+            ):
                 return False
             if module is self.vision_tokenizer:
                 return True

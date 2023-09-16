@@ -87,17 +87,11 @@ def create_model_and_transforms(
         )
         lang_model.config.update({"tie_word_embeddings": False})
 
-    # vocab sizes: note that lang_model.config.vocab_size is not necessarily = len(text_tokenizer)
-    # the current input_embedding / output_embedding weights probably use lang_model.config.vocab_size
-    # but the tokenizer will assign additional ids based on len(text_tokenizer)
-    model_vocab_size = lang_model.get_input_embeddings().num_embeddings
-    tokenizer_len = len(text_tokenizer)
-
     # init the model
-    if model_family == "flamingo":
-        if decoder_layers_attr_name is None:
-            decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_model)
+    if decoder_layers_attr_name is None:
+        decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_model)
 
+    if model_family == "flamingo":
         model = Flamingo(
             vision_encoder=vision_encoder,
             lang_model=lang_model,
@@ -117,6 +111,7 @@ def create_model_and_transforms(
             initial_tokenizer_len=len(text_tokenizer),
             gradient_checkpointing=gradient_checkpointing,
             pad_token_id=text_tokenizer.pad_token_id,
+            decoder_layers_attr_name=decoder_layers_attr_name,
             **model_kwargs,
         )
 
@@ -128,6 +123,7 @@ def create_model_and_transforms(
             initial_tokenizer_len=len(text_tokenizer),
             gradient_checkpointing=gradient_checkpointing,
             pad_token_id=text_tokenizer.pad_token_id,
+            decoder_layers_attr_name=decoder_layers_attr_name,
         )
 
     # add special tokens to the tokenizer and language models
@@ -156,6 +152,9 @@ def create_model_and_transforms(
 
 
 def _infer_decoder_layers_attr_name(model):
+    """
+    Infer the name of the attribute storing the decoder layers (as a ModuleList) in the model.
+    """
     for k in __KNOWN_DECODER_LAYERS_ATTR_NAMES:
         if k.lower() in model.__class__.__name__.lower():
             return __KNOWN_DECODER_LAYERS_ATTR_NAMES[k]
@@ -179,7 +178,7 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
 
 def check_embedding_fns(lang_model):
     """Checks for and attempts to set {get/set}_{input/output}_embeddings functions to the model"""
-    if not hasattr_recursive(lang_model, "get_input_embeddings"):
+    if not has_fn(lang_model, "get_input_embeddings"):
         if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
             lang_model.get_input_embeddings = lambda: lang_model.transformer.wte
         else:
@@ -187,7 +186,7 @@ def check_embedding_fns(lang_model):
                 "We require the language encoder to have a get_input_embeddings method but we couldn't determine the name of the input embeddings attribute. Please supply this manually in factory.py."
             )
 
-    if not hasattr_recursive(lang_model, "set_input_embeddings"):
+    if not has_fn(lang_model, "set_input_embeddings"):
         if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
             lang_model.set_input_embeddings = lambda x: setattr_recursive(
                 lang_model, "transformer.wte", x
@@ -197,7 +196,7 @@ def check_embedding_fns(lang_model):
                 "We require the language encoder to have a set_input_embeddings method but we couldn't determine the name of the input embeddings attribute. Please supply this manually in factory.py."
             )
 
-    if not hasattr_recursive(lang_model, "get_output_embeddings"):
+    if not has_fn(lang_model, "get_output_embeddings"):
         if hasattr_recursive(lang_model, "lm_head"):
             lang_model.get_output_embeddings = lambda: lang_model.lm_head
         else:
@@ -205,7 +204,7 @@ def check_embedding_fns(lang_model):
                 "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
             )
 
-    if not hasattr_recursive(lang_model, "set_output_embeddings"):
+    if not has_fn(lang_model, "set_output_embeddings"):
         if hasattr_recursive(lang_model, "lm_head"):
             lang_model.set_output_embeddings = lambda x: setattr_recursive(
                 lang_model, "lm_head", x
@@ -214,3 +213,11 @@ def check_embedding_fns(lang_model):
             raise ValueError(
                 "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
             )
+
+def has_fn(model, fn_name):
+    """Try to call the fn_name function on the model"""
+    try:
+        getattr(model, fn_name)()
+        return True
+    except:
+        return False
