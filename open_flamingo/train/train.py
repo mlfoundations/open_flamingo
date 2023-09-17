@@ -136,7 +136,7 @@ def main():
     parser.add_argument("--dataset_resampled", action="store_true")
     parser.add_argument(
         "--mmc4_textsim_threshold",
-        default=30,
+        default=0.24,
         type=float,
         help="threshold for filtering images in mmc4 based on image-text similarity",
     )
