@@ -262,7 +262,7 @@ def get_deepspeed_config(
     }
 
     if args.precision == "fp16":
-        ds_config["fp16"] = {"enabled": True, "loss_scale_window": 100}
+        ds_config["fp16"] = {"enabled": True}
     elif args.precision == "bf16":
         ds_config["bf16"] = {"enabled": True}
     # amp not supported with DeepSpeed
