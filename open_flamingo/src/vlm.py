@@ -64,6 +64,10 @@ class VLM(nn.Module):
             _weight=self.lang_model.get_input_embeddings().weight,
             pad_token_id=self.pad_token_id,
         )
+        input_embeds.additional_fc.weight.data.normal_(
+            mean=0.0, std=self.lang_model.config.initializer_range
+        )
+        
         self.lang_model.set_input_embeddings(input_embeds)
 
         out_embeds = DecoupledLinear(
@@ -71,6 +75,9 @@ class VLM(nn.Module):
             additional_out_features=len(self.special_tokens),
             _weight=self.lang_model.get_output_embeddings().weight,
             _bias=self.lang_model.get_output_embeddings().bias,
+        )
+        out_embeds.additional_fc.weight.data.normal_(
+            mean=0.0, std=self.lang_model.config.initializer_range
         )
         self.lang_model.set_output_embeddings(out_embeds)
 
