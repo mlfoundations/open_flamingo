@@ -13,7 +13,6 @@ export MASTER_PORT=$(shuf -i 0-65535 -n 1)
 export COUNT_NODE=`scontrol show hostnames "$SLURM_JOB_NODELIST" | wc -l`
 
 export PYTHONPATH="$PYTHONPATH:open_flamingo"
-srun --cpu_bind=v --accel-bind=gn python 
 
 srun --cpu_bind=v --accel-bind=gn bash -c 'python -u -m torch.distributed.run \
     --nproc_per_node 8 \
