@@ -324,10 +324,6 @@ def main():
 
     # Initialize gradient checkpointing
     if args.gradient_checkpointing:
-        if args.deepspeed:
-            raise ValueError(
-                "Gradient checkpointing currently not supported with deepspeed"
-            )
         model.init_gradient_checkpointing()
 
     # Initialize FSDP / DDP, and ensure the model is on GPU
