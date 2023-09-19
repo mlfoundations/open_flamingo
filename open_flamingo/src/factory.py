@@ -123,7 +123,9 @@ def create_model_and_transforms(
     text_tokenizer.add_special_tokens(
         {"additional_special_tokens": list(model.special_tokens.values())}
     )
-    model.lang_model.config.vocab_size =  max(len(text_tokenizer), model.lang_model.config.vocab_size) # Some models have larger vocab size (due to padding) than tokenizer length
+    model.lang_model.config.vocab_size = max(
+        len(text_tokenizer), model.lang_model.config.vocab_size
+    )  # Some models have larger vocab size (due to padding) than tokenizer length
     model.set_special_token_ids(
         {
             v: text_tokenizer.convert_tokens_to_ids(v)

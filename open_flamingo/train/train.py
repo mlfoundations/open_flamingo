@@ -418,7 +418,8 @@ def main():
     loss_fn = get_loss_fn(args.loss)
 
     # check wrapping
-    print(distributed_model)
+    if args.rank == 0:
+        print(distributed_model)
 
     # Start training!
     print(f"Start running training on rank {args.rank}.")

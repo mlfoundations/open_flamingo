@@ -91,15 +91,6 @@ def train_one_epoch(
                 autocast=autocast,
             )
 
-            # if loss is nan, skip this batch
-            # this hack of skipping the batch is not FSDP-compatible
-            if torch.isnan(dataset_loss):
-                print("loss is nan, skipping this batch")
-                print("input_ids: ", tokenizer.batch_decode(input_ids))
-                print("images: ", images)
-                optimizer.zero_grad(set_to_none=True)
-                continue
-
             losses_to_log[f"loss_{datasets[dataset_ix].name}"] = dataset_loss.item()
 
             # scale loss and call backward
@@ -332,7 +323,7 @@ def filter_state_dict_to_trainable(model, state_dict):
     for name, p in model.named_parameters():
         if "fsdp" in name:
             continue
-        if not p.requires_grad or to_delete(name):
+        if not p.requires_grad:
             name = name.replace("._checkpoint_wrapped_module", "")
             if name in state_dict:
                 del state_dict[name]

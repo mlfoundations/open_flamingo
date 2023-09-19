@@ -66,9 +66,12 @@ class VLM(nn.Module):
         )
         if hasattr(input_embeds, "additional_embedding"):
             input_embeds.additional_embedding.weight.data.normal_(
-                mean=0.0, std=self.lang_model.config.initializer_range if hasattr(self.lang_model.config, "initializer_range") else 0.02
+                mean=0.0,
+                std=self.lang_model.config.initializer_range
+                if hasattr(self.lang_model.config, "initializer_range")
+                else 0.02,
             )
-        
+
         self.lang_model.set_input_embeddings(input_embeds)
 
         out_embeds = DecoupledLinear(
@@ -79,7 +82,10 @@ class VLM(nn.Module):
         )
         if hasattr(out_embeds, "additional_fc"):
             out_embeds.additional_fc.weight.data.normal_(
-                mean=0.0, std=self.lang_model.config.initializer_range if hasattr(self.lang_model.config, "initializer_range") else 0.02
+                mean=0.0,
+                std=self.lang_model.config.initializer_range
+                if hasattr(self.lang_model.config, "initializer_range")
+                else 0.02,
             )
         self.lang_model.set_output_embeddings(out_embeds)
 

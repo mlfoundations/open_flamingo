@@ -20,7 +20,9 @@ class EvalModel(BaseEvalModel):
     def __init__(self, model_args, init_on_device=False):
         super().__init__(model_args, init_on_device)
         with self.init_ctx:
-            self.model = IdeficsForVisionText2Text.from_pretrained(model_args["lm_path"])
+            self.model = IdeficsForVisionText2Text.from_pretrained(
+                model_args["lm_path"]
+            )
             self.processor = AutoProcessor.from_pretrained(model_args["processor_path"])
             self.tokenizer = self.processor.tokenizer
         self._check_init()
@@ -168,11 +170,11 @@ class EvalModel(BaseEvalModel):
     def get_vqav2_prompt(self, question, answer=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Question:{question} Answer: {answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
-    
+
     def get_ok_vqa_prompt(self, question, answer=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Question:{question} Answer: {answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
-    
+
     def get_vizwiz_prompt(self, question, answer=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Question:{question} Answer: {answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
@@ -184,7 +186,7 @@ class EvalModel(BaseEvalModel):
     def get_coco_prompt(self, caption=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Caption: {caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
-    
+
     def get_flickr_prompt(self, caption=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Caption: {caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"

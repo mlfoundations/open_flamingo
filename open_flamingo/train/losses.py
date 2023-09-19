@@ -16,6 +16,7 @@ def get_loss_fn(loss_name):
             f"Loss {loss_name} not supported. Supported losses: {SUPPORTED_LOSSES}"
         )
 
+
 class Loss:
     @property
     def name(self):
@@ -44,6 +45,7 @@ class Loss:
             loss: scalar loss
         """
         raise NotImplementedError
+
 
 class NextTokenPredictionWithZLoss(Loss):
     @property
@@ -80,7 +82,7 @@ class NextTokenPredictionWithZLoss(Loss):
             )[1]
 
         logits = logits.float()
-            
+
         # Shift so that tokens < n predict n
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
@@ -91,15 +93,16 @@ class NextTokenPredictionWithZLoss(Loss):
         # Enable model parallelism
         shift_labels = shift_labels.to(shift_logits.device)
         loss = loss_fct(shift_logits, shift_labels)
-        
+
         return loss
+
 
 class NextTokenPrediction(NextTokenPredictionWithZLoss):
     # same as NextTokenPredictionWithZLoss, but with z_loss_eps = 0
     @property
     def name(self):
         return "next_token_prediction"
-    
+
     def __call__(
         self,
         model: VLM,
@@ -117,7 +120,7 @@ class NextTokenPrediction(NextTokenPredictionWithZLoss):
             attention_mask=attention_mask,
             autocast=autocast,
             z_loss_eps=0,
-        )    
+        )
 
 
 def unwrap_model(model):
@@ -130,6 +133,7 @@ def unwrap_model(model):
         return model.module
     else:
         return model
+
 
 # From OpenLM (https://github.com/mlfoundations/open_lm/blob/main/open_lm/losses.py)
 class CrossEntropyLossWithZLoss(CrossEntropyLoss):
@@ -151,7 +155,7 @@ class CrossEntropyLossWithZLoss(CrossEntropyLoss):
     def forward(self, input: Tensor, target: Tensor) -> Tensor:
         if self.eps == 0:
             return super().forward(input, target)
-        
+
         return super().forward(input, target) + self.eps * torch.square(
             torch.logsumexp(input, dim=-1).mean()
         )

@@ -12,7 +12,12 @@ import utils
 import math
 from tqdm import tqdm
 
-from open_flamingo.eval.eval_models import SUPPORTED_MODELS, ZERO_SHOT_ONLY_MODELS, get_eval_model, BaseEvalModel
+from open_flamingo.eval.eval_models import (
+    SUPPORTED_MODELS,
+    ZERO_SHOT_ONLY_MODELS,
+    get_eval_model,
+    BaseEvalModel,
+)
 from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
 
 from rices import RICES
@@ -396,6 +401,7 @@ parser.add_argument(
     help="Whether to use deepspeed for distributed inference.",
 )
 
+
 def main():
     args, leftovers = parser.parse_known_args()
 
@@ -405,12 +411,14 @@ def main():
     model_args = {
         leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
     }
-    model_args['device'] = device_id
+    model_args["device"] = device_id
 
     # initialize model
     eval_model = get_eval_model(args.model, model_args, init_on_device=args.deepspeed)
     eval_model.init_distributed(
-        local_rank=args.local_rank, world_size=args.world_size, use_deepspeed=args.deepspeed
+        local_rank=args.local_rank,
+        world_size=args.world_size,
+        use_deepspeed=args.deepspeed,
     )
 
     # Validate args
@@ -419,9 +427,12 @@ def main():
 
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
-    
+
     for dataset in SUPPORTED_TASKS:
-        if getattr(args, f"eval_{dataset}") and dataset not in eval_model.supported_tasks:
+        if (
+            getattr(args, f"eval_{dataset}")
+            and dataset not in eval_model.supported_tasks
+        ):
             raise ValueError(f"Model {args.model} does not support {dataset}.")
 
     # Run through datasets and evaluate
