@@ -1132,8 +1132,8 @@ def evaluate_classification(
     prompt_time_m = utils.AverageMeter()
     rank_time_m = utils.AverageMeter()
 
-    for batch_idx, batch in tqdm(
-        enumerate(test_dataloader),
+    for batch in tqdm(
+        test_dataloader,
         desc=f"Running inference {dataset_name}",
         disable=args.rank != 0,
     ):
@@ -1222,8 +1222,7 @@ def evaluate_classification(
         )
 
         # dev: print some results
-        if batch_idx == 0:
-            print("Context:", batch_text[0], "\n", "Generated:", predicted_classnames[0][0], "\n", "True:", batch["class_name"][0])
+        print("Context:", batch_text[0], "\n", "Generated:", predicted_classnames[0][0], "\n", "True:", batch["class_name"][0])
 
         # compute accuracy
         for i, topk in enumerate(predicted_classnames):
@@ -1237,10 +1236,10 @@ def evaluate_classification(
                 "gt_id": batch["class_id"][i],
                 "pred_label": topk[0],
                 "pred_score": score,
-                "pred_class_id": predicted_class_ixs[i][0],
+                "pred_class_id": predicted_class_ixs[i][0].item(),
             }
             if "metadata" in batch:
-                pred_info["metadata"] = batch["metadata"][i]
+                pred_info["metadata"] = batch["metadata"][i].tolist()
             predictions.append(pred_info)
 
         if args.rank == 0:

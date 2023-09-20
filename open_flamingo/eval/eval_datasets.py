@@ -168,22 +168,22 @@ class WILDSDataset(Dataset):
     def __init__(self, dataset_name: str, split: str, root_dir: str):
         import wilds
 
-        self.full_dataset = wilds.get_dataset(
+        full_dataset = wilds.get_dataset(
             dataset_name,
             root_dir=root_dir,
             download=True,
         )
-        self.dataset = self.full_dataset.get_subset(split)
+        self.dataset = full_dataset.get_subset(split)
         if dataset_name == "waterbirds":
             self.class_id_to_name = {i: s for i, s in enumerate(WATERBIRDS_CLASSNAMES)}
             self.grouper = wilds.common.grouper.CombinatorialGrouper(
-                dataset=self.full_dataset,
+                dataset=full_dataset,
                 groupby_fields=["background", "y"],
             )
         elif dataset_name == "camelyon17":
             self.class_id_to_name = {i: s for i, s in enumerate(CAMELYON17_CLASSNAMES)}
             self.grouper = wilds.common.grouper.CombinatorialGrouper(
-                dataset=self.full_dataset,
+                dataset=full_dataset,
                 groupby_fields=["hospital"],
             )
         else:

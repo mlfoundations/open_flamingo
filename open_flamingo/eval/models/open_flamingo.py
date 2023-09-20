@@ -23,12 +23,11 @@ class EvalModel(BaseEvalModel):
         assert (
             "vision_encoder_path" in model_args
             and "lm_path" in model_args
-            and "checkpoint_path" in model_args
             and "lm_tokenizer_path" in model_args
             and "cross_attn_every_n_layers" in model_args
             and "vision_encoder_pretrained" in model_args
             and "precision" in model_args
-        ), "OpenFlamingo requires vision_encoder_path, lm_path, device, checkpoint_path, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained, and precision arguments to be specified"
+        ), "OpenFlamingo requires vision_encoder_path, lm_path, device, lm_tokenizer_path, cross_attn_every_n_layers, vision_encoder_pretrained, and precision arguments to be specified"
 
         self.device = (
             model_args["device"]
@@ -48,11 +47,12 @@ class EvalModel(BaseEvalModel):
             model_args["lm_tokenizer_path"],
             cross_attn_every_n_layers=int(model_args["cross_attn_every_n_layers"]),
         )
-        checkpoint = torch.load(model_args["checkpoint_path"], map_location=self.device)
-        if "model_state_dict" in checkpoint:
-            checkpoint = checkpoint["model_state_dict"]
-            checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
-        self.model.load_state_dict(checkpoint, strict=False)
+        if "checkpoint_path" in model_args:
+            checkpoint = torch.load(model_args["checkpoint_path"], map_location=self.device)
+            if "model_state_dict" in checkpoint:
+                checkpoint = checkpoint["model_state_dict"]
+                checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
+            self.model.load_state_dict(checkpoint, strict=False)
         self.model.to(self.device, dtype=self.cast_dtype)
         self.model.eval()
         self.tokenizer.padding_side = "left"
