@@ -534,7 +534,7 @@ class VLMWithLanguageStream(VLM):
             block._use_gradient_checkpointing = gradient_checkpointing
         assert (
             self.vis_embedding_dim == self.lang_embedding_dim
-        ), "To place visual tokens direclty in the language stream, the visual and language tokens need to be the same dim."
+        ), "To place visual tokens directly in the language stream, the visual and language tokens need to be the same dim."
 
     def _prepare_inputs_for_forward(
         self,
@@ -567,56 +567,41 @@ class VLMWithLanguageStream(VLM):
         multimodal_embeds = []
         multimodal_attention_mask = []
         multimodal_labels = [] if has_labels else None
+        
         for i in range(B):
             # get index of <image> tokens in lang_x[i]
             image_token_idxs = torch.where(lang_x[i] == self.media_token_id)[0]
 
             # since an image is represented by self.num_tokens_per_vis tokens, we need to offset the image_token_idxs
-            for j, img_idx in enumerate(image_token_idxs):
+            for j, _ in enumerate(image_token_idxs):
                 image_token_idxs[j] += (self.num_tokens_per_vis - 1) * j
-
-            # loop through the image_token_idxs and insert the vision tokens
-            new_embed = lang_embeds[i].clone()
-            new_attention_mask = (
-                attention_mask[i].clone() if attention_mask is not None else None
+            
+            # Thank you to Gabriel Ilharco for this code for concatenating the vision tokens with the language embeddings
+            total_seq_len = lang_x.shape[1] + len(image_token_idxs) * (self.num_tokens_per_vis - 1) # -1 because we're replacing <image> with <im_patch>
+            
+            is_text = torch.ones(total_seq_len, dtype=torch.long).to(lang_embeds.device)
+            # mask out the vision tokens
+            for idx in image_token_idxs:
+                is_text[idx: idx + self.num_tokens_per_vis] = False
+        
+            new_embed = torch.zeros((total_seq_len, self.lang_embedding_dim)).to(
+                lang_embeds.device
             )
-            if has_labels:
-                new_label = labels[i].clone()
-
-            for img_num, img_idx in enumerate(image_token_idxs):
-                new_embed = torch.cat(
-                    (
-                        new_embed[:img_idx],
-                        vision_tokens[i][img_num],
-                        new_embed[img_idx + 1 :],
-                    ),
-                    dim=0,
-                )
-                new_attention_mask = torch.cat(
-                    (
-                        new_attention_mask[:img_idx],
-                        torch.ones(self.num_tokens_per_vis, dtype=torch.long).to(
-                            attention_mask.device
-                        ),
-                        new_attention_mask[img_idx + 1 :],
-                    ),
-                    dim=0,
-                )
-                if has_labels:
-                    new_label = torch.cat(
-                        (
-                            new_label[:img_idx],
-                            torch.ones(self.num_tokens_per_vis, dtype=torch.long).to(
-                                labels.device
-                            )
-                            * -100,
-                            new_label[img_idx + 1 :],
-                        ),
-                        dim=0,
-                    )
+            new_embed[is_text] = lang_embeds[i].clone()
+            new_embed[~is_text] = vision_tokens[i]
             multimodal_embeds.append(new_embed)
+            
+            new_attention_mask = torch.ones(total_seq_len, dtype=torch.long).to(
+                attention_mask.device
+            )
+            new_attention_mask[is_text] = attention_mask[i].clone()
             multimodal_attention_mask.append(new_attention_mask)
+
             if has_labels:
+                new_label = torch.ones(total_seq_len, dtype=torch.long).to(
+                    labels.device
+                ) * -100
+                new_label[is_text] = labels[i].clone()
                 multimodal_labels.append(new_label)
 
         # stack
