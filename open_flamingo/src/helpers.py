@@ -620,7 +620,19 @@ class DecoupledLinear(nn.Linear):
             assert bias is True, "bias must be True if _bias is provided"
 
         # initialize original linear
-        super().__init__(in_features, original_out_features, bias, device, dtype)
+        super().__init__(
+            in_features, 
+            original_out_features,
+            bias, 
+            device, 
+            dtype)
+        
+        # set weight and bias manually
+        if _weight is not None:
+            self.weight = nn.Parameter(_weight)
+        if _bias is not None:
+            self.bias = nn.Parameter(_bias)
+            
         self.in_features = in_features
         self.original_out_features = original_out_features
         self.max_original_id = max_original_id
@@ -658,7 +670,6 @@ class DecoupledLinear(nn.Linear):
                 input, self.additional_fc.weight, self.additional_fc.bias
             )
             output = torch.cat((output, additional_features), -1)
-
         return output
 
     def extra_repr(self) -> str:
