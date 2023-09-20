@@ -268,6 +268,7 @@ class VLM(nn.Module):
             past_key_values=past_key_values,
             past_media_locations=past_media_locations,
             past_vision_tokens=past_vision_tokens,
+            generating=True,
         )
         output = self.lang_model.generate(
             **new_inputs,
@@ -402,6 +403,7 @@ class VLMWithCrossAttention(VLM):
         past_key_values=None,
         past_media_locations: torch.Tensor = None,
         past_vision_tokens: torch.Tensor = None,
+        generating: bool = False, # Not used for cross-attention models
     ):
         """Each xattn layer needs to save the vision tokens and the locations of the media tokens in the language sequence"""
         self.lang_model._condition_media_before_forward(
@@ -543,6 +545,7 @@ class VLMWithLanguageStream(VLM):
         past_key_values=None,
         past_media_locations: torch.Tensor = None,
         past_vision_tokens: torch.Tensor = None,
+        generating: bool = False, # whether we're generating to decide on padding side
     ):
         """
         Insert the vision tokens directly into the language stream/
@@ -618,14 +621,14 @@ class VLMWithLanguageStream(VLM):
 
         # stack
         multimodal_embeds = stack_with_padding(
-            multimodal_embeds, padding_value=self.pad_token_id
+            multimodal_embeds, padding_value=self.pad_token_id, padding_side="left" if generating else "right"
         )
         multimodal_attention_mask = stack_with_padding(
-            multimodal_attention_mask, padding_value=0
+            multimodal_attention_mask, padding_value=0, padding_side="left" if generating else "right"
         )
         if has_labels:
             multimodal_labels = stack_with_padding(
-                multimodal_labels, padding_value=-100
+                multimodal_labels, padding_value=-100, padding_side="left" if generating else "right"
             )
 
         return {
