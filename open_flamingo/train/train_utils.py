@@ -387,7 +387,7 @@ def save_deepspeed_checkpoint(model, epoch, args):
         save_dir=args.run_name,
         save_latest=True,
         tag=f"epoch_{epoch}",
-        exclude_frozen_parameters=True,
+        exclude_frozen_parameters=not args.gradient_checkpointing, # Save all parameters if gradient checkpointing is enabled
     )
 
     if args.rank == 0:

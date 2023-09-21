@@ -261,6 +261,11 @@ def main():
         assert (
             "dev" in torch.__version__ and torch.__version__ > "2.0.1"
         ), "FSDP requires torch nightly > 2.0.1"
+        
+    if args.deepspeed and args.gradient_checkpointing:
+        print(
+            "Gradient checkpointing with Deepspeed will cause all parameters to be saved for each checkpoint."
+        )
 
     # Set up distributed training
     args.local_rank, args.rank, args.world_size = world_info_from_env()
