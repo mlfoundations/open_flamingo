@@ -492,7 +492,6 @@ def main():
     # initialize model
     eval_model = get_eval_model(args.model, model_args, init_on_device=args.deepspeed)
     eval_model.init_distributed(
-        local_rank=args.local_rank,
         world_size=args.world_size,
         use_deepspeed=args.deepspeed,
     )

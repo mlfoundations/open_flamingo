@@ -4,7 +4,6 @@ Util functions for distributed training, FSDP, and Deepspeed.
 
 import os
 import torch
-from data import SUPPORTED_DATASETS
 
 ##################################
 # SLURM setup; Credit: open_clip #

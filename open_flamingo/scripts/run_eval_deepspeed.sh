@@ -30,6 +30,7 @@ deepspeed open_flamingo/open_flamingo/eval/evaluate.py \
     --lm_path anas-awadalla/mpt-1b-redpajama-200b \
     --tokenizer_path anas-awadalla/mpt-1b-redpajama-200b \
     --cross_attn_every_n_layers 1 \
+    --model_family flamingo \
     --checkpoint_path "openflamingo/OpenFlamingo-3B-vitl-mpt1b/checkpoint.pt" \
     --results_file "results.json" \
     --precision fp32 \
