@@ -385,6 +385,11 @@ parser.add_argument(
     type=str,
     default=".",
 )
+parser.add_argument(
+    "--wilds_split",
+    type=str,
+    default=".",
+)
 
 
 def eval_dataset(
@@ -1099,7 +1104,7 @@ def evaluate_classification(
         )
         test_dataset = WILDSDataset(
             dataset_name=dataset_name,
-            split="test",
+            split=args.wilds_split,
             root_dir=args.wilds_root,
         )
         prompt_fn = lambda x, test: eval_model.get_camelyon17_prompt(
