@@ -11,6 +11,7 @@ import utils
 import math
 from tqdm import tqdm
 import wandb
+import time
 
 from open_flamingo.eval.eval_models import (
     SUPPORTED_MODELS,
@@ -24,6 +25,8 @@ from open_flamingo.eval.rices import RICES
 from open_flamingo.eval.classification_utils import (
     IMAGENET_CLASSNAMES,
     HM_CLASSNAMES,
+    WATERBIRDS_CLASSNAMES,
+    CAMELYON17_CLASSNAMES,
 )
 from open_flamingo.eval.coco_metric import compute_cider, postprocess_captioning_generation
 from open_flamingo.eval.eval_datasets import (
@@ -32,6 +35,7 @@ from open_flamingo.eval.eval_datasets import (
     VQADataset,
     ImageNetDataset,
     HatefulMemesDataset,
+    WILDSDataset,
 )
 from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
 from open_flamingo.eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
@@ -658,12 +662,14 @@ def evaluate_captioning(
         image_train_dir_path = args.coco_train_image_dir_path
         image_val_dir_path = args.coco_val_image_dir_path
         annotations_path = args.coco_karpathy_json_path
+        prompt_fn = eval_model.get_coco_prompt
     elif dataset_name == "flickr30":
         image_train_dir_path = (
             args.flickr_image_dir_path
         )  # Note: calling this "train" for consistency with COCO but Flickr only has one split for images
         image_val_dir_path = None
         annotations_path = args.flickr_karpathy_json_path
+        prompt_fn = eval_model.get_flickr30_prompt
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
@@ -728,7 +734,7 @@ def evaluate_captioning(
 
             context_text = "".join(
                 [
-                    eval_model.get_caption_prompt(caption=x["caption"].strip()) + "\n"
+                    prompt_fn(caption=x["caption"].strip()) + "\n"
                     for x in batch_demo_samples[i]
                 ]
             )
@@ -737,7 +743,7 @@ def evaluate_captioning(
             if num_shots == 0:
                 context_text = context_text.replace("<image>", "")
 
-            batch_text.append(context_text + eval_model.get_caption_prompt())
+            batch_text.append(context_text + prompt_fn())
 
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
@@ -836,6 +842,7 @@ def evaluate_vqa(
         test_image_dir_path = args.ok_vqa_test_image_dir_path
         test_questions_json_path = args.ok_vqa_test_questions_json_path
         test_annotations_json_path = args.ok_vqa_test_annotations_json_path
+        prompt_fn = eval_model.get_ok_vqa_prompt
     elif dataset_name == "vqav2":
         train_image_dir_path = args.vqav2_train_image_dir_path
         train_questions_json_path = args.vqav2_train_questions_json_path
@@ -843,6 +850,7 @@ def evaluate_vqa(
         test_image_dir_path = args.vqav2_test_image_dir_path
         test_questions_json_path = args.vqav2_test_questions_json_path
         test_annotations_json_path = args.vqav2_test_annotations_json_path
+        prompt_fn = eval_model.get_vqav2_prompt
     elif dataset_name == "vizwiz":
         train_image_dir_path = args.vizwiz_train_image_dir_path
         train_questions_json_path = args.vizwiz_train_questions_json_path
@@ -850,6 +858,7 @@ def evaluate_vqa(
         test_image_dir_path = args.vizwiz_test_image_dir_path
         test_questions_json_path = args.vizwiz_test_questions_json_path
         test_annotations_json_path = args.vizwiz_test_annotations_json_path
+        prompt_fn = eval_model.get_vizwiz_prompt
     elif dataset_name == "textvqa":
         train_image_dir_path = args.textvqa_image_dir_path
         train_questions_json_path = args.textvqa_train_questions_json_path
@@ -857,6 +866,7 @@ def evaluate_vqa(
         test_image_dir_path = args.textvqa_image_dir_path
         test_questions_json_path = args.textvqa_test_questions_json_path
         test_annotations_json_path = args.textvqa_test_annotations_json_path
+        prompt_fn = eval_model.get_textvqa_prompt
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
@@ -920,7 +930,7 @@ def evaluate_vqa(
 
             context_text = "".join(
                 [
-                    eval_model.get_vqa_prompt(
+                    prompt_fn(
                         question=x["question"], answer=x["answers"][0]
                     )
                     + "\n"
@@ -933,7 +943,7 @@ def evaluate_vqa(
                 context_text = context_text.replace("<image>", "")
 
             batch_text.append(
-                context_text + eval_model.get_vqa_prompt(question=batch["question"][i])
+                context_text + prompt_fn(question=batch["question"][i])
             )
 
         outputs = eval_model.get_outputs(

@@ -111,5 +111,5 @@ class EvalModel(BaseEvalModel):
     def get_coco_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
     
-    def get_flickr_prompt(self, caption=None) -> str:
+    def get_flickr30_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
