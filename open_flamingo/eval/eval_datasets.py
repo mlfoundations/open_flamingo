@@ -13,6 +13,19 @@ from open_flamingo.eval.classification_utils import (
 )
 
 
+SUPPORTED_TASKS = [
+    "coco",
+    "flickr30",
+    "vqav2",
+    "ok_vqa",
+    "vizwiz",
+    "textvqa",
+    "hateful_memes",
+    "imagenet",
+    "waterbirds",
+    "camelyon17",
+]
+
 class CaptionDataset(Dataset):
     def __init__(
         self,

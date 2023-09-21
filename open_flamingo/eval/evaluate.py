@@ -1,66 +1,48 @@
 import argparse
-import importlib
 import json
 import os
 import uuid
 import random
-import time
 from collections import defaultdict
-
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
 import utils
 import math
-
+from tqdm import tqdm
 import wandb
 
-from coco_metric import compute_cider, postprocess_captioning_generation
-from eval_datasets import (
+from open_flamingo.eval.eval_models import (
+    SUPPORTED_MODELS,
+    ZERO_SHOT_ONLY_MODELS,
+    get_eval_model,
+    BaseEvalModel,
+)
+from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
+
+from open_flamingo.eval.rices import RICES
+from open_flamingo.eval.classification_utils import (
+    IMAGENET_CLASSNAMES,
+    HM_CLASSNAMES,
+)
+from open_flamingo.eval.coco_metric import compute_cider, postprocess_captioning_generation
+from open_flamingo.eval.eval_datasets import (
+    SUPPORTED_TASKS,
     CaptionDataset,
     VQADataset,
     ImageNetDataset,
     HatefulMemesDataset,
-    WILDSDataset,
 )
-from rices import RICES
-from tqdm import tqdm
-
-
-from classification_utils import (
-    IMAGENET_CLASSNAMES,
-    HM_CLASSNAMES,
-    WATERBIRDS_CLASSNAMES,
-    CAMELYON17_CLASSNAMES,
-)
-
-from eval_model import BaseEvalModel
-
-from ok_vqa_utils import postprocess_ok_vqa_generation
-from open_flamingo.src.flamingo import Flamingo
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
-
-from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
-
-SUPPORTED_DATASETS = [
-    "coco",
-    "vqav2",
-    "ok_vqa",
-    "vizwiz",
-    "textvqa",
-    "imagenet",
-    "flickr30",
-    "hateful_memes",
-    "waterbirds",
-    "camelyon17",
-]
+from open_flamingo.eval.ok_vqa_utils import postprocess_ok_vqa_generation
+from open_flamingo.eval.vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument(
     "--model",
     type=str,
-    help="Model name. Currently only `OpenFlamingo` is supported.",
+    choices=SUPPORTED_MODELS,
+    help="Model to evaluate.",
     default="open_flamingo",
 )
 parser.add_argument(
@@ -102,7 +84,7 @@ parser.add_argument(
     help="Number of samples to evaluate on. -1 for all samples.",
 )
 parser.add_argument(
-    "--query_set_size", type=int, default=-1, help="Size of demonstration query set. -1 for all samples."
+    "--query_set_size", type=int, default=2048, help="Size of demonstration query set"
 )
 
 parser.add_argument("--batch_size", type=int, default=8)
@@ -163,14 +145,26 @@ parser.add_argument(
     help="Use horovod for distributed training.",
 )
 parser.add_argument(
+    "--local_rank",
+    default=0,
+    type=int,
+    help="Rank of distributed process (default: 0). Usually overwritten by world_info_from_env()",
+)
+parser.add_argument(
     "--no-set-device-rank",
     default=False,
     action="store_true",
     help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
 )
+parser.add_argument(
+    "--deepspeed",
+    default=False,
+    action="store_true",
+    help="Whether to use deepspeed for distributed inference.",
+)
 
 # Per-dataset evaluation flags
-for ds in SUPPORTED_DATASETS:
+for ds in SUPPORTED_TASKS:
     parser.add_argument(
         f"--eval_{ds}",
         action="store_true",
@@ -482,24 +476,36 @@ def eval_dataset(
 
 def main():
     args, leftovers = parser.parse_known_args()
-    module = importlib.import_module(f"open_flamingo.eval.eval_models.{args.model}")
-
-    model_args = {
-        leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
-    }
-    eval_model = module.EvalModel(model_args)
 
     # set up distributed evaluation
     args.local_rank, args.rank, args.world_size = world_info_from_env()
     device_id = init_distributed_device(args)
-    eval_model.set_device(device_id)
-    eval_model.init_distributed()
+    model_args = {
+        leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
+    }
+    model_args["device"] = device_id
 
-    if args.model != "open_flamingo" and args.shots != [0]:
-        raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
+    # initialize model
+    eval_model = get_eval_model(args.model, model_args, init_on_device=args.deepspeed)
+    eval_model.init_distributed(
+        local_rank=args.local_rank,
+        world_size=args.world_size,
+        use_deepspeed=args.deepspeed,
+    )
+
+    # Validate args
+    if args.model in ZERO_SHOT_ONLY_MODELS and args.shots != [0]:
+        raise ValueError(f"Only 0 shot eval is supported for {args.model}")
 
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
+
+    for dataset in SUPPORTED_TASKS:
+        if (
+            getattr(args, f"eval_{dataset}")
+            and dataset not in eval_model.supported_tasks
+        ):
+            raise ValueError(f"Model {args.model} does not support {dataset}.")
 
     # set up wandb
     if args.rank == 0 and args.report_to_wandb:
@@ -640,7 +646,7 @@ def evaluate_captioning(
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of in-context samples to use. Defaults to 8.
-        dataset_name (str, optional): dataset to evaluate on. Can be "coco" or "flickr". Defaults to "coco".
+        dataset_name (str, optional): dataset to evaluate on. Can be "coco" or "flickr30". Defaults to "coco".
         cached_features (tensor, optional): cached demonstration features for RICES. Defaults to None.
     Returns:
         float: CIDEr score
