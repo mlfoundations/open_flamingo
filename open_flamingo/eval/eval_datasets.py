@@ -2,20 +2,28 @@ import json
 import os
 
 from PIL import Image
+import torch
 from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
-from open_flamingo.eval.classification_utils import IMAGENET_CLASSNAMES
+from open_flamingo.eval.classification_utils import (
+    IMAGENET_CLASSNAMES,
+    WATERBIRDS_CLASSNAMES,
+    CAMELYON17_CLASSNAMES,
+)
+
 
 SUPPORTED_TASKS = [
     "coco",
-    "flickr",
+    "flickr30",
     "vqav2",
     "ok_vqa",
     "vizwiz",
     "textvqa",
     "hateful_memes",
     "imagenet",
+    "waterbirds",
+    "camelyon17",
 ]
 
 
@@ -58,7 +66,7 @@ class CaptionDataset(Dataset):
                     self.image_val_dir_path, self.annotations[idx]["filename"]
                 )
             )
-        elif self.dataset_name == "flickr":
+        elif self.dataset_name == "flickr30":
             image = Image.open(
                 os.path.join(
                     self.image_train_dir_path, self.annotations[idx]["filename"]
@@ -133,6 +141,7 @@ class ImageNetDataset(ImageFolder):
         self.class_id_to_name = dict(
             zip(range(len(IMAGENET_CLASSNAMES)), IMAGENET_CLASSNAMES)
         )
+        self.class_id_array = torch.tensor([y for _, y in self.samples])
 
     def __getitem__(self, idx):
         sample, target = super().__getitem__(idx)
@@ -150,6 +159,7 @@ class HatefulMemesDataset(Dataset):
         self.image_dir_path = image_dir_path
         with open(annotations_path, "r") as f:
             self.annotations = [json.loads(line) for line in f]
+        self.class_id_array = torch.tensor([y["label"] for y in self.annotations])
 
     def __len__(self):
         return len(self.annotations)
@@ -165,4 +175,48 @@ class HatefulMemesDataset(Dataset):
             "ocr": annotation["text"],
             "class_name": "yes" if annotation["label"] == 1 else "no",
             "class_id": annotation["label"],
+        }
+
+
+class WILDSDataset(Dataset):
+    def __init__(self, dataset_name: str, split: str, root_dir: str):
+        import wilds
+
+        full_dataset = wilds.get_dataset(
+            dataset_name,
+            root_dir=root_dir,
+            download=True,
+        )
+        self.dataset = full_dataset.get_subset(split)
+        if dataset_name == "waterbirds":
+            self.class_id_to_name = {i: s for i, s in enumerate(WATERBIRDS_CLASSNAMES)}
+            self.grouper = wilds.common.grouper.CombinatorialGrouper(
+                dataset=full_dataset,
+                groupby_fields=["background", "y"],
+            )
+        elif dataset_name == "camelyon17":
+            self.class_id_to_name = {i: s for i, s in enumerate(CAMELYON17_CLASSNAMES)}
+            self.grouper = wilds.common.grouper.CombinatorialGrouper(
+                dataset=full_dataset,
+                groupby_fields=["hospital"],
+            )
+        else:
+            raise Exception(f"Unimplemented WILDS dataset {dataset_name}")
+        self.class_id_array = self.dataset.y_array
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        x, y, m = self.dataset[idx]
+        y = y.item()
+        return {
+            "id": idx,
+            "image": x,
+            "class_id": y,
+            "class_name": self.class_id_to_name[y],
+            "domain": self.grouper.group_str(
+                self.grouper.metadata_to_group(m.unsqueeze(0)).item()
+            ),
+            "metadata": m,
         }
