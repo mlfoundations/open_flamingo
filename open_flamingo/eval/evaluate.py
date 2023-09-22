@@ -78,6 +78,11 @@ parser.add_argument(
     "--wandb_entity",
     type=str,
 )
+parser.add_argument(
+    "--wandb_name",
+    type=str,
+    default=None,
+)
 
 # Trial arguments
 parser.add_argument("--shots", nargs="+", default=[0, 4, 8, 16, 32], type=int)
@@ -513,6 +518,7 @@ def main():
         wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
+            name=args.wandb_name,
             config=cfg_dict,
         )
 
