@@ -1,5 +1,5 @@
 """
-Helper scripts to prepare a vqa test-dev evaluation for EvalAI submission.
+Helper scripts to prepare a Vizwiz or VQAv2 test-dev evaluation for EvalAI submission.
 Note: EvalAI requires VQAv2 submissions to have predictions for all the questions in the test2015 set, not just the test-dev set.
 Given a json with a subset of the vqa questions, fill in the rest of the questions with an empty string as the model prediction.
 """

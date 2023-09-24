@@ -9,6 +9,7 @@ Notes:
 - VQAv2 test-dev and test-std annotations are not publicly available. 
   To evaluate on these splits, please follow the VQAv2 instructions and submit to EvalAI.
   This script will evaluate on the val split.
+- Vizwiz test-dev annotations are also not publicly available; please go through EvalAI.
 com
 
 export PYTHONFAULTHANDLER=1
@@ -26,7 +27,7 @@ srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evalua
     --vision_encoder_path ViT-L-14 \
     --vision_encoder_pretrained openai\
     --lm_path anas-awadalla/mpt-1b-redpajama-200b \
-    --lm_tokenizer_path anas-awadalla/mpt-1b-redpajama-200b \
+    --tokenizer_path anas-awadalla/mpt-1b-redpajama-200b \
     --cross_attn_every_n_layers 1 \
     --checkpoint_path "openflamingo/OpenFlamingo-3B-vitl-mpt1b/checkpoint.pt" \
     --results_file "results.json" \

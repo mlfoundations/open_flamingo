@@ -1,8 +1,5 @@
 # OpenFlamingo Evaluation Suite
-
 This is the evaluation module of OpenFlamingo. It contains a set of utilities for evaluating multimodal models on various benchmarking datasets.
-
-*This module is a work in progress! We will be updating this README as it develops. In the meantime, if you notice an issue, please file a Bug Report or Feature Request [here](https://github.com/mlfoundations/open_flamingo/issues/new/choose).*
 
 ## Supported datasets
 
@@ -19,10 +16,26 @@ This is the evaluation module of OpenFlamingo. It contains a set of utilities fo
 
 When evaluating a model using `num_shots` shots, we sample the exemplars from the training split. Performance is evaluated on a disjoint test split, subsampled to `--num_samples` examples (or using the full test split if `--num_samples=-1`).
 
-## Sample scripts
-Our codebase uses DistributedDataParallel to parallelize evaluation by default, so please make sure to set the `MASTER_ADDR` and `MASTER_PORT` environment variables or use `torchrun`. We provide a sample Slurm evaluation script in `open_flamingo/open_flamingo/scripts/run_eval.sh`. 
+For TextVQA and VizWiz we expect annotations to be formatted differently than the original datasets. We provide the custom annotations in `open_flamingo/open_flamingo/eval/data/`. We have also uploaded all the annotation files in a [huggingface dataset](https://huggingface.co/datasets/openflamingo/eval_benchmark/tree/main) for easy access.
+
+## Supported models
+This evaluation module interfaces with models using the `EvalModel` class defined in `eval/eval_models/eval_model.py`. The `EvalModel` wrapper standardizes the generation and rank classification interfaces.
+
+To help standardize VLM evaluations, we have implemented EvalModel wrappers for models from three code repositories:
+
+* This open_flamingo repository, i.e. all models created using this repository's `src` code
+* The pretrained [BLIP-2](https://huggingface.co/docs/transformers/main/model_doc/blip-2) models. Note that this model can only take in one image per input sequence; this is not to be confused with the BLIP-like implementation in the open_flamingo repository, which can take in arbitrarily interleaved image/text sequences
+* Huggingface's [IDEFICS](https://huggingface.co/blog/idefics) models
+
+## Distributed evaluation
+Our codebase uses DistributedDataParallel to parallelize evaluation by default, so please make sure to set the `MASTER_ADDR` and `MASTER_PORT` environment variables or use `torchrun` (see sample scripts section below).
+
+We have also implemented distributed evaluation using Deepspeed, which additionally shards model parameters across GPUs for memory savings. To use Deepspeed instead of DDP, use the `--deepspeed` flag.
 
 We also support evaluating at a lower precision using the `--precision` flag. We find minimal difference between evaluating at full precision vs. amp_bf16.
+
+## Sample scripts
+We provide sample Slurm evaluation scripts in the `scripts/` directory.
 
 To evaluate one of our pretrained checkpoints, we suggest first downloading a local copy of the weights, as follows:
 
@@ -43,8 +56,6 @@ print(checkpoint_path)
 ```
 
 This should place the OpenFlamingo model at the expected location in the evaluation script.
-
-For TextVQA and VizWiz we expect annotations to be formatted differently than the original datasets. We provide the custom annotations in `open_flamingo/open_flamingo/eval/data/`. We have also uploaded all the annotation files in a [huggingface dataset](https://huggingface.co/datasets/openflamingo/eval_benchmark/tree/main) for easy access.
 
 # Evaluating using RICES (Retrieval-based In-Context Example Selection)
 

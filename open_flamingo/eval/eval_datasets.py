@@ -7,6 +7,17 @@ from torchvision.datasets import ImageFolder
 
 from open_flamingo.eval.classification_utils import IMAGENET_CLASSNAMES
 
+SUPPORTED_TASKS = [
+    "coco",
+    "flickr",
+    "vqav2",
+    "ok_vqa",
+    "vizwiz",
+    "textvqa",
+    "hateful_memes",
+    "imagenet",
+]
+
 
 class CaptionDataset(Dataset):
     def __init__(

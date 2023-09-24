@@ -1,8 +1,22 @@
 # OpenFlamingo Training
-To train OpenFlamingo, please ensure your environment matches that of `environment.yml`.
+We provide efficient data loading and distributed training code.
+To train with OpenFlamingo, please ensure your environment matches that of `environment.yml`.
+
+Table of contents:
+
+* [Data](#data)
+* [Example commands](#example-training-command)
+* [Distributed training](#distributed-training)
 
 ## Data
 Our codebase uses [WebDataset](https://github.com/webdataset/webdataset) to efficiently load `.tar` files containing image and text sequences. We recommend resampling shards with replacement during training using the `--dataset_resampled` flag. 
+
+Supported pretraining datasets
+* LAION-2B
+* Multimodal C4 (MMC4)
+* ChatGPT-generated sequences from OpenFlamingo [technical report](https://arxiv.org/abs/2308.01390)
+
+We plan to add additional datasets in the future, and we welcome contributions! If you'd like to add support for a pretraining dataset, please open a PR.
 
 ### LAION-2B Dataset
 [LAION-2B](https://arxiv.org/abs/2210.08402) contains 2B web-scraped (image, text) pairs. 
@@ -27,7 +41,7 @@ Models trained with ChatGPT-generated sequences:
 * OpenFlamingo-4B-vitl-rpj3b-langinstruct
 
 ## Example training command
-We provide a sample Slurm training script in `scripts/`. You can also modify the following command:
+We provide sample Slurm training scripts in `scripts/`. You can also modify the following command:
 
 ```
 torchrun --nnodes=1 --nproc_per_node=4 train.py \
@@ -52,14 +66,17 @@ torchrun --nnodes=1 --nproc_per_node=4 train.py \
 *Note: The MPT-1B [base](https://huggingface.co/mosaicml/mpt-1b-redpajama-200b)  and [instruct](https://huggingface.co/mosaicml/mpt-1b-redpajama-200b-dolly) modeling code does not accept the `labels` kwarg or compute cross-entropy loss directly within `forward()`, as expected by our codebase. We suggest using a modified version of the MPT-1B models found [here](https://huggingface.co/anas-awadalla/mpt-1b-redpajama-200b) and [here](https://huggingface.co/anas-awadalla/mpt-1b-redpajama-200b-dolly).*
 
 ## Distributed training
+Our codebase supports distributed training using three frameworks:
 
-By default, `train.py` uses Pytorch's [DistributedDataParallel](https://pytorch.org/docs/stable/torch.nn.parallel.DistributedDataParallel.html) for training. 
-To use [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html), use the `--fsdp` flag. 
+* Pytorch's [DistributedDataParallel](https://pytorch.org/docs/stable/torch.nn.parallel.DistributedDataParallel.html). This is the default method used by `train.py`.
+* Pytorch's [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html) (FSDP). Use the `--fsdp` flag.
+* [DeepSpeed](https://github.com/microsoft/DeepSpeed) stages 1-3. Use the `--deepspeed` flag.
 
-Some notes on FSDP:
+Note that you should use exactly one of these training methods.
 
-* We recommend using the `--fsdp_use_orig_params` flag. If `--fsdp` is on without this flag, all language model embeddings will be unfrozen during training. (In contrast, the default behavior is to only train the newly added `<image>` and `<|endofchunk|>` tokens.)
-    * Note: we've encountered issues using OPT with this flag. Other language models should be compatible.
-* Our current FSDP wrapping strategy does not permit training language model embeddings that use tied weights (i.e., tied input / output embeddings). To train such models with FSDP, the language model embeddings must be frozen with the `--freeze_lm_embeddings` flag.
+`train/distributed.py` contains utilities to help with setting up distributed training using Slurm / `torchrun`. See example scripts in the `scripts` directory.
 
-We also implement gradient checkpointing and mixed precision training. Use the `--gradient_checkpointing` and `--precision` arguments respectively.
+### FSDP notes
+To use FSDP, make sure to use Pytorch Nightly (> 2.0.1). 
+
+We support two sharding strategies for FSDP: full sharding (model sharing across all nodes and GPUs) or hybrid sharding (model sharding across GPUs within nodes, data parallel between nodes). The former saves GPU memory; the latter saves on communication costs.

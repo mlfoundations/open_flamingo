@@ -1,24 +1,29 @@
 from typing import Optional
+import torch.nn as nn
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import open_clip
 
 from .flamingo import Flamingo
-from .flamingo_lm import FlamingoLMMixin
-from .utils import extend_instance
+from .kosmos import Kosmos
+from .blip import BLIP
+from .utils import hasattr_recursive, setattr_recursive
+
+SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos", "blip")
 
 
 def create_model_and_transforms(
     clip_vision_encoder_path: str,
     clip_vision_encoder_pretrained: str,
-    lang_encoder_path: str,
+    lang_model_path: str,
     tokenizer_path: str,
-    cross_attn_every_n_layers: int = 1,
+    model_family: str = "flamingo",
     use_local_files: bool = False,
     decoder_layers_attr_name: str = None,
-    freeze_lm_embeddings: bool = False,
     cache_dir: Optional[str] = None,
-    **flamingo_kwargs,
+    gradient_checkpointing: bool = False,
+    verbose: bool = True,
+    **model_kwargs,
 ):
     """
     Initialize a Flamingo model from a pretrained vision encoder and language encoder.
@@ -27,99 +32,124 @@ def create_model_and_transforms(
     Args:
         clip_vision_encoder_path (str): path to pretrained clip model (e.g. "ViT-B-32")
         clip_vision_encoder_pretrained (str): name of pretraining dataset for clip model (e.g. "laion2b_s32b_b79k")
-        lang_encoder_path (str): path to pretrained language encoder
+        lang_model_path (str): path to pretrained language encoder
         tokenizer_path (str): path to pretrained tokenizer
         cross_attn_every_n_layers (int, optional): determines how often to add a cross-attention layer. Defaults to 1.
         use_local_files (bool, optional): whether to use local files. Defaults to False.
         decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
-        freeze_lm_embeddings (bool, optional): whether to freeze LM input embeddings when configuring Perceiver.
         cache_dir (str, optional): path to cache directory for downloading OpenClip/HF weights.
+        gradient_checkpointing (bool, optional): whether to use gradient checkpointing. Defaults to False.
+        verbose (bool, optional): whether to print model info. Defaults to True.
     Returns:
         Flamingo: Flamingo model from pretrained vision and language encoders
         Image processor: Pipeline to preprocess input images
         Tokenizer: A tokenizer for the language model
     """
+
+    assert model_family in SUPPORTED_MODEL_FAMILIES
+
+    # load vision encoder
     vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
         clip_vision_encoder_path,
         pretrained=clip_vision_encoder_pretrained,
         cache_dir=cache_dir,
     )
-    # set the vision encoder to output the visual features
     vision_encoder.visual.output_tokens = True
+    vision_encoder = vision_encoder.visual
+    vis_hidden_dim = open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+        "width"
+    ]
 
+    # load tokenizer and ensure there is a pad token
     text_tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         local_files_only=use_local_files,
         trust_remote_code=True,
         cache_dir=cache_dir,
     )
-    # add Flamingo special tokens to the tokenizer
-    text_tokenizer.add_special_tokens(
-        {"additional_special_tokens": ["<|endofchunk|>", "<image>"]}
-    )
     if text_tokenizer.pad_token is None:
-        # Issue: GPT models don't have a pad token, which we use to
-        # modify labels for the loss.
-        text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
+        text_tokenizer.pad_token_id = text_tokenizer.eos_token_id
 
-    lang_encoder = AutoModelForCausalLM.from_pretrained(
-        lang_encoder_path,
+    # load langauge model
+    lang_model = AutoModelForCausalLM.from_pretrained(
+        lang_model_path,
         local_files_only=use_local_files,
         trust_remote_code=True,
         cache_dir=cache_dir,
     )
+    check_embedding_fns(lang_model)
 
-    # hacks for MPT-1B, which doesn't have a get_input_embeddings method
-    if "mpt-1b-redpajama-200b" in lang_encoder_path:
-
-        class EmbeddingFnMixin:
-            def get_input_embeddings(self):
-                return self.transformer.wte
-
-            def set_input_embeddings(self, new_embeddings):
-                self.transformer.wte = new_embeddings
-
-        extend_instance(lang_encoder, EmbeddingFnMixin)
-
-    # convert LM to FlamingoLM
-    extend_instance(lang_encoder, FlamingoLMMixin)
-
+    # init the model
     if decoder_layers_attr_name is None:
-        decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
-    lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
-    lang_encoder.resize_token_embeddings(len(text_tokenizer))
+        decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_model)
 
-    model = Flamingo(
-        vision_encoder,
-        lang_encoder,
-        text_tokenizer.encode("<|endofchunk|>")[-1],
-        text_tokenizer.encode("<image>")[-1],
-        vis_dim=open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
-            "width"
-        ],
-        cross_attn_every_n_layers=cross_attn_every_n_layers,
-        **flamingo_kwargs,
+    if model_family == "flamingo":
+        model = Flamingo(
+            vision_encoder=vision_encoder,
+            lang_model=lang_model,
+            vis_feature_dim=vis_hidden_dim,
+            initial_tokenizer_len=len(text_tokenizer),
+            gradient_checkpointing=gradient_checkpointing,
+            decoder_layers_attr_name=decoder_layers_attr_name,
+            pad_token_id=text_tokenizer.pad_token_id,
+            **model_kwargs,
+        )
+
+    elif model_family == "kosmos":
+        model = Kosmos(
+            vision_encoder=vision_encoder,
+            lang_model=lang_model,
+            vis_feature_dim=vis_hidden_dim,
+            initial_tokenizer_len=len(text_tokenizer),
+            gradient_checkpointing=gradient_checkpointing,
+            pad_token_id=text_tokenizer.pad_token_id,
+            decoder_layers_attr_name=decoder_layers_attr_name,
+            **model_kwargs,
+        )
+
+    elif model_family == "blip":
+        model = BLIP(
+            vision_encoder=vision_encoder,
+            lang_model=lang_model,
+            vis_feature_dim=vis_hidden_dim,
+            initial_tokenizer_len=len(text_tokenizer),
+            gradient_checkpointing=gradient_checkpointing,
+            pad_token_id=text_tokenizer.pad_token_id,
+            decoder_layers_attr_name=decoder_layers_attr_name,
+            **model_kwargs,
+        )
+
+    # add special tokens to the tokenizer and language models
+    text_tokenizer.add_special_tokens(
+        {"additional_special_tokens": list(model.special_tokens.values())}
+    )
+    model.lang_model.config.vocab_size = max(
+        len(text_tokenizer), model.lang_model.config.vocab_size
+    )  # Some models have larger vocab size (due to padding) than tokenizer length
+    model.set_special_token_ids(
+        {
+            v: text_tokenizer.convert_tokens_to_ids(v)
+            for v in model.special_tokens.values()
+        }
     )
 
-    # Freeze all parameters
-    model.requires_grad_(False)
-    assert sum(p.numel() for p in model.parameters() if p.requires_grad) == 0
+    # freeze appropriate parameters
+    model.set_trainable()
 
-    # Unfreeze perceiver, gated_cross_attn_layers, and LM input embeddings
-    model.perceiver.requires_grad_(True)
-    model.lang_encoder.gated_cross_attn_layers.requires_grad_(True)
-    if not freeze_lm_embeddings:
-        model.lang_encoder.get_input_embeddings().requires_grad_(True)
-        # TODO: investigate also training the output embeddings when untied
-
-    print(
-        f"Flamingo model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
-    )
-
+    # log model info
+    if verbose:
+        print(
+            f"{model_family} model initialized with {model.num_trainable_params:,} trainable parameters"
+        )
+        print(f"==========\n{model.num_trainable_params_per_module}")
+        print(f"==========\n{model.num_params_per_module}\n==========")
     return model, image_processor, text_tokenizer
 
 
 def _infer_decoder_layers_attr_name(model):
+    """
+    Infer the name of the attribute storing the decoder layers (as a ModuleList) in the model.
+    """
     for k in __KNOWN_DECODER_LAYERS_ATTR_NAMES:
         if k.lower() in model.__class__.__name__.lower():
             return __KNOWN_DECODER_LAYERS_ATTR_NAMES[k]
@@ -139,3 +169,57 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "mpt": "transformer.blocks",
     "mosaicgpt": "transformer.blocks",
 }
+
+
+def check_embedding_fns(lang_model):
+    """Checks for and attempts to set {get/set}_{input/output}_embeddings functions to the model"""
+    if not has_fn(lang_model, "get_input_embeddings"):
+        if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
+            lang_model.get_input_embeddings = lambda: lang_model.transformer.wte
+        elif hasattr_recursive(lang_model, "model.decoder.embed_tokens"):  # OPT
+            lang_model.get_input_embeddings = lambda: lang_model.decoder.embed_tokens
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_input_embeddings method but we couldn't determine the name of the input embeddings attribute. Please supply this manually in factory.py."
+            )
+
+    if not has_fn(lang_model, "set_input_embeddings"):
+        if hasattr_recursive(lang_model, "transformer.wte"):  # MPT
+            lang_model.set_input_embeddings = lambda x: setattr_recursive(
+                lang_model, "transformer.wte", x
+            )
+        elif hasattr_recursive(lang_model, "model.decoder.embed_tokens"):  # OPT
+            lang_model.set_input_embeddings = lambda x: setattr_recursive(
+                lang_model, "model.decoder.embed_tokens", x
+            )
+        else:
+            raise ValueError(
+                "We require the language encoder to have a set_input_embeddings method but we couldn't determine the name of the input embeddings attribute. Please supply this manually in factory.py."
+            )
+
+    if not has_fn(lang_model, "get_output_embeddings"):
+        if hasattr_recursive(lang_model, "lm_head"):
+            lang_model.get_output_embeddings = lambda: lang_model.lm_head
+        else:
+            raise ValueError(
+                "We require the language encoder to have a get_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
+            )
+
+    if not has_fn(lang_model, "set_output_embeddings"):
+        if hasattr_recursive(lang_model, "lm_head"):
+            lang_model.set_output_embeddings = lambda x: setattr_recursive(
+                lang_model, "lm_head", x
+            )
+        else:
+            raise ValueError(
+                "We require the language encoder to have a set_output_embeddings method but we couldn't determine the name of the output embeddings attribute. Please supply this manually in factory.py."
+            )
+
+
+def has_fn(model, fn_name):
+    """Try to call the fn_name function on the model"""
+    try:
+        getattr(model, fn_name)()
+        return True
+    except:
+        return False

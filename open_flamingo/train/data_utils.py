@@ -12,9 +12,7 @@ from dataclasses import dataclass
 from multiprocessing import Value
 
 import braceexpand
-import numpy as np
 import webdataset as wds
-from PIL import Image
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
@@ -44,7 +42,14 @@ class SharedEpoch:
 
 @dataclass
 class DataInfo:
+    """
+    DataInfo is a dataclass that holds information about a dataset.
+    """
+
+    name: str
     dataloader: DataLoader
+    batch_size: int
+    loss_multiplier: int
     sampler: DistributedSampler = None
     shared_epoch: SharedEpoch = None
 
@@ -56,6 +61,13 @@ class DataInfo:
 
 
 def get_dataset_size(shards):
+    """
+    Get the number of samples in a dataset and the number of shards in a dataset
+    based on the shards list.
+    Returns None for the number of samples if is undefined.
+    One can define the number of samples using a sizes.json file in the same directory
+    or a __len__ file in the same directory.
+    """
     shards_list = list(braceexpand.braceexpand(shards))
     dir_path = os.path.dirname(shards[0])
     sizes_filename = os.path.join(dir_path, "sizes.json")
@@ -75,28 +87,14 @@ def get_dataset_size(shards):
         total_size = ast.literal_eval(open(len_filename, "r").read())
     else:
         total_size = None  # num samples undefined
-        # some common dataset sizes (at time of authors last download)
-        # CC3M (train): 2905954
-        # CC12M: 10968539
-        # LAION-400M: 407332084
-        # LAION-2B (english): 2170337258
     num_shards = len(shards_list)
     return total_size, num_shards
 
 
-def count_samples(dataloader):
-    os.environ["WDS_EPOCH"] = "0"
-    n_elements, n_batches = 0, 0
-    for images, texts in dataloader:
-        n_batches += 1
-        n_elements += len(images)
-        assert len(images) == len(texts)
-    return n_elements, n_batches
-
-
 def log_and_continue(exn):
     """Call in an exception handler to ignore any exception, issue a warning, and continue."""
-    logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
+    if "images in sample" not in repr(exn):
+        logging.warning(f"Handling webdataset error ({repr(exn)}). Ignoring.")
     return True
 
 

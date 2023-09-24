@@ -1,10 +1,14 @@
 """
-Util functions for setting up distributed training.
-Credit: https://github.com/mlfoundations/open_clip/blob/main/src/training/distributed.py
+Util functions for distributed training, FSDP, and Deepspeed.
 """
 
 import os
 import torch
+from data import SUPPORTED_DATASETS
+
+##################################
+# SLURM setup; Credit: open_clip #
+##################################
 
 try:
     import horovod.torch as hvd
@@ -130,3 +134,139 @@ def init_distributed_device(args):
     args.device = device
     device = torch.device(device)
     return device
+
+
+#####################################
+# FSDP and Deepspeed util functions #
+#####################################
+
+
+def get_fsdp_mixed_precision_policy(
+    precision: str,
+    reduce_param_precision=False,
+    reduce_communication_precision=True,
+    reduce_buffer_precision=True,
+):
+    """
+    Returns the FSDP mixed precision policy for a given precision.
+    """
+    if "bfloat16" in precision or "bf16" in precision:
+        cast_dtype = torch.bfloat16
+    elif precision == "fp16":
+        cast_dtype = torch.float16
+    else:
+        cast_dtype = torch.float32
+
+    if cast_dtype == torch.float32:
+        return None
+
+    from torch.distributed.fsdp import MixedPrecision
+
+    return MixedPrecision(
+        param_dtype=cast_dtype if reduce_param_precision else torch.float32,
+        reduce_dtype=cast_dtype if reduce_communication_precision else torch.float32,
+        buffer_dtype=cast_dtype if reduce_buffer_precision else torch.float32,
+    )
+
+
+def get_fsdp_config(
+    args,
+    device_id,
+):
+    """
+    Return kwargs for FSDP wrapper.
+    This includes some hard-coded settings.
+    """
+    # init MixedPrecision
+    mp_policy = get_fsdp_mixed_precision_policy(
+        args.precision,
+        reduce_param_precision=False,
+        reduce_communication_precision=True,
+        reduce_buffer_precision=True,
+    )
+
+    # init FSDP
+    from torch.distributed.fsdp import (
+        ShardingStrategy,
+        BackwardPrefetch,
+    )
+
+    return dict(
+        cpu_offload=None,
+        device_id=device_id,
+        sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
+        sharding_strategy=ShardingStrategy.FULL_SHARD
+        if args.fsdp_sharding_strategy == "full"
+        else ShardingStrategy.HYBRID_SHARD,
+        use_orig_params=True,
+        mixed_precision=mp_policy,
+        forward_prefetch=True,
+        backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+        limit_all_gathers=True,
+    )
+
+
+def get_fsdp_checkpoint_config(args):
+    """
+    Return kwargs for FSDP checkpointing.
+    """
+    from torch.distributed.fsdp import (
+        FullStateDictConfig,
+        StateDictType,
+    )
+    from torch.distributed.fsdp.api import FullOptimStateDictConfig
+
+    # to avoid GPU OOM when loading/saving ckpts, load/save on CPU
+    # this is slow
+    return dict(
+        state_dict_type=StateDictType.FULL_STATE_DICT,
+        state_dict_config=FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
+        optim_state_dict_config=FullOptimStateDictConfig(
+            rank0_only=True, offload_to_cpu=True
+        ),
+    )
+
+
+def get_deepspeed_config(
+    args,
+):
+    """
+    Return kwargs for Deepspeed config.
+    """
+    zero_opt_dict = {
+        "stage": args.deepspeed_stage,
+        "overlap_comm": True,
+        "contiguous_gradients": True,
+        "offload_param": {"device": "none"},  # TODO: Support CPU offload
+        "offload_optimizer": {"device": "none"},
+        "stage3_param_persistence_threshold": 1e4,
+        "stage3_max_live_parameters": 3e7,
+        "stage3_prefetch_bucket_size": 3e7,
+        "memory_efficient_linear": False,
+    }
+    # sum all the args that start with batch_size_ to get the total batch size
+    total_batch_size = sum(
+        [getattr(args, arg) for arg in vars(args) if arg.startswith("batch_size_")]
+    )
+    ds_config = {
+        "train_batch_size": total_batch_size
+        * args.world_size
+        * args.gradient_accumulation_steps,
+        "train_micro_batch_size_per_gpu": total_batch_size
+        * args.gradient_accumulation_steps,
+        "steps_per_print": args.logging_steps,
+        "zero_optimization": zero_opt_dict,
+        "gradient_clipping": 1.0,
+        "prescale_gradients": False,
+        "wall_clock_breakdown": False,
+    }
+
+    if args.precision == "fp16":
+        ds_config["fp16"] = {"enabled": True}
+    elif args.precision == "bf16":
+        ds_config["bf16"] = {"enabled": True}
+    # amp not supported with DeepSpeed
+    elif "amp" in args.precision:
+        raise ValueError("amp not supported with DeepSpeed")
+
+    return ds_config

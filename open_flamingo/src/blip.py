@@ -1,9 +1,9 @@
 from torch import nn
-from .helpers import PerceiverResampler, GatedCrossAttentionBlock
-from .vlm import VLMWithCrossAttention
+from .helpers import QFormerWithProjection
+from .vlm import VLMWithLanguageStream
 
 
-class Flamingo(VLMWithCrossAttention):
+class BLIP(VLMWithLanguageStream):
     def __init__(
         self,
         vision_encoder: nn.Module,
@@ -11,42 +11,45 @@ class Flamingo(VLMWithCrossAttention):
         vis_feature_dim: int,
         initial_tokenizer_len: int,
         pad_token_id: int,
-        cross_attn_every_n_layers: int = 1,
         decoder_layers_attr_name: str = None,
         gradient_checkpointing: bool = False,
     ):
         """
+        Language stream VLM that uses a Q-former, similar to BLIP.
+        Reference: https://github.com/huggingface/transformers/blob/main/src/transformers/models/blip_2/modeling_blip_2.py
+
         Args:
             vision_encoder (nn.Module): HF CLIPModel
-            lang_model (nn.Module): HF causal language model
+            lang_encoder (nn.Module): HF causal language model
             vis_feature_dim (int): final dimension of the visual features outputted by the vision_encoder
             initial_tokenizer_len (int): size of the tokenizer vocab
-            cross_attn_every_n_layers (int, optional): How often to apply cross attention after transformer layer. Defaults to 1.
+            padding_token_id (int): id of the padding token. None if no padding token; then a padding token
+                will be inserted into self.special_tokens, which factory.py fills after creating new tokens
             decoder_layers_attr_name (str, optional): name of the decoder layers attribute. Defaults to None.
             gradient_checkpointing (bool, optional): whether to use gradient checkpointing. Defaults to False.
         """
         self._special_tokens = {
-            "eoc_token": "<|endofchunk|>",
             "media_token": "<image>",
         }
+        lang_embedding_dim = lang_model.get_input_embeddings().weight.shape[1]
         super().__init__(
             vision_encoder=vision_encoder,
-            vision_tokenizer=PerceiverResampler(dim=vis_feature_dim),
+            vision_tokenizer=QFormerWithProjection(
+                dim_input=vis_feature_dim, dim_out=lang_embedding_dim
+            ),
             lang_model=lang_model,
-            gradient_checkpointing=gradient_checkpointing,
             initial_tokenizer_len=initial_tokenizer_len,
-            cross_attn_every_n_layers=cross_attn_every_n_layers,
+            gradient_checkpointing=gradient_checkpointing,
             decoder_layers_attr_name=decoder_layers_attr_name,
             pad_token_id=pad_token_id,
         )
 
     def set_trainable(self):
         """
-        Freeze everything except: perceiver, gated_cross_attn_layers, and inserted LM input embeddings
+        Freeze everything except the Q-former and the inserted LM embeddings
         """
         self.requires_grad_(False)
         self.vision_tokenizer.requires_grad_(True)
-        self.lang_model.gated_cross_attn_layers.requires_grad_(True)
         self.lang_model.get_output_embeddings().set_requires_grad(
             require_regular_grad=False,
             require_additional_grad=True,
@@ -57,7 +60,5 @@ class Flamingo(VLMWithCrossAttention):
         )
 
     def _should_apply_weight_decay(self, parameter_name):
-        """
-        Flamingo applies 0.1 weight decay to cross attention parameters
-        """
-        return "gated_cross_attn" in parameter_name
+        """BLIP applies 0.05 weight decay to everything"""
+        return True

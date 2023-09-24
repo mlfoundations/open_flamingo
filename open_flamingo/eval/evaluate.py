@@ -5,43 +5,43 @@ import os
 import uuid
 import random
 from collections import defaultdict
-
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
 import utils
 import math
+from tqdm import tqdm
 
+from open_flamingo.eval.eval_models import (
+    SUPPORTED_MODELS,
+    ZERO_SHOT_ONLY_MODELS,
+    get_eval_model,
+    BaseEvalModel,
+)
+from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
+
+from rices import RICES
+from classification_utils import (
+    IMAGENET_CLASSNAMES,
+    HM_CLASSNAMES,
+)
 from coco_metric import compute_cider, postprocess_captioning_generation
 from eval_datasets import (
+    SUPPORTED_TASKS,
     CaptionDataset,
     VQADataset,
     ImageNetDataset,
     HatefulMemesDataset,
 )
-from rices import RICES
-from tqdm import tqdm
-
-
-from classification_utils import (
-    IMAGENET_CLASSNAMES,
-    HM_CLASSNAMES,
-)
-
-from eval_model import BaseEvalModel
-
 from ok_vqa_utils import postprocess_ok_vqa_generation
-from open_flamingo.src.flamingo import Flamingo
 from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
 
-from open_flamingo.train.distributed import init_distributed_device, world_info_from_env
-
 parser = argparse.ArgumentParser()
-
 parser.add_argument(
     "--model",
     type=str,
-    help="Model name. Currently only `OpenFlamingo` is supported.",
+    choices=SUPPORTED_MODELS,
+    help="Model to evaluate.",
     default="open_flamingo",
 )
 parser.add_argument(
@@ -383,34 +383,59 @@ parser.add_argument(
     help="Use horovod for distributed training.",
 )
 parser.add_argument(
+    "--local_rank",
+    default=0,
+    type=int,
+    help="Rank of distributed process (default: 0). Usually overwritten by world_info_from_env()",
+)
+parser.add_argument(
     "--no-set-device-rank",
     default=False,
     action="store_true",
     help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
 )
+parser.add_argument(
+    "--deepspeed",
+    default=False,
+    action="store_true",
+    help="Whether to use deepspeed for distributed inference.",
+)
 
 
 def main():
     args, leftovers = parser.parse_known_args()
-    module = importlib.import_module(f"open_flamingo.eval.models.{args.model}")
-
-    model_args = {
-        leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
-    }
-    eval_model = module.EvalModel(model_args)
 
     # set up distributed evaluation
     args.local_rank, args.rank, args.world_size = world_info_from_env()
     device_id = init_distributed_device(args)
-    eval_model.set_device(device_id)
-    eval_model.init_distributed()
+    model_args = {
+        leftovers[i].lstrip("-"): leftovers[i + 1] for i in range(0, len(leftovers), 2)
+    }
+    model_args["device"] = device_id
 
-    if args.model != "open_flamingo" and args.shots != [0]:
-        raise ValueError("Only 0 shot eval is supported for non-open_flamingo models")
+    # initialize model
+    eval_model = get_eval_model(args.model, model_args, init_on_device=args.deepspeed)
+    eval_model.init_distributed(
+        local_rank=args.local_rank,
+        world_size=args.world_size,
+        use_deepspeed=args.deepspeed,
+    )
+
+    # Validate args
+    if args.model in ZERO_SHOT_ONLY_MODELS and args.shots != [0]:
+        raise ValueError(f"Only 0 shot eval is supported for {args.model}")
 
     if len(args.trial_seeds) != args.num_trials:
         raise ValueError("Number of trial seeds must be == number of trials.")
 
+    for dataset in SUPPORTED_TASKS:
+        if (
+            getattr(args, f"eval_{dataset}")
+            and dataset not in eval_model.supported_tasks
+        ):
+            raise ValueError(f"Model {args.model} does not support {dataset}.")
+
+    # Run through datasets and evaluate
     results = defaultdict(list)
 
     if args.eval_flickr30:
@@ -618,7 +643,7 @@ def main():
                     num_shots=shot,
                     seed=seed,
                     dataset_name="textvqa",
-                    max_generation_length=10,
+                    max_new_tokens=10,
                     cached_features=cached_features,
                 )
                 if args.rank == 0:
@@ -729,8 +754,8 @@ def evaluate_captioning(
     args: argparse.Namespace,
     eval_model: BaseEvalModel,
     seed: int = 42,
-    min_generation_length: int = 0,
-    max_generation_length: int = 20,
+    min_new_tokens: int = 0,
+    max_new_tokens: int = 20,
     num_beams: int = 3,
     length_penalty: float = 0.0,
     num_shots: int = 8,
@@ -743,7 +768,7 @@ def evaluate_captioning(
         args (argparse.Namespace): arguments
         eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): seed for random number generator. Defaults to 42.
-        max_generation_length (int, optional): maximum length of the generated caption. Defaults to 20.
+        max_new_tokens (int, optional): maximum length of the generated caption. Defaults to 20.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of in-context samples to use. Defaults to 8.
@@ -843,8 +868,8 @@ def evaluate_captioning(
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
             batch_text=batch_text,
-            min_generation_length=min_generation_length,
-            max_generation_length=max_generation_length,
+            min_new_tokens=min_new_tokens,
+            max_new_tokens=max_new_tokens,
             num_beams=num_beams,
             length_penalty=length_penalty,
         )
@@ -900,8 +925,8 @@ def evaluate_vqa(
     args: argparse.Namespace,
     eval_model: BaseEvalModel,
     seed: int = 42,
-    min_generation_length: int = 0,
-    max_generation_length: int = 5,
+    min_new_tokens: int = 0,
+    max_new_tokens: int = 5,
     num_beams: int = 3,
     length_penalty: float = 0.0,
     num_shots: int = 8,
@@ -915,7 +940,7 @@ def evaluate_vqa(
         args (argparse.Namespace): arguments
         eval_model (BaseEvalModel): model to evaluate
         seed (int, optional): random seed. Defaults to 42.
-        max_generation_length (int, optional): max generation length. Defaults to 5.
+        max_new_tokens (int, optional): max generation length. Defaults to 5.
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of shots to use. Defaults to 8.
@@ -1036,8 +1061,8 @@ def evaluate_vqa(
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
             batch_text=batch_text,
-            min_generation_length=min_generation_length,
-            max_generation_length=max_generation_length,
+            min_new_tokens=min_new_tokens,
+            max_new_tokens=max_new_tokens,
             num_beams=num_beams,
             length_penalty=length_penalty,
         )
