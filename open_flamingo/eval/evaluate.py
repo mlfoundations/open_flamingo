@@ -1342,7 +1342,7 @@ def evaluate_classification(
         # return avg and worst group accuracies
         y_pred = torch.Tensor([pred["pred_class_id"] for pred in all_predictions])
         y_true = torch.Tensor([pred["gt_id"] for pred in all_predictions])
-        metadata = torch.stack([pred["metadata"] for pred in all_predictions])
+        metadata = torch.Tensor([pred["metadata"] for pred in all_predictions])
         all_results = test_dataset.dataset.eval(y_pred, y_true, metadata)[0]
         return all_results
     else:
