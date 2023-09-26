@@ -31,7 +31,10 @@ from classification_utils import (
     IMAGENET_CLASSNAMES,
     HM_CLASSNAMES,
     WATERBIRDS_CLASSNAMES,
+    CELEBA_CLASSNAMES,
     CAMELYON17_CLASSNAMES,
+    FMOW_CLASSNAMES,
+    IWILDCAM_CLASSNAMES,
 )
 
 from eval_model import BaseEvalModel
@@ -52,7 +55,10 @@ SUPPORTED_DATASETS = [
     "flickr30",
     "hateful_memes",
     "waterbirds",
+    "celebA",
     "camelyon17",
+    "iwildcam",
+    "fmow",
 ]
 
 parser = argparse.ArgumentParser()
@@ -612,10 +618,43 @@ def main():
             no_kv_caching=args.no_caching_for_classification,
         )
 
+    if args.eval_celebA:
+        eval_dataset(
+            args,
+            dataset_name="celebA",
+            eval_model=eval_model,
+            results=results,
+            eval_fn=evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+
     if args.eval_camelyon17:
         eval_dataset(
             args,
             dataset_name="camelyon17",
+            eval_model=eval_model,
+            results=results,
+            eval_fn=evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+
+    if args.eval_iwildcam:
+        eval_dataset(
+            args,
+            dataset_name="iwildcam",
+            eval_model=eval_model,
+            results=results,
+            eval_fn=evaluate_classification,
+            use_prompt_ensembling=args.classification_prompt_ensembling,
+            no_kv_caching=args.no_caching_for_classification,
+        )
+
+    if args.eval_fmow:
+        eval_dataset(
+            args,
+            dataset_name="fmow",
             eval_model=eval_model,
             results=results,
             eval_fn=evaluate_classification,
@@ -1080,7 +1119,7 @@ def evaluate_classification(
         )
         all_class_names = HM_CLASSNAMES
         k = 1
-    elif dataset_name in ("waterbirds",):  # subpopulation shift datasets
+    elif dataset_name in ("waterbirds", "celebA"):  # subpopulation shift datasets
         train_dataset = WILDSDataset(
             dataset_name=dataset_name,
             split="train",
@@ -1091,12 +1130,18 @@ def evaluate_classification(
             split="test",
             root_dir=args.wilds_root,
         )
-        prompt_fn = lambda x, test: eval_model.get_waterbirds_prompt(
-            label=x["class_name"] if not test else None
-        )
-        all_class_names = WATERBIRDS_CLASSNAMES
         k = 1
-    elif dataset_name == "camelyon17":
+        if dataset_name=='waterbirds':
+            prompt_fn = lambda x, test: eval_model.get_waterbirds_prompt(
+                label=x["class_name"] if not test else None
+            )
+            all_class_names = WATERBIRDS_CLASSNAMES
+        elif dataset_name=='celebA':
+            prompt_fn = lambda x, test: eval_model.get_celebA_prompt(
+                label=x["class_name"] if not test else None
+            )
+            all_class_names = CELEBA_CLASSNAMES
+    elif dataset_name in ("camelyon17", "fmow", "iwildcam"):
         train_dataset = WILDSDataset(
             dataset_name=dataset_name,
             split="train",
@@ -1107,11 +1152,22 @@ def evaluate_classification(
             split=args.wilds_split,
             root_dir=args.wilds_root,
         )
-        prompt_fn = lambda x, test: eval_model.get_camelyon17_prompt(
-            label=x["class_name"] if not test else None
-        )
-        all_class_names = CAMELYON17_CLASSNAMES
         k = 1
+        if dataset_name=="camelyon17":
+            prompt_fn = lambda x, test: eval_model.get_camelyon17_prompt(
+                label=x["class_name"] if not test else None
+            )
+            all_class_names = CAMELYON17_CLASSNAMES
+        elif dataset_name=="fmow":
+            prompt_fn = lambda x, test: eval_model.get_fmow_prompt(
+                label=x["class_name"] if not test else None
+            )
+            all_class_names = FMOW_CLASSNAMES
+        elif dataset_name=="iwildcam":
+            prompt_fn = lambda x, test: eval_model.get_iwildcam_prompt(
+                label=x["class_name"] if not test else None
+            )
+            all_class_names = IWILDCAM_CLASSNAMES
     else:
         raise ValueError(f"Unsupported dataset {dataset_name}")
 
@@ -1282,7 +1338,7 @@ def evaluate_classification(
             for pred in all_predictions
         ]
         return {"roc_auc": roc_auc_score(gts, pred_scores)}
-    elif dataset_name == "waterbirds":
+    elif dataset_name in ("waterbirds", "celebA", "camelyon17", "fmow", "iwildcam"):
         # return avg and worst group accuracies
         y_pred = torch.Tensor([pred["pred_class_id"] for pred in all_predictions])
         y_true = torch.Tensor([pred["gt_id"] for pred in all_predictions])

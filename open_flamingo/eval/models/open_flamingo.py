@@ -332,5 +332,14 @@ class EvalModel(BaseEvalModel):
     def get_waterbirds_prompt(self, label=None) -> str:
         return f"<image>Question: Is this a landbird or waterbird? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
 
+    def get_celebA_prompt(self, label=None) -> str:
+        return f"<image>Question: Is the hair color blond or not blond? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+
     def get_camelyon17_prompt(self, label=None) -> str:
         return f"<image>Question: Is this a normal tissue or cancer tissue? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+
+    def get_fmow_prompt(self, label=None) -> str:
+        return f"<image>Question: What building or land use is in this satellite imagery? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+
+    def get_iwildcam_prompt(self, label=None) -> str:
+        return f"<image>Question: What animal species is in this photo if any? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
