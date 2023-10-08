@@ -94,11 +94,11 @@ def preprocess_text(text: str) -> str:
         .replace("<image> ", "<image>")
         .replace(" <image>", "<image>")
     )
-    return text
+    return f"{text}<|endofchunk|>"
 
 
 def tokenize_text(tokenizer, text: str, max_tokens:int):
-    text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
+    text = f"{text}{tokenizer.eos_token}"
     tokenizer.padding_side = "right"
     return tokenizer(
         text,
@@ -159,8 +159,10 @@ def preprocess_gpt_interleaved(
 
         # preprocess and tokenize text
         text = preprocess_text(text)
-        indices = [m.start() for m in re.finditer("<image>", text)]
-        start_index, end_index = indices[chunk_ixs[0]], indices[chunk_ixs[-1]]
+        # get the start idx of the 1st image token and the end idx of the last eoc token of the chunk
+        image_token_start_indices = [m.start() for m in re.finditer("<image>", text)][:max_num_images]
+        eoc_token_end_indices = [m.end() for m in re.finditer("<|endofchunk|>", text)][:max_num_images]
+        start_index, end_index = image_token_start_indices[chunk_ixs[0]], eoc_token_end_indices[chunk_ixs[-1]]
         text = text[start_index:end_index]
         text_tensor = tokenize_text(tokenizer, text, max_tokens)
 
