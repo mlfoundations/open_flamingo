@@ -27,6 +27,11 @@ _SHARD_SHUFFLE_INITIAL = 500
 _SAMPLE_SHUFFLE_SIZE = 5000
 _SAMPLE_SHUFFLE_INITIAL = 1000
 
+# Tokens
+IMG = "<image>"
+EOC = "<|endofchunk|>"
+
+
 try:
     import horovod.torch as hvd
 except ImportError:
@@ -60,9 +65,7 @@ def preprocess_laion_text(sample, tokenizer, max_tokens=32):
     Captions are truncated to 32 tokens by default.
     """
     tokenizer.padding_side = "right"
-    sample = [
-        (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample
-    ]
+    sample = [(f"{IMG}{s.strip()}{EOC}{tokenizer.eos_token}") for s in sample]
     text = tokenizer(
         sample,
         max_length=max_tokens,
@@ -89,12 +92,12 @@ def zero_pad_image_tensors(image_tensors, max_num_images: int):
 
 def preprocess_text(text: str) -> str:
     text = (
-        text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
-        .replace(" <|endofchunk|>", "<|endofchunk|>")  # whitespace cleanup
-        .replace("<image> ", "<image>")
-        .replace(" <image>", "<image>")
+        text.replace(EOC, "", 1)  # but remove first eoc
+        .replace(f" {EOC}", EOC)  # whitespace cleanup
+        .replace(f"{IMG} ", IMG)
+        .replace(f" {IMG}", IMG)
     )
-    return f"{text}<|endofchunk|>"
+    return f"{text}{EOC}"
 
 
 def tokenize_text(tokenizer, text: str, max_tokens: int):
@@ -110,13 +113,11 @@ def tokenize_text(tokenizer, text: str, max_tokens: int):
 
 
 def sample_validation(tokenizer, text_tensor, min_num_images):
+    img_tokens_idx = tokenizer.additional_special_tokens_ids[
+        tokenizer.additional_special_tokens.index(IMG)
+    ]
     # reject sequences with too few images (after truncation)
-    num_images = torch.count_nonzero(
-        text_tensor["input_ids"]
-        == tokenizer.additional_special_tokens_ids[
-            tokenizer.additional_special_tokens.index("<image>")
-        ]
-    )
+    num_images = torch.count_nonzero(text_tensor["input_ids"] == img_tokens_idx)
     if num_images < min_num_images:
         raise ValueError(f"Fewer than {min_num_images} images in sample")
     # 50% chance of keeping single image samples
@@ -124,13 +125,7 @@ def sample_validation(tokenizer, text_tensor, min_num_images):
         raise ValueError("Only one image in sample")
 
     # avoid the situation where there's one <image> token and it's at the end
-    if (
-        num_images == 1
-        and text_tensor["input_ids"][:, -1]
-        == tokenizer.additional_special_tokens_ids[
-            tokenizer.additional_special_tokens.index("<image>")
-        ]
-    ):
+    if num_images == 1 and text_tensor["input_ids"][:, -1] == img_tokens_idx:
         raise ValueError(
             "Only one image at the end of sample, so labels will all be -100"
         )
@@ -144,6 +139,7 @@ def preprocess_gpt_interleaved(
     """
     text = info["example"]
     text = re.sub(r"_!_IMAGE\d+_!_", "<|endofchunk|><image>", text)
+    text = preprocess_text(text)
 
     # convert images from base64 to PIL
     images = []
@@ -162,18 +158,14 @@ def preprocess_gpt_interleaved(
                 chunk_image_tensors, max_num_images
             )
 
-        # preprocess and tokenize text
-        text = preprocess_text(text)
         # get the start idx of the 1st image token and the end idx of the last eoc token of the chunk
-        image_token_start_indices = [m.start() for m in re.finditer("<image>", text)][
+        image_token_start_idx = [m.start() for m in re.finditer(IMG, text)][
             :max_num_images
         ]
-        eoc_token_end_indices = [m.end() for m in re.finditer("<|endofchunk|>", text)][
-            :max_num_images
-        ]
+        eoc_token_end_idx = [m.end() for m in re.finditer(EOC, text)][:max_num_images]
         start_index, end_index = (
-            image_token_start_indices[chunk_ixs[0]],
-            eoc_token_end_indices[chunk_ixs[-1]],
+            image_token_start_idx[chunk_ixs[0]],
+            eoc_token_end_idx[chunk_ixs[-1]],
         )
         text = text[start_index:end_index]
         text_tensor = tokenize_text(tokenizer, text, max_tokens)
@@ -263,7 +255,7 @@ def preprocess_interleaved(
         # preprocess and tokenize text
         # add in <image> and <eoc> tokens
         for ix in sentence_ixs:
-            sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
+            sentences[ix] = f"{EOC}{IMG}{sentences[ix]}"
         text = " ".join(sentences)
         text = preprocess_text(text)
         text_tensor = tokenize_text(tokenizer, text, max_tokens)
