@@ -159,15 +159,9 @@ def preprocess_gpt_interleaved(
             )
 
         # get the start idx of the 1st image token and the end idx of the last eoc token of the chunk
-        image_token_start_idx = [m.start() for m in re.finditer(IMG, text)][
-            :max_num_images
-        ]
-        eoc_token_end_idx = [m.end() for m in re.finditer(EOC, text)][:max_num_images]
-        start_index, end_index = (
-            image_token_start_idx[chunk_ixs[0]],
-            eoc_token_end_idx[chunk_ixs[-1]],
-        )
-        text = text[start_index:end_index]
+        img_tkn_start_idx = [m.start() for m in re.finditer(IMG, text)][:max_num_images]
+        eoc_tkn_end_idx = [m.end() for m in re.finditer(EOC, text)][:max_num_images]
+        text = text[img_tkn_start_idx[chunk_ixs[0]] : eoc_tkn_end_idx[chunk_ixs[-1]]]
         text_tensor = tokenize_text(tokenizer, text, max_tokens)
 
         sample_validation(tokenizer, text_tensor, min_num_images)
@@ -212,8 +206,7 @@ def preprocess_interleaved(
         if len(rawbytes) // 1000 <= MIN_KB:
             continue
 
-        image = Image.open(io.BytesIO(rawbytes)).convert("RGB")
-        valid_images.append(image)
+        valid_images.append(Image.open(io.BytesIO(rawbytes)).convert("RGB"))
         valid_image_indices.append(i)
 
     if len(valid_image_indices) == 0:
