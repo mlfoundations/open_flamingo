@@ -1,6 +1,7 @@
 """
 Preprocess and load datasets for training.
 """
+from typing import List, Tuple
 
 import functools
 import io
@@ -72,6 +73,66 @@ def preprocess_laion_text(sample, tokenizer, max_tokens=32):
     return text["input_ids"], text["attention_mask"]
 
 
+def zero_pad_image_tensors(image_tensors, max_num_images: int):
+    zero_padding = torch.zeros(
+        (
+            max_num_images - len(image_tensors),
+            N_CHANNELS,
+            image_tensors[0].shape[1],
+            image_tensors[0].shape[2],
+        ),
+        dtype=torch.float,
+    )
+    padded_image_tensors = torch.cat((image_tensors, zero_padding), dim=0)
+    return padded_image_tensors
+
+
+def preprocess_text(text: str) -> str:
+    text = (
+        text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
+        .replace(" <|endofchunk|>", "<|endofchunk|>") # whitespace cleanup
+        .replace("<image> ", "<image>")
+        .replace(" <image>", "<image>")
+    )
+    return text
+
+
+def tokenize_text(tokenizer, text: str, max_tokens:int):
+    text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
+    tokenizer.padding_side = "right"
+    return tokenizer(
+        text,
+        max_length=max_tokens,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
+    )
+
+def sample_validation(tokenizer, text_tensor, min_num_images):
+    # reject sequences with too few images (after truncation)
+    num_images = torch.count_nonzero(
+        text_tensor["input_ids"]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
+    )
+    if num_images < min_num_images:
+        raise ValueError(f"Fewer than {min_num_images} images in sample")
+    # 50% chance of keeping single image samples
+    elif num_images == 1 and random.random() <= 0.5:  
+        raise ValueError("Only one image in sample")
+
+    # avoid the situation where there's one <image> token and it's at the end
+    if (
+        num_images == 1
+        and text_tensor["input_ids"][:, -1]
+        == tokenizer.additional_special_tokens_ids[
+            tokenizer.additional_special_tokens.index("<image>")
+        ]
+    ):
+        raise ValueError("Only one image at the end of sample, so labels will all be -100")
+
+
 def preprocess_gpt_interleaved(
     info, tokenizer, clip_processor, min_num_images, max_num_images, max_tokens=256
 ):
@@ -90,49 +151,22 @@ def preprocess_gpt_interleaved(
 
     # preprocess and pad images
     images_tensors = preprocess_image(images, clip_processor)
-    keep_ixs = range(min(len(images_tensors), max_num_images))
-    images_tensors = images_tensors[keep_ixs]
-    if len(images_tensors) < max_num_images:
-        zero_padding = torch.zeros(
-            (max_num_images - len(images_tensors), 3, 224, 224), dtype=torch.float
-        )
-        images_tensors = torch.cat((images_tensors, zero_padding), dim=0)
+    for pos in range(0, len(images_tensors), max_num_images):
+        chunk_ixs = range(pos, pos + max_num_images)
+        chunk_image_tensors = images_tensors[chunk_ixs]
+        if len(chunk_image_tensors) < max_num_images:
+            chunk_image_tensors = zero_pad_image_tensors(chunk_image_tensors, max_num_images)
 
-    # preprocess and tokenize text
-    text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
-    # whitespace cleanup
-    text = (
-        text.replace(" <|endofchunk|>", "<|endofchunk|>")
-        .replace("<image> ", "<image>")
-        .replace(" <image>", "<image>")
-    )
+        # preprocess and tokenize text
+        text = preprocess_text(text)
+        indices = [m.start() for m in re.finditer("<image>", text)]
+        start_index, end_index = indices[chunk_ixs[0]], indices[chunk_ixs[-1]]
+        text = text[start_index:end_index]
+        text_tensor = tokenize_text(tokenizer, text, max_tokens)
 
-    indices = [m.start() for m in re.finditer("<image>", text)]
-    if len(indices) > max_num_images:
-        start_index = indices[max_num_images - 1]
-        text = text[:start_index]
+        sample_validation(tokenizer, text_tensor, min_num_images)
 
-    text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
-    tokenizer.padding_side = "right"
-    text_tensor = tokenizer(
-        text,
-        max_length=max_tokens,
-        truncation=True,
-        padding="max_length",
-        return_tensors="pt",
-    )
-
-    # reject sequences with too few images after truncation
-    num_images = torch.count_nonzero(
-        text_tensor["input_ids"]
-        == tokenizer.additional_special_tokens_ids[
-            tokenizer.additional_special_tokens.index("<image>")
-        ]
-    )
-    if num_images < min_num_images:
-        raise ValueError(f"Fewer than {min_num_images} images in sample")
-
-    return (images_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]))
+        yield (chunk_image_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]))
 
 
 def preprocess_interleaved(
@@ -205,69 +239,19 @@ def preprocess_interleaved(
         chunk_image_tensors = images_tensors[chunk_ixs]
         sentence_ixs = [sentence_ixs[ix] for ix in chunk_ixs]
         if len(chunk_image_tensors) < max_num_images:
-            zero_padding = torch.zeros(
-                (
-                    max_num_images - len(chunk_image_tensors),
-                    N_CHANNELS,
-                    chunk_image_tensors[0].shape[1],
-                    chunk_image_tensors[0].shape[2],
-                ),
-                dtype=torch.float,
-            )
-            chunk_image_tensors = torch.cat((chunk_image_tensors, zero_padding), dim=0)
+            chunk_image_tensors = zero_pad_image_tensors(chunk_image_tensors, max_num_images)
 
         # preprocess and tokenize text
         # add in <image> and <eoc> tokens
         for ix in sentence_ixs:
             sentences[ix] = f"<|endofchunk|><image>{sentences[ix]}"
         text = " ".join(sentences)
-        text = text.replace("<|endofchunk|>", "", 1)  # but remove first eoc
-        # whitespace cleanup
-        text = (
-            text.replace(" <|endofchunk|>", "<|endofchunk|>")
-            .replace("<image> ", "<image>")
-            .replace(" <image>", "<image>")
-        )
-        text = f"{text}<|endofchunk|>{tokenizer.eos_token}"
-        tokenizer.padding_side = "right"
-        text_tensor = tokenizer(
-            text,
-            max_length=max_tokens,
-            truncation=True,
-            padding="max_length",
-            return_tensors="pt",
-        )
+        text = preprocess_text(text)
+        text_tensor = tokenize_text(tokenizer, text, max_tokens)
 
-        # reject sequences with too few images (after truncation)
-        num_images = torch.count_nonzero(
-            text_tensor["input_ids"]
-            == tokenizer.additional_special_tokens_ids[
-                tokenizer.additional_special_tokens.index("<image>")
-            ]
-        )
-        if num_images < min_num_images:
-            raise ValueError(f"Fewer than {min_num_images} images in sample")
-        elif (
-            num_images == 1 and random.random() <= 0.5
-        ):  # 50% chance of keeping single image samples
-            raise ValueError("Only one image in sample")
+        sample_validation(tokenizer, text_tensor, min_num_images)
 
-        # avoid the situation where there's one <image> token and it's at the end
-        if (
-            num_images == 1
-            and text_tensor["input_ids"][:, -1]
-            == tokenizer.additional_special_tokens_ids[
-                tokenizer.additional_special_tokens.index("<image>")
-            ]
-        ):
-            raise ValueError(
-                "Only one image at the end of sample, so labels will all be -100"
-            )
-
-        yield (
-            chunk_image_tensors,
-            (text_tensor["input_ids"], text_tensor["attention_mask"]),
-        )
+        yield (chunk_image_tensors, (text_tensor["input_ids"], text_tensor["attention_mask"]))
 
 
 def get_mmc4_dataset(args, image_processor, tokenizer, epoch=0, floor=False):
