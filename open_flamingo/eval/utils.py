@@ -58,6 +58,7 @@ def sample_class_conditional_batch_demos_from_query_set(
     """
     # sanity checks
     all_classes = torch.unique(query_set.class_id_array)
+    assert num_classes >= 1, "Need to include at least one class"
     assert num_classes <= len(all_classes), "Attempting to select more classes in the demo than there are classes in the dataset."
     if not isinstance(batch_class_ids, torch.Tensor):
         batch_class_ids = torch.LongTensor(batch_class_ids)

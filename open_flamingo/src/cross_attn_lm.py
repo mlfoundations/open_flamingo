@@ -119,11 +119,14 @@ class CrossAttentionMixin(nn.Module):
         vision_tokens: torch.Tensor = None,
         past_media_locations: torch.Tensor = None,
         past_vision_tokens: torch.Tensor = None,
+        num_beams: int = 1,
     ):
         """Each xattn layer needs to save the vision tokens and the locations of the media tokens in the language sequence"""
         assert (
             self.initialized_cross_attention
         ), "Cross attention layers have not been initialized. "
+
+        # concat with past
         if past_media_locations is not None and past_vision_tokens is not None:
             if vision_tokens is not None:
                 updated_vision_tokens = torch.cat(
@@ -146,6 +149,15 @@ class CrossAttentionMixin(nn.Module):
             updated_vision_tokens = vision_tokens
             updated_media_locations = input_ids == self.media_token_id
 
+        # repeat the vision tokens and media locations for each beam
+        updated_vision_tokens = updated_vision_tokens.repeat_interleave(
+            num_beams, dim=0
+        )
+        updated_media_locations = updated_media_locations.repeat_interleave(
+            num_beams, dim=0
+        )
+
+        # condition
         for layer in self._get_decoder_layers():
             layer.condition_vis_x(updated_vision_tokens)
             layer.condition_media_locations(updated_media_locations)
