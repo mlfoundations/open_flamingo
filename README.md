@@ -50,6 +50,27 @@ There are three `requirements.txt` files:
 
 Depending on your use case, you can install any of these with `pip install -r <requirements-file.txt>`. The base file contains only the dependencies needed for running the model.
 
+## Development
+
+We use pre-commit hooks to align formatting with the checks in the repository. 
+1. To install pre-commit, run
+    ```
+    pip install pre-commit
+    ```
+    or use brew for MacOS
+    ```
+    brew install pre-commit
+    ```
+2. Check the version installed with
+    ```
+    pre-commit --version
+    ```
+3. Then at the root of this repository, run
+    ```
+    pre-commit install
+    ```
+Then every time we run git commit, the checks are run. If the files are reformatted by the hooks, run `git add` for your changed files and `git commit` again
+
 # Approach
 OpenFlamingo is a multimodal language model that can be used for a variety of tasks. It is trained on a large multimodal dataset (e.g. Multimodal C4) and can be used to generate text conditioned on interleaved images/text. For example, OpenFlamingo can be used to generate a caption for an image, or to generate a question given an image and a text passage. The benefit of this approach is that we are able to rapidly adapt to new tasks using in-context learning.
 
