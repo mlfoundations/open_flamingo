@@ -35,7 +35,7 @@ srun --cpu_bind=v --accel-bind=gn bash -c 'python -u -m torch.distributed.run \
     --run_name "deepspeed" \
     --num_epochs 480 \
     --warmup_steps  0 \
-    --mmc4_textsim_threshold 0.0 \
+    --mmc4_textsim_threshold 0.24 \
     --laion_shards "/path/to/laion-samples/{000000..000001}.tar" \
     --mmc4_shards "/path/to/mmc4-samples/{000000..000001}.tar" \
     --report_to_wandb
