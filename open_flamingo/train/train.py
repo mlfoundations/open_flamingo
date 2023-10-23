@@ -375,7 +375,7 @@ def main():
     ]
     total_training_steps = (
         getattr(args, f"train_num_samples_{datasets_to_train_on[0]}")
-        // getattr(args, f"batch_size_{datasets_to_train_on[0]}")
+        // (getattr(args, f"batch_size_{datasets_to_train_on[0]}") * args.world_size)
     ) * args.num_epochs
 
     if args.rank == 0:
