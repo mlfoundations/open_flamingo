@@ -296,12 +296,12 @@ def load_checkpoint(args, model):
     return resume_from_epoch, checkpoint
 
 
-def load_deepspeed_checkpoint(args, ddp_model):
+def load_deepspeed_checkpoint(args, model):
     """Loads a deepspeed checkpoint and returns the epoch to resume from."""
     if args.rank == 0:
         print(f"Loading checkpoint from {args.resume_from_checkpoint}")
     # We will not pass in a 'tag' and instead rely on 'latest' file in the checkpoint directory
-    ddp_model.load_checkpoint(
+    model.load_checkpoint(
         load_dir=args.resume_from_checkpoint,  # Note: this is the dir, not the file
         load_module_strict=False,
     )
