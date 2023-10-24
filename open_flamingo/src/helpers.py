@@ -543,7 +543,7 @@ class DecoupledEmbedding(nn.Embedding):
         additional_embeddings = self.additional_embedding(
             input_ids_additional_vocab - self.max_original_id - 1
         )
-
+        
         # for successful lookup replace input_ids with 0, the results of these will be discarded anyway
         input_ids[additional_vocab_indices] = 0
         full_vector = F.embedding(input_ids, self.weight)

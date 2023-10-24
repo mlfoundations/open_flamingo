@@ -64,35 +64,35 @@ class NextTokenPredictionWithZLoss(Loss):
     ):
         # set up labels; language model is expected to handle shifting
         labels = input_ids.clone()
-        labels[labels == tokenizer.pad_token_id] = -100
-        labels[labels == tokenizer.eos_token] = -100
-        special_token_ids = torch.Tensor(unwrap_model(model).special_token_ids).to(
-            labels.device
-        )
-        labels[torch.isin(labels, special_token_ids)] = -100
+        # mask everything except eos token
+        labels[labels != tokenizer.eos_token_id] = -100
+        # special_token_ids = torch.Tensor(unwrap_model(model).special_token_ids).to(
+        #     labels.device
+        # )
+        # # labels[torch.isin(labels, special_token_ids)] = -100
         labels = labels.to(input_ids.device)
 
         # call forward
         with autocast():
-            logits = model(
+            loss = model(
                 vision_x=images,
                 lang_x=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-            )[1]
+            )[0]
 
-        logits = logits.float()
+        # logits = logits.float()
 
-        # Shift so that tokens < n predict n
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        # Flatten the tokens
-        loss_fct = CrossEntropyLossWithZLoss(eps=z_loss_eps)
-        shift_logits = shift_logits.view(-1, model.lang_model.config.vocab_size)
-        shift_labels = shift_labels.view(-1)
-        # Enable model parallelism
-        shift_labels = shift_labels.to(shift_logits.device)
-        loss = loss_fct(shift_logits, shift_labels)
+        # # Shift so that tokens < n predict n
+        # shift_logits = logits[..., :-1, :].contiguous()
+        # shift_labels = labels[..., 1:].contiguous()
+        # # Flatten the tokens
+        # loss_fct = CrossEntropyLossWithZLoss(eps=z_loss_eps)
+        # shift_logits = shift_logits.view(-1, model.lang_model.config.vocab_size)
+        # shift_labels = shift_labels.view(-1)
+        # # Enable model parallelism
+        # shift_labels = shift_labels.to(shift_logits.device)
+        # loss = loss_fct(shift_logits, shift_labels)
 
         return loss
 

@@ -68,15 +68,19 @@ def preprocess_laion_image(sample, image_processor):
     return rearrange(sample, "(b t f) c h w -> b t f c h w", t=1, f=1)
 
 
-def preprocess_laion_text(sample, tokenizer, max_tokens=32):
+def preprocess_laion_text(sample, tokenizer, max_tokens=128):
     """
     Preprocess text for LAION. Applied to a batch of captions.
     Captions are truncated to 32 tokens by default.
     """
     tokenizer.padding_side = "right"
+    
+    # sample = [s.split(".")[-1].replace("<image>", "").strip() for s in sample]
+    
     sample = [
-        (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample
+        (f"{s.strip()}<break><image><break>{tokenizer.eos_token}") for s in sample
     ]
+    print(sample)
     text = tokenizer(
         sample,
         max_length=max_tokens,

@@ -7,9 +7,10 @@ import open_clip
 from .flamingo import Flamingo
 from .kosmos import Kosmos
 from .blip import BLIP
+from .image_gen import ImageGen
 from .utils import hasattr_recursive, setattr_recursive
 
-SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos", "blip")
+SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos", "blip", "image_gen")
 
 
 def create_model_and_transforms(
@@ -48,17 +49,26 @@ def create_model_and_transforms(
 
     assert model_family in SUPPORTED_MODEL_FAMILIES
 
-    # load vision encoder
-    vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
-        clip_vision_encoder_path,
-        pretrained=clip_vision_encoder_pretrained,
-        cache_dir=cache_dir,
-    )
-    vision_encoder.visual.output_tokens = True
-    vision_encoder = vision_encoder.visual
-    vis_hidden_dim = open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
-        "width"
-    ]
+    if model_family == "image_gen":
+        from muse import MOVQ, VQGANModel
+        from torchvision import transforms
+        # vision_encoder = MOVQ.from_pretrained("openMUSE/movq-lion-high-res-f8-16384")
+        vision_encoder = VQGANModel.from_pretrained("openMUSE/vqgan-f16-8192-laion")
+        # set attributes
+        setattr(vision_encoder, "num_tokens_per_media", 256)
+        image_processor = transforms.Compose([transforms.Resize((256,256)),transforms.ToTensor(),])
+    else:      
+        # load vision encoder
+        vision_encoder, _, image_processor = open_clip.create_model_and_transforms(
+            clip_vision_encoder_path,
+            pretrained=clip_vision_encoder_pretrained,
+            cache_dir=cache_dir,
+        )
+        vision_encoder.visual.output_tokens = True
+        vision_encoder = vision_encoder.visual
+        vis_hidden_dim = open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
+            "width"
+        ]
 
     # load tokenizer and ensure there is a pad token
     text_tokenizer = AutoTokenizer.from_pretrained(
@@ -118,14 +128,22 @@ def create_model_and_transforms(
             decoder_layers_attr_name=decoder_layers_attr_name,
             **model_kwargs,
         )
+    elif model_family == "image_gen":
+        model = ImageGen(
+            vision_encoder=vision_encoder,
+            lang_model=lang_model,
+            initial_tokenizer_len=len(text_tokenizer),
+            gradient_checkpointing=gradient_checkpointing,
+            pad_token_id=text_tokenizer.pad_token_id,
+            decoder_layers_attr_name=decoder_layers_attr_name,
+            **model_kwargs,
+        )
 
     # add special tokens to the tokenizer and language models
     text_tokenizer.add_special_tokens(
         {"additional_special_tokens": list(model.special_tokens.values())}
     )
-    model.lang_model.config.vocab_size = max(
-        len(text_tokenizer), model.lang_model.config.vocab_size
-    )  # Some models have larger vocab size (due to padding) than tokenizer length
+    model.lang_model.config.vocab_size = len(text_tokenizer)
     model.set_special_token_ids(
         {
             v: text_tokenizer.convert_tokens_to_ids(v)
@@ -168,6 +186,8 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "gptneoxforcausallm": "gpt_neox.layers",
     "mpt": "transformer.blocks",
     "mosaicgpt": "transformer.blocks",
+    "stablelm": "model.layers",
+    "mistral": "model.layers",
 }
 
 
@@ -191,6 +211,10 @@ def check_embedding_fns(lang_model):
         elif hasattr_recursive(lang_model, "model.decoder.embed_tokens"):  # OPT
             lang_model.set_input_embeddings = lambda x: setattr_recursive(
                 lang_model, "model.decoder.embed_tokens", x
+            )
+        elif hasattr_recursive(lang_model, "model.embed_tokens"):
+            lang_model.set_input_embeddings = lambda x: setattr_recursive(
+                lang_model, "model.embed_tokens", x
             )
         else:
             raise ValueError(
