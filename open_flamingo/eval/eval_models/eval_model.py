@@ -195,7 +195,7 @@ class BaseEvalModel(abc.ABC):
         Parsed by checking whether the model has a method called `get_{task}_prompt`.
         """
         return [
-            task.split("_")[1]
+            "_".join(task.split("_")[1:-1])
             for task in dir(self)
             if task.startswith("get_") and task.endswith("_prompt")
         ]
