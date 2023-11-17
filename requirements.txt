@@ -1,7 +1,7 @@
-einops
-einops-exts
-transformers>=4.28.1
-torch==2.0.1
-pillow
-open_clip_torch>=2.16.0 
-sentencepiece
+einops==0.3.2
+einops-exts==0.3.0
+transformers==4.28.1
+torch==1.10.1
+pillow==9.0.0
+open_clip_torch==2.16.0
+sentencepiece==0.1.96
