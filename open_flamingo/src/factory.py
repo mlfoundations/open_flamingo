@@ -23,6 +23,8 @@ def create_model_and_transforms(
     cache_dir: Optional[str] = None,
     gradient_checkpointing: bool = False,
     verbose: bool = True,
+    image_res: int = 224,
+    train_pos_embeddings: bool = True,
     **model_kwargs,
 ):
     """
@@ -53,6 +55,7 @@ def create_model_and_transforms(
         clip_vision_encoder_path,
         pretrained=clip_vision_encoder_pretrained,
         cache_dir=cache_dir,
+        force_image_res = image_res
     )
     vision_encoder.visual.output_tokens = True
     vision_encoder = vision_encoder.visual
