@@ -277,6 +277,7 @@ class VLM(nn.Module):
             **new_inputs,
             past_key_values=past_key_values,
             num_beams=num_beams,
+            use_cache=True,
             **kwargs,
         )
         self._post_forward_hook()
@@ -421,7 +422,7 @@ class VLMWithCrossAttention(VLM):
                     v.repeat_interleave(num_beams, dim=0)
                 )
                 for k, v in past_key_values
-            ]
+
         return {
             "input_ids": lang_x,
             "attention_mask": attention_mask,
