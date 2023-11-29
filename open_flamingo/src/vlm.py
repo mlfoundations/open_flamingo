@@ -415,13 +415,14 @@ class VLMWithCrossAttention(VLM):
             past_vision_tokens=past_vision_tokens,
             num_beams=num_beams,
         )
-        past_key_values = [
-            (
-                k.repeat_interleave(num_beams, dim=0),
-                v.repeat_interleave(num_beams, dim=0)
-            )
-            for k, v in past_key_values
-        ] if past_key_values is not None else None
+        if past_key_values is not None: 
+            past_key_values = [
+                (
+                    k.repeat_interleave(num_beams, dim=0),
+                    v.repeat_interleave(num_beams, dim=0)
+                )
+                for k, v in past_key_values
+
         return {
             "input_ids": lang_x,
             "attention_mask": attention_mask,

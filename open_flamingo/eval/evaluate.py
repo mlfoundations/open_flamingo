@@ -534,7 +534,7 @@ def main():
     if args.eval_coco:
         eval_dataset(
             args,
-            dataset_name="flickr30",
+            dataset_name="coco",
             eval_model=eval_model,
             results=results,
             eval_fn=evaluate_captioning,
