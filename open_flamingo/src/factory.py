@@ -24,7 +24,6 @@ def create_model_and_transforms(
     gradient_checkpointing: bool = False,
     verbose: bool = True,
     image_res: int = 224,
-    train_pos_embeddings: bool = True,
     **model_kwargs,
 ):
     """
