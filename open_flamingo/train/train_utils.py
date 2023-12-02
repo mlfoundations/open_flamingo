@@ -10,6 +10,8 @@ import glob
 from data_utils import DataInfo
 import random
 import numpy as np
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.nn as nn
 
 
 def train_one_epoch(
@@ -77,8 +79,11 @@ def train_one_epoch(
             batch_metadata_to_log[
                 f"{datasets[dataset_ix].name}_num_tokens"
             ] = attention_mask.sum().item()
+            model = unwrap_model(model)
+            model.media_token_id = 400
+            model = DDP(model)
             batch_metadata_to_log[f"{datasets[dataset_ix].name}_num_images"] = (
-                (input_ids == model.media_token_id).sum().item()
+                (input_ids == model.module.media_token_id).sum().item()
             )
 
             # forward pass
@@ -186,6 +191,16 @@ def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
     np.random.seed(seed + rank)
     random.seed(seed + rank)
+
+
+def unwrap_model(model):
+    """
+    Unwrap a model from a DataParallel or DistributedDataParallel wrapper.
+    """
+    if isinstance(model, (nn.DataParallel, nn.parallel.DistributedDataParallel)):
+        return model.module
+    else:
+        return model
 
 
 ################################
