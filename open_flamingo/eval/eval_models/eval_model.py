@@ -33,7 +33,6 @@ class BaseEvalModel(abc.ABC):
 
     def __init__(self, model_args: List[str], init_on_device=False):
         """Initialize model.
-
         Args:
             args: arguments to model. These should be parsed, or if the model
                 has no applicable arguments, an error should be thrown if `args`
@@ -128,13 +127,11 @@ class BaseEvalModel(abc.ABC):
     ):
         """
         Prepare text for model. Note that padding is always on the left.
-
         Args:
             batch: list of text strings
             padding: whether to pad the text
             truncation: whether to truncate the text
             max_length: maximum length of the text
-
         Returns:
             input_ids: tensor of shape (B, T_txt)
             attention_mask: tensor of shape (B, T_txt)
@@ -158,12 +155,10 @@ class BaseEvalModel(abc.ABC):
         **decode_kwargs,
     ) -> List[str]:
         """Call generate on a batch of images and text.
-
         Args:
             batch_text: list of text strings
             batch_images: images to provide to model. Should be a list of lists,
               where each list contains the images for a single example.
-
         Returns:
             List of decoded output strings.
         """
@@ -200,7 +195,7 @@ class BaseEvalModel(abc.ABC):
         Parsed by checking whether the model has a method called `get_{task}_prompt`.
         """
         return [
-            task.split("_")[1]
+            "_".join(task.split("_")[1:-1])
             for task in dir(self)
             if task.startswith("get_") and task.endswith("_prompt")
         ]

@@ -187,6 +187,6 @@ class EvalModel(BaseEvalModel):
         # TODO: handle prefix prompts
         return f"<image>Caption: {caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
 
-    def get_flickr_prompt(self, caption=None) -> str:
+    def get_flickr30_prompt(self, caption=None) -> str:
         # TODO: handle prefix prompts
         return f"<image>Caption: {caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"

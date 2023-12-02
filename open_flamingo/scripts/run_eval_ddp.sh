@@ -28,6 +28,7 @@ srun --cpu_bind=v --accel-bind=gn python open_flamingo/open_flamingo/eval/evalua
     --vision_encoder_pretrained openai\
     --lm_path anas-awadalla/mpt-1b-redpajama-200b \
     --tokenizer_path anas-awadalla/mpt-1b-redpajama-200b \
+    --model_family flamingo \
     --cross_attn_every_n_layers 1 \
     --checkpoint_path "openflamingo/OpenFlamingo-3B-vitl-mpt1b/checkpoint.pt" \
     --results_file "results.json" \

@@ -4,9 +4,8 @@ from PIL import Image
 import torch
 
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
-from models.eval_model import BaseEvalModel
-from utils import unwrap_model
-from transformers.modeling_outputs import CausalLMOutputWithPast
+from open_flamingo.eval.eval_models import BaseEvalModel
+from open_flamingo.eval.utils import unwrap_model
 
 
 class EvalModel(BaseEvalModel):
@@ -99,18 +98,18 @@ class EvalModel(BaseEvalModel):
 
     def get_vqav2_prompt(self, question, answer=None) -> str:
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
-    
+
     def get_ok_vqa_prompt(self, question, answer=None) -> str:
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
-    
+
     def get_vizwiz_prompt(self, question, answer=None) -> str:
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
-    
+
     def get_textvqa_prompt(self, question, answer=None) -> str:
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
 
     def get_coco_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
     
-    def get_flickr_prompt(self, caption=None) -> str:
+    def get_flickr30_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"

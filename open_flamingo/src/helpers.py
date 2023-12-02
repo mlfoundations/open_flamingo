@@ -234,7 +234,6 @@ class MaskedCrossAttention(nn.Module):
                 T_txt_all >= T_txt
                 If T_txt_all > T_txt, then the last T_txt text_times are used
         """
-
         T_txt = x.shape[1]
         assert (
             T_txt <= media_locations.shape[1]

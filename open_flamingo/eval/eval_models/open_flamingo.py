@@ -7,7 +7,7 @@ from einops import repeat
 from open_flamingo.eval.eval_models.eval_model import BaseEvalModel
 from open_flamingo.src.factory import create_model_and_transforms
 from open_flamingo.eval.utils import unwrap_model
-from transformers.modeling_outputs import CausalLMOutputWithPast
+from open_flamingo.src import VLMOutputWithPast
 
 
 class EvalModel(BaseEvalModel):
@@ -33,11 +33,12 @@ class EvalModel(BaseEvalModel):
             )
 
         # load the checkpoint
-        checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
-        if "model_state_dict" in checkpoint:
-            checkpoint = checkpoint["model_state_dict"]
-            checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
-        self.model.load_state_dict(checkpoint, strict=False)
+        if "checkpoint_path" in model_args:
+            checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
+            if "model_state_dict" in checkpoint:
+                checkpoint = checkpoint["model_state_dict"]
+                checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
+            self.model.load_state_dict(checkpoint, strict=False)
 
         self._check_init()
 
@@ -46,9 +47,8 @@ class EvalModel(BaseEvalModel):
         """Return list of required arguments to initialize model."""
         return [
             "vision_encoder_path",
-            "model_familyl",
+            "model_family",
             "lm_path",
-            "checkpoint_path",
             "tokenizer_path",
             "cross_attn_every_n_layers",
             "vision_encoder_pretrained",
@@ -92,7 +92,6 @@ class EvalModel(BaseEvalModel):
                     vision_x=vision_x,
                     lang_x=_lang_x,
                     attention_mask=_attention_mask,
-                    clear_conditioned_layers=False,
                     past_key_values=past_key_values,
                     past_media_locations=past_media_locations,
                     past_vision_tokens=past_vision_tokens,
@@ -105,7 +104,7 @@ class EvalModel(BaseEvalModel):
             logits.append(outputs.logits)
 
         logits = torch.cat(logits, dim=1)
-        return CausalLMOutputWithPast(
+        return VLMOutputWithPast(
             logits=logits,
             past_key_values=past_key_values,
             past_media_locations=past_media_locations,
@@ -195,10 +194,9 @@ class EvalModel(BaseEvalModel):
         if use_cache:
             with torch.inference_mode():
                 precomputed = self.__call__(
-                    vision_x=None,
+                    vision_x=batch_images,
                     lang_x=ctx_input_ids,
                     attention_mask=ctx_attention_mask,
-                    clear_conditioned_layers=False,
                     use_cache=True,
                 )
 
@@ -282,7 +280,7 @@ class EvalModel(BaseEvalModel):
     def get_coco_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
 
-    def get_flickr_prompt(self, caption=None) -> str:
+    def get_flickr30_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
 
     def get_imagenet_prompt(self, label=None) -> str:
@@ -290,3 +288,9 @@ class EvalModel(BaseEvalModel):
 
     def get_hateful_memes_prompt(self, text, label=None) -> str:
         return f"<image>is an image with: '{text}' written on it. Is it hateful? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+    
+    def get_waterbirds_prompt(self, label=None) -> str:
+        return f"<image>Question: Is this a landbird or waterbird? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"
+
+    def get_camelyon17_prompt(self, label=None) -> str:
+        return f"<image>Question: Is this a normal tissue or cancer tissue? Answer:{label if label is not None else ''}{'<|endofchunk|>' if label is not None else ''}"

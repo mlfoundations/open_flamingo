@@ -10,15 +10,15 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
 from open_flamingo import create_model_and_transforms, SUPPORTED_MODEL_FAMILIES
-from data import get_data, SUPPORTED_DATASETS
-from distributed import (
+from open_flamingo.train.data import get_data, SUPPORTED_DATASETS
+from open_flamingo.train.distributed import (
     init_distributed_device,
     world_info_from_env,
     get_fsdp_config,
     get_fsdp_checkpoint_config,
     get_deepspeed_config,
 )
-from train_utils import (
+from open_flamingo.train.train_utils import (
     train_one_epoch,
     random_seed,
     load_deepspeed_checkpoint,
@@ -27,7 +27,7 @@ from train_utils import (
     save_checkpoint,
     save_deepspeed_checkpoint,
 )
-from losses import (
+from open_flamingo.train.losses import (
     SUPPORTED_LOSSES,
     get_loss_fn,
 )

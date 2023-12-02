@@ -194,7 +194,9 @@ class VLM(nn.Module):
     def _concat_vision_cache(
         self, lang_x, vision_tokens, past_vision_tokens, past_media_locations, use_cache
     ):
-        """Helper function to include the past vision tokens and past media locations in the output"""
+        """
+        Helper function to include the past vision tokens and past media locations in the output.
+        """
         if use_cache:
             if past_media_locations is not None and past_vision_tokens is not None:
                 if vision_tokens is not None:
@@ -253,14 +255,14 @@ class VLM(nn.Module):
 
         # convert pixels to vision tokens
         if vision_x is not None:
-            if num_beams > 1:
-                vision_x = vision_x.repeat_interleave(num_beams, dim=0)
             vision_features = self._encode_vision_x(vision_x=vision_x)
             vision_tokens = self.vision_tokenizer(vision_features)
         else:
             vision_tokens = None
 
         # fuse the vision and language tokens
+        # for xattn, vision_x and media_location are repeat_interleaved s.t.
+        # the total batch size is B * num_beams
         new_inputs = self._prepare_inputs_for_forward(
             vision_tokens=vision_tokens,
             lang_x=lang_x,
@@ -268,17 +270,16 @@ class VLM(nn.Module):
             past_key_values=past_key_values,
             past_media_locations=past_media_locations,
             past_vision_tokens=past_vision_tokens,
-            generating=True,
+            padding_side="right",
+            num_beams=num_beams,
         )
         output = self.lang_model.generate(
             **new_inputs,
             past_key_values=past_key_values,
-            past_media_locations=past_media_locations,
-            past_vision_tokens=past_vision_tokens,
             num_beams=num_beams,
+            use_cache=True,
             **kwargs,
         )
-
         self._post_forward_hook()
         return output
 
@@ -403,7 +404,8 @@ class VLMWithCrossAttention(VLM):
         past_key_values=None,
         past_media_locations: torch.Tensor = None,
         past_vision_tokens: torch.Tensor = None,
-        generating: bool = False, # Not used for cross-attention models
+        padding_side: str = "right",  # noop for cross-attention models
+        num_beams: int = 1,
     ):
         """Each xattn layer needs to save the vision tokens and the locations of the media tokens in the language sequence"""
         self.lang_model._condition_media_before_forward(
@@ -411,7 +413,16 @@ class VLMWithCrossAttention(VLM):
             vision_tokens=vision_tokens,
             past_media_locations=past_media_locations,
             past_vision_tokens=past_vision_tokens,
+            num_beams=num_beams,
         )
+        if past_key_values is not None: 
+            past_key_values = [
+                (
+                    k.repeat_interleave(num_beams, dim=0),
+                    v.repeat_interleave(num_beams, dim=0)
+                )
+                for k, v in past_key_values
+
         return {
             "input_ids": lang_x,
             "attention_mask": attention_mask,
@@ -545,12 +556,20 @@ class VLMWithLanguageStream(VLM):
         past_key_values=None,
         past_media_locations: torch.Tensor = None,
         past_vision_tokens: torch.Tensor = None,
-        generating: bool = False, # whether we're generating to decide on padding side
+        padding_side: str = "left",
+        num_beams: int = 1,
     ):
         """
         Insert the vision tokens directly into the language stream/
         This requires us to modify the input_ids, attention_mask, and labels.
         """
+        if past_key_values is not None:
+            past_len = past_key_values[0][0].shape[2]
+            assert attention_mask.shape[1] == past_len + lang_x.shape[1], (
+                "Attention_mask must be as long as the entire past len (including image tokens) and current input IDs. "
+                + "Check that you've expanded the attention mask to account for past image tokens."
+            )
+        
         if vision_tokens is None:
             return {
                 "input_ids": lang_x,
@@ -570,7 +589,7 @@ class VLMWithLanguageStream(VLM):
         for i in range(B):
             # get index of <image> tokens in lang_x[i]
             image_token_idxs = torch.where(lang_x[i] == self.media_token_id)[0]
-            
+
             if len(image_token_idxs) == 0:
                 multimodal_embeds.append(lang_embeds[i].clone())
                 multimodal_attention_mask.append(attention_mask[i].clone())
@@ -628,14 +647,20 @@ class VLMWithLanguageStream(VLM):
 
         # stack
         multimodal_embeds = stack_with_padding(
-            multimodal_embeds, padding_value=self.pad_token_id, padding_side="left" if generating else "right"
+            multimodal_embeds,
+            padding_value=self.pad_token_id,
+            padding_side=padding_side,
         )
         multimodal_attention_mask = stack_with_padding(
-            multimodal_attention_mask, padding_value=0, padding_side="left" if generating else "right"
+            multimodal_attention_mask,
+            padding_value=0,
+            padding_side=padding_side,
         )
         if has_labels:
             multimodal_labels = stack_with_padding(
-                multimodal_labels, padding_value=-100, padding_side="left" if generating else "right"
+                multimodal_labels,
+                padding_value=-100,
+                padding_side=padding_side,
             )
 
         return {
