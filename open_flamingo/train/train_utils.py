@@ -10,7 +10,6 @@ import glob
 from data_utils import DataInfo
 import random
 import numpy as np
-from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.nn as nn
 
 
@@ -79,11 +78,8 @@ def train_one_epoch(
             batch_metadata_to_log[
                 f"{datasets[dataset_ix].name}_num_tokens"
             ] = attention_mask.sum().item()
-            model = unwrap_model(model)
-            model.media_token_id = 400
-            model = DDP(model)
             batch_metadata_to_log[f"{datasets[dataset_ix].name}_num_images"] = (
-                (input_ids == model.module.media_token_id).sum().item()
+                (input_ids == unwrap_model(model).media_token_id).sum().item()
             )
 
             # forward pass
