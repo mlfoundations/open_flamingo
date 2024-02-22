@@ -88,7 +88,8 @@ class CrossAttentionMixin(nn.Module):
         """
         Add gated cross attn layers to the decoder.
         """
-        self.old_decoder_blocks = self._get_decoder_layers()
+        old_decoder_blocks = self._get_decoder_layers()
+        self.decoder_block_class = old_decoder_blocks[0].__class__
         self.gated_cross_attn_layers = nn.ModuleList(
             [
                 GatedCrossAttentionBlock(
@@ -96,7 +97,7 @@ class CrossAttentionMixin(nn.Module):
                 )
                 if (layer_idx + 1) % cross_attn_every_n_layers == 0
                 else None
-                for layer_idx, _ in enumerate(self._get_decoder_layers())
+                for layer_idx, _ in enumerate(old_decoder_blocks)
             ]
         )
         self._set_decoder_layers(
@@ -106,7 +107,7 @@ class CrossAttentionMixin(nn.Module):
                         gated_cross_attn_layer, decoder_layer, gradient_checkpointing
                     )
                     for gated_cross_attn_layer, decoder_layer in zip(
-                        self.gated_cross_attn_layers, self.old_decoder_blocks
+                        self.gated_cross_attn_layers, old_decoder_blocks
                     )
                 ]
             )
@@ -119,11 +120,14 @@ class CrossAttentionMixin(nn.Module):
         vision_tokens: torch.Tensor = None,
         past_media_locations: torch.Tensor = None,
         past_vision_tokens: torch.Tensor = None,
+        num_beams: int = 1,
     ):
         """Each xattn layer needs to save the vision tokens and the locations of the media tokens in the language sequence"""
         assert (
             self.initialized_cross_attention
         ), "Cross attention layers have not been initialized. "
+
+        # concat with past
         if past_media_locations is not None and past_vision_tokens is not None:
             if vision_tokens is not None:
                 updated_vision_tokens = torch.cat(
@@ -146,6 +150,15 @@ class CrossAttentionMixin(nn.Module):
             updated_vision_tokens = vision_tokens
             updated_media_locations = input_ids == self.media_token_id
 
+        # repeat the vision tokens and media locations for each beam
+        updated_vision_tokens = updated_vision_tokens.repeat_interleave(
+            num_beams, dim=0
+        )
+        updated_media_locations = updated_media_locations.repeat_interleave(
+            num_beams, dim=0
+        )
+
+        # condition
         for layer in self._get_decoder_layers():
             layer.condition_vis_x(updated_vision_tokens)
             layer.condition_media_locations(updated_media_locations)

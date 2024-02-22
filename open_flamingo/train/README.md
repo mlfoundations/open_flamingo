@@ -70,13 +70,12 @@ Our codebase supports distributed training using three frameworks:
 
 * Pytorch's [DistributedDataParallel](https://pytorch.org/docs/stable/torch.nn.parallel.DistributedDataParallel.html). This is the default method used by `train.py`.
 * Pytorch's [FullyShardedDataParallel](https://pytorch.org/docs/stable/fsdp.html) (FSDP). Use the `--fsdp` flag.
-* [DeepSpeed](https://github.com/microsoft/DeepSpeed) stages 1-3. Use the `--deepspeed` flag.
 
 Note that you should use exactly one of these training methods.
 
 `train/distributed.py` contains utilities to help with setting up distributed training using Slurm / `torchrun`. See example scripts in the `scripts` directory.
 
 ### FSDP notes
-To use FSDP, make sure to use Pytorch Nightly (> 2.0.1). 
+To use FSDP, make sure to use Pytorch (> 2.0.1). 
 
 We support two sharding strategies for FSDP: full sharding (model sharing across all nodes and GPUs) or hybrid sharding (model sharding across GPUs within nodes, data parallel between nodes). The former saves GPU memory; the latter saves on communication costs.

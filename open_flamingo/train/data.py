@@ -21,7 +21,7 @@ import base64
 from einops import rearrange
 from scipy.optimize import linear_sum_assignment
 
-from data_utils import *
+from open_flamingo.train.data_utils import *
 
 SUPPORTED_DATASETS = ["laion", "mmc4"]
 

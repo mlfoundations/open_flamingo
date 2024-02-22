@@ -1,7 +1,8 @@
+from typing import List, Optional, Tuple, Union
 from torch import nn
-from .helpers import PerceiverResampler, GatedCrossAttentionBlock
+import torch
+from .helpers import PerceiverResampler
 from .vlm import VLMWithCrossAttention
-
 
 class Flamingo(VLMWithCrossAttention):
     def __init__(
@@ -61,3 +62,17 @@ class Flamingo(VLMWithCrossAttention):
         Flamingo applies 0.1 weight decay to cross attention parameters
         """
         return "gated_cross_attn" in parameter_name
+
+    def generate(
+        self,
+        vision_x: torch.Tensor,
+        lang_x: torch.Tensor,
+        attention_mask: torch.Tensor = None,
+        past_key_values: Optional[
+            List[Union[torch.Tensor, Tuple[torch.Tensor]]]
+        ] = None,
+        past_media_locations: Optional[torch.Tensor] = None,
+        past_vision_tokens: Optional[torch.Tensor] = None,
+        **kwargs,
+    ):
+        return super().generate(vision_x, lang_x, attention_mask, past_key_values, past_media_locations, past_vision_tokens, eos_token_id=self.eoc_token_id, **kwargs)

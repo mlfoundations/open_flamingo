@@ -30,8 +30,6 @@ To help standardize VLM evaluations, we have implemented EvalModel wrappers for 
 ## Distributed evaluation
 Our codebase uses DistributedDataParallel to parallelize evaluation by default, so please make sure to set the `MASTER_ADDR` and `MASTER_PORT` environment variables or use `torchrun` (see sample scripts section below).
 
-We have also implemented distributed evaluation using Deepspeed, which additionally shards model parameters across GPUs for memory savings. To use Deepspeed instead of DDP, use the `--deepspeed` flag.
-
 We also support evaluating at a lower precision using the `--precision` flag. We find minimal difference between evaluating at full precision vs. amp_bf16.
 
 ## Sample scripts

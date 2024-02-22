@@ -394,12 +394,6 @@ parser.add_argument(
     action="store_true",
     help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
 )
-parser.add_argument(
-    "--deepspeed",
-    default=False,
-    action="store_true",
-    help="Whether to use deepspeed for distributed inference.",
-)
 
 
 def main():
@@ -414,11 +408,9 @@ def main():
     model_args["device"] = device_id
 
     # initialize model
-    eval_model = get_eval_model(args.model, model_args, init_on_device=args.deepspeed)
+    eval_model = get_eval_model(args.model, model_args, init_on_device=False)
     eval_model.init_distributed(
         local_rank=args.local_rank,
-        world_size=args.world_size,
-        use_deepspeed=args.deepspeed,
     )
 
     # Validate args

@@ -30,7 +30,7 @@ def train_one_epoch(
     Handles logging, calling forward, backward, gradient clipping, and optimizer step.
     Args:
         args (argparse.Namespace): arguments from command line
-        model: DDP / FSDP / Deepspeed wrapped model
+        model: DDP / FSDP wrapped model
         epoch (int): epoch number
         datasets (list): list of DataInfos, one for each dataset, to train on
         compute_loss_fn (callable): function that given the model and inputs, calls forward
@@ -98,27 +98,21 @@ def train_one_epoch(
             dataset_loss *= (
                 datasets[dataset_ix].loss_multiplier / args.gradient_accumulation_steps
             )
-            if args.deepspeed:
-                model.backward(dataset_loss)
-            else:
-                (dataset_loss).backward()
+            (dataset_loss).backward()
 
         # clip gradient norm
         if args.fsdp:
             model.clip_grad_norm_(1.0)
-        elif not args.deepspeed:  # deepspeed handles clipping internally
+        else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         # step optimizer and log
         if (((step_num + 1) % args.gradient_accumulation_steps) == 0) or (
             step_num == num_batches_per_epoch - 1
         ):
-            if args.deepspeed:
-                model.step()
-            else:
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad(set_to_none=True)
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
 
             # step time and reset end outside of rank 0
             step_time_m.update(time.time() - end)
@@ -269,27 +263,20 @@ def find_most_recent_checkpoint(args):
     """
     Returns the path of the most recent checkpoint for a given run name.
     """
-    if args.deepspeed:
-        if os.path.exists(f"{args.run_name}/latest"):
-            resume_from_checkpoint = args.run_name
-            print(f"Found checkpoint {resume_from_checkpoint} for run {args.run_name}.")
-        else:
-            print(f"Found no checkpoints for run {args.run_name}.")
+    checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
+    if len(checkpoint_list) == 0:
+        print(f"Found no checkpoints for run {args.run_name}.")
     else:
-        checkpoint_list = glob.glob(f"{args.run_name}/checkpoint_*.pt")
-        if len(checkpoint_list) == 0:
-            print(f"Found no checkpoints for run {args.run_name}.")
-        else:
-            resume_from_checkpoint = sorted(
-                checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
-            )[-1]
-            print(f"Found checkpoint {resume_from_checkpoint} for run {args.run_name}.")
+        resume_from_checkpoint = sorted(
+            checkpoint_list, key=lambda x: int(x.split("_")[-1].split(".")[0])
+        )[-1]
+        print(f"Found checkpoint {resume_from_checkpoint} for run {args.run_name}.")
     return resume_from_checkpoint
 
 
 def load_checkpoint(args, model):
     """
-    Loads a (non-Deepspeed) checkpoint into the model and returns the checkpoint + epoch to resume from.
+    Loads a checkpoint into the model and returns the checkpoint + epoch to resume from.
     Does not load the optimizer or learning rate checkpoints, but these are included in the returned checkpoint dict.
     """
     if args.rank == 0:
@@ -305,23 +292,6 @@ def load_checkpoint(args, model):
         )
     model.load_state_dict(msd, False)
     return resume_from_epoch, checkpoint
-
-
-def load_deepspeed_checkpoint(args, model):
-    """Loads a deepspeed checkpoint and returns the epoch to resume from."""
-    if args.rank == 0:
-        print(f"Loading checkpoint from {args.resume_from_checkpoint}")
-    # We will not pass in a 'tag' and instead rely on 'latest' file in the checkpoint directory
-    model.load_checkpoint(
-        load_dir=args.resume_from_checkpoint,  # Note: this is the dir, not the file
-        load_module_strict=False,
-    )
-    # read latest file to get epoch
-    latest_file = os.path.join(args.resume_from_checkpoint, "latest")
-    with open(latest_file, "r") as f:
-        checkpoint_epoch = int(f.read().split("_")[-1])
-    return checkpoint_epoch + 1
-
 
 def filter_state_dict_to_trainable(model, state_dict):
     """
@@ -387,24 +357,3 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
         if args.delete_previous_checkpoint:
             if epoch > 0:
                 os.remove(f"{args.run_name}/checkpoint_{epoch-1}.pt")
-
-
-def save_deepspeed_checkpoint(model, epoch, args):
-    """
-    Save training checkpoint for deepspeed.
-    """
-    print(f"Saving checkpoint to {args.run_name}")
-    model.save_checkpoint(
-        save_dir=args.run_name,
-        save_latest=True,
-        tag=f"epoch_{epoch}",
-        exclude_frozen_parameters=not args.gradient_checkpointing, # Save all parameters if gradient checkpointing is enabled
-    )
-
-    if args.rank == 0:
-        if args.report_to_wandb and args.save_checkpoints_to_wandb:
-            wandb.save(f"{args.run_name}/epoch_{epoch}/mp_rank_00_model_states.pt")
-
-        if args.delete_previous_checkpoint:
-            if epoch > 0:  # remove checkpoint dir epoch_{epoch-1}
-                shutil.rmtree(f"{args.run_name}/epoch_{epoch-1}")

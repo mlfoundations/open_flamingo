@@ -31,7 +31,7 @@ def get_eval_model(name, *args, **kwargs):
 class BaseEvalModel(abc.ABC):
     """Base class encapsulating functionality needed to evaluate a model."""
 
-    def __init__(self, model_args: List[str], init_on_device=False):
+    def __init__(self, model_args: List[str]):
         """Initialize model.
 
         Args:
@@ -59,17 +59,6 @@ class BaseEvalModel(abc.ABC):
         self.autocast = get_autocast(self.precision)
         self.cast_dtype = get_cast_dtype(self.precision)
 
-        # initialization context
-        if init_on_device:
-            # for deepspeed, must init on device, or likely CPU OOM
-            import deepspeed
-
-            self.init_ctx = deepspeed.OnDevice(
-                dtype=self.cast_dtype, device=self.device
-            )
-        else:
-            self.init_ctx = suppress()
-
     @property
     def required_args(self):
         """Return list of required arguments to initialize model."""
@@ -83,23 +72,9 @@ class BaseEvalModel(abc.ABC):
         assert hasattr(self, "tokenizer"), "Tokenizer has not been initialized"
         self.tokenizer.padding_side = "left"
 
-    def init_distributed(self, world_size=None, use_deepspeed=False):
-        """Wrap model as DDP or deepspeed."""
-        if use_deepspeed:
-            assert "amp" not in self.precision, "Deepspeed does not support amp"
-            import deepspeed
-
-            self.ds_engine = deepspeed.init_inference(
-                self.model,
-                mp_size=world_size,
-                dtype=self.cast_dtype,
-                checkpoint=None,
-                replace_with_kernel_inject=True,
-            )
-            self.model = self.ds_engine.module
-            self.autocast = get_autocast(None)
-        else:
-            self.model = DDP(self.model, device_ids=[self.device])
+    def init_distributed(self):
+        """Wrap model as DDP."""
+        self.model = DDP(self.model, device_ids=[self.device])
 
     def __call__(
         self,

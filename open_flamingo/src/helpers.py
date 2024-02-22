@@ -184,19 +184,19 @@ class PerceiverResampler(VisionTokenizer):
             latents = ff(latents) + latents
         return self.norm(latents)
 
-
-class LinearProjection(nn.Module):
+class LinearPatchProjection(VisionTokenizer):
     """Linear projection from patch features to image tokens."""
 
-    def __init__(self, *, dim, dim_out):
-        super().__init__()
-        self.proj = nn.Linear(dim, dim_out)
-        self.out_dim = dim_out
+    def __init__(self, *, dim_visual, dim_out, num_patches):
+        super().__init__(dim_media=dim_visual, num_tokens_per_media=num_patches)
+        self.proj = nn.Linear(dim_visual, dim_out)
 
     def forward(self, x):
-        return self.proj(x)
-
-
+        B = x.shape[0]
+        x = rearrange(x, "b T F v d -> (b T) (F v) d")
+        x = self.proj(x)
+        return rearrange(x, "(b T) n d -> b T n d", b=B)
+    
 # gated cross attention
 class MaskedCrossAttention(nn.Module):
     def __init__(
@@ -362,7 +362,7 @@ class QFormerWithProjection(VisionTokenizer):
             self.query_tokens = nn.Parameter(
                 torch.zeros(1, num_query_tokens, dim_inner)
             )
-            self.proj = LinearProjection(dim=dim_inner, dim_out=dim_out)
+            self.proj = nn.Linear(dim_inner, dim_out)
         else:
             model = Blip2Model.from_pretrained(
                 pretrained_path,

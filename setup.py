@@ -6,33 +6,14 @@ if __name__ == "__main__":
     with Path(Path(__file__).parent, "README.md").open(encoding="utf-8") as file:
         long_description = file.read()
 
-    REQUIREMENTS = [
-        "einops",
-        "einops-exts",
-        "transformers>=4.28.1",
-        "torch==2.0.1",
-        "pillow",
-        "open_clip_torch>=2.16.0",
-        "sentencepiece",
-    ]
+    with open("requirements.txt") as f:
+        REQUIREMENTS = f.read().splitlines()
 
-    EVAL = [
-        "scipy",
-        "torchvision",
-        "nltk",
-        "inflection",
-        "pycocoevalcap",
-        "pycocotools",
-        "tqdm",
-    ]
+    with open("requirements-eval.txt") as f:    
+        EVAL = f.read().splitlines()
 
-    TRAINING = [
-        "wandb",
-        "torchvision",
-        "braceexpand",
-        "webdataset",
-        "tqdm",
-    ]
+    with open("requirements-training.txt") as f:
+        TRAINING = f.read().splitlines()
 
     setup(
         name="open_flamingo",

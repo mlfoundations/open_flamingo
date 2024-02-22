@@ -1,5 +1,4 @@
 from typing import Optional
-import torch.nn as nn
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import open_clip
@@ -7,10 +6,16 @@ import open_clip
 from .flamingo import Flamingo
 from .kosmos import Kosmos
 from .blip import BLIP
+from .llava import Llava
 from .utils import hasattr_recursive, setattr_recursive
 
-SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos", "blip")
-
+SUPPORTED_MODEL_FAMILIES = ("flamingo", "kosmos", "blip", "llava")
+MODEL_FAMILY_TO_CLASS = {
+    "flamingo": Flamingo,
+    "kosmos": Kosmos,
+    "blip": BLIP,
+    "llava": Llava,
+}
 
 def create_model_and_transforms(
     clip_vision_encoder_path: str,
@@ -83,41 +88,16 @@ def create_model_and_transforms(
     if decoder_layers_attr_name is None:
         decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_model)
 
-    if model_family == "flamingo":
-        model = Flamingo(
-            vision_encoder=vision_encoder,
-            lang_model=lang_model,
-            vis_feature_dim=vis_hidden_dim,
-            initial_tokenizer_len=len(text_tokenizer),
-            gradient_checkpointing=gradient_checkpointing,
-            decoder_layers_attr_name=decoder_layers_attr_name,
-            pad_token_id=text_tokenizer.pad_token_id,
-            **model_kwargs,
-        )
-
-    elif model_family == "kosmos":
-        model = Kosmos(
-            vision_encoder=vision_encoder,
-            lang_model=lang_model,
-            vis_feature_dim=vis_hidden_dim,
-            initial_tokenizer_len=len(text_tokenizer),
-            gradient_checkpointing=gradient_checkpointing,
-            pad_token_id=text_tokenizer.pad_token_id,
-            decoder_layers_attr_name=decoder_layers_attr_name,
-            **model_kwargs,
-        )
-
-    elif model_family == "blip":
-        model = BLIP(
-            vision_encoder=vision_encoder,
-            lang_model=lang_model,
-            vis_feature_dim=vis_hidden_dim,
-            initial_tokenizer_len=len(text_tokenizer),
-            gradient_checkpointing=gradient_checkpointing,
-            pad_token_id=text_tokenizer.pad_token_id,
-            decoder_layers_attr_name=decoder_layers_attr_name,
-            **model_kwargs,
-        )
+    model = MODEL_FAMILY_TO_CLASS[model_family](
+        vision_encoder=vision_encoder,
+        lang_model=lang_model,
+        vis_feature_dim=vis_hidden_dim,
+        initial_tokenizer_len=len(text_tokenizer),
+        gradient_checkpointing=gradient_checkpointing,
+        decoder_layers_attr_name=decoder_layers_attr_name,
+        pad_token_id=text_tokenizer.pad_token_id,
+        **model_kwargs,
+    )
 
     # add special tokens to the tokenizer and language models
     text_tokenizer.add_special_tokens(
@@ -130,7 +110,6 @@ def create_model_and_transforms(
             for v in model.special_tokens.values()
         }
     )
-
     # freeze appropriate parameters
     model.set_trainable()
 
@@ -139,8 +118,8 @@ def create_model_and_transforms(
         print(
             f"{model_family} model initialized with {model.num_trainable_params:,} trainable parameters"
         )
-        print(f"========== Trainable Parameters\n{model.num_trainable_params_per_module}")
-        print(f"========== Total Parameters\n{model.num_params_per_module}\n==========")
+        print(f"==========Trainable Parameters\n{model.num_trainable_params_per_module}")
+        print(f"==========Total Parameters\n{model.num_params_per_module}\n==========")
     return model, image_processor, text_tokenizer
 
 

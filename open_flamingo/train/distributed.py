@@ -1,10 +1,9 @@
 """
-Util functions for distributed training, FSDP, and Deepspeed.
+Util functions for distributed training and FSDP.
 """
 
 import os
 import torch
-from data import SUPPORTED_DATASETS
 
 ##################################
 # SLURM setup; Credit: open_clip #
@@ -137,7 +136,7 @@ def init_distributed_device(args):
 
 
 #####################################
-# FSDP and Deepspeed util functions #
+# FSDP util functions #
 #####################################
 
 
@@ -225,48 +224,3 @@ def get_fsdp_checkpoint_config(args):
             rank0_only=True, offload_to_cpu=True
         ),
     )
-
-
-def get_deepspeed_config(
-    args,
-):
-    """
-    Return kwargs for Deepspeed config.
-    """
-    zero_opt_dict = {
-        "stage": args.deepspeed_stage,
-        "overlap_comm": True,
-        "contiguous_gradients": True,
-        "offload_param": {"device": "none"},  # TODO: Support CPU offload
-        "offload_optimizer": {"device": "none"},
-        "stage3_param_persistence_threshold": 1e4,
-        "stage3_max_live_parameters": 3e7,
-        "stage3_prefetch_bucket_size": 3e7,
-        "memory_efficient_linear": False,
-    }
-    # sum all the args that start with batch_size_ to get the total batch size
-    total_batch_size = sum(
-        [getattr(args, arg) for arg in vars(args) if arg.startswith("batch_size_")]
-    )
-    ds_config = {
-        "train_batch_size": total_batch_size
-        * args.world_size
-        * args.gradient_accumulation_steps,
-        "train_micro_batch_size_per_gpu": total_batch_size
-        * args.gradient_accumulation_steps,
-        "steps_per_print": args.logging_steps,
-        "zero_optimization": zero_opt_dict,
-        "gradient_clipping": 1.0,
-        "prescale_gradients": False,
-        "wall_clock_breakdown": False,
-    }
-
-    if args.precision == "fp16":
-        ds_config["fp16"] = {"enabled": True}
-    elif args.precision == "bf16":
-        ds_config["bf16"] = {"enabled": True}
-    # amp not supported with DeepSpeed
-    elif "amp" in args.precision:
-        raise ValueError("amp not supported with DeepSpeed")
-
-    return ds_config
