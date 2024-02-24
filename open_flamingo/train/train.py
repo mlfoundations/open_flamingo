@@ -3,7 +3,6 @@ import argparse
 import os
 import torch
 import wandb
-import deepspeed
 import functools
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -16,16 +15,13 @@ from open_flamingo.train.distributed import (
     world_info_from_env,
     get_fsdp_config,
     get_fsdp_checkpoint_config,
-    get_deepspeed_config,
 )
 from open_flamingo.train.train_utils import (
     train_one_epoch,
     random_seed,
-    load_deepspeed_checkpoint,
     find_most_recent_checkpoint,
     load_checkpoint,
     save_checkpoint,
-    save_deepspeed_checkpoint,
 )
 from open_flamingo.train.losses import (
     SUPPORTED_LOSSES,
@@ -44,8 +40,8 @@ def main():
     parser.add_argument(
         "--model_family", default="flamingo", type=str, choices=SUPPORTED_MODEL_FAMILIES
     )
-    parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
-    parser.add_argument("--vision_encoder_pretrained", default="openai", type=str)
+    parser.add_argument("--vision_encoder_path", default="ViT-SO400M-14-SigLIP-384", type=str)
+    parser.add_argument("--vision_encoder_pretrained", default="webli", type=str)
     parser.add_argument("--lm_path", default="facebook/opt-1.3b", type=str)
     parser.add_argument(
         "--tokenizer_path",
@@ -73,7 +69,7 @@ def main():
     parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
-        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states. if there exists a checkpoint in the dir named run_name, we will resume from that checkpoint by default. If using deepspeed this should be a directory, not a file.",
+        help="path to checkpoint to resume from, this should contain model, optimizer, and lr_scheduler states. if there exists a checkpoint in the dir named run_name, we will resume from that checkpoint by default.",
         default=None,
     )
     parser.add_argument(
@@ -187,20 +183,6 @@ def main():
         "--fsdp_sharding_strategy", default="full", type=str, choices=["full", "hybrid"]
     )
 
-    # deepspeed args
-    parser.add_argument(
-        "--deepspeed",
-        default=False,
-        action="store_true",
-        help="Use deepspeed for distributed training.",
-    )
-    parser.add_argument(
-        "--deepspeed_stage",
-        default=2,
-        type=int,
-        help="DeepSpeed distributed training stage. 1: ZeRO-1 (optimizer sharding), 2: ZeRO-2 (optimizer + gradient sharding), 3: ZeRO-3 (optimizer + gradient + model sharding)",
-    )
-
     # wandb args
     parser.add_argument("--report_to_wandb", default=False, action="store_true")
     parser.add_argument(
@@ -251,16 +233,10 @@ def main():
     if args.save_checkpoints_to_wandb and not args.report_to_wandb:
         raise ValueError("save_checkpoints_to_wandb requires report_to_wandb")
 
-    if args.fsdp and args.deepspeed:
-        raise ValueError("Select either FSDP or deepspeed for distributed training.")
-
     if args.fsdp:
-        print(
-            "Warning: FSDP is experimental and not fully tested. Preference should be given to Deepspeed."
-        )
         assert (
-            "dev" in torch.__version__ and torch.__version__ > "2.0.1"
-        ), "FSDP requires torch nightly > 2.0.1"
+            torch.__version__ > "2.0.1"
+        ), "FSDP requires torch > 2.0.1"
 
     # Set up distributed training
     args.local_rank, args.rank, args.world_size = world_info_from_env()
@@ -269,13 +245,7 @@ def main():
     if args.offline:
         os.environ["WANDB_MODE"] = "offline"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    if args.deepspeed:
-        torch.cuda.set_device(args.local_rank)
-        deepspeed.init_distributed()
-        ds_config = get_deepspeed_config(args)
-        device_id = args.local_rank
-    else:
-        device_id = init_distributed_device(args)
+    device_id = init_distributed_device(args)
 
     random_seed(args.seed)
 
@@ -316,8 +286,8 @@ def main():
         args.resume_from_checkpoint = find_most_recent_checkpoint(args)
 
     if (
-        args.resume_from_checkpoint is not None and not args.deepspeed
-    ):  # deepspeed handles checkpoint loading
+        args.resume_from_checkpoint is not None
+    ): 
         resume_from_epoch, checkpoint = load_checkpoint(args, model)
     else:
         resume_from_epoch = 0
@@ -327,7 +297,6 @@ def main():
         model.init_gradient_checkpointing()
 
     # Initialize FSDP / DDP, and ensure the model is on GPU
-    # Deepspeed is initialized later
     if args.fsdp:
         auto_wrap_policy = functools.partial(
             lambda_auto_wrap_policy, lambda_fn=model.get_fsdp_lambda_fn()
@@ -336,7 +305,7 @@ def main():
         distributed_model = FSDP(
             model, auto_wrap_policy=auto_wrap_policy, **wrapper_kwargs
         )
-    elif not args.deepspeed:
+    else:
         model = model.to(device_id)
         distributed_model = DDP(model, device_ids=[device_id])
 
@@ -351,7 +320,7 @@ def main():
     )
 
     # load optimizer checkpoint
-    if args.resume_from_checkpoint is not None and not args.deepspeed:
+    if args.resume_from_checkpoint is not None:
         osd = checkpoint["optimizer_state_dict"]
         if args.fsdp:
             FSDP.set_state_dict_type(
@@ -370,7 +339,7 @@ def main():
     ]
     total_training_steps = (
         getattr(args, f"train_num_samples_{datasets_to_train_on[0]}")
-        // getattr(args, f"batch_size_{datasets_to_train_on[0]}")
+        // (getattr(args, f"batch_size_{datasets_to_train_on[0]}") * args.gradient_accumulation_steps * args.world_size)
     ) * args.num_epochs
 
     if args.rank == 0:
@@ -395,20 +364,8 @@ def main():
         )
 
     # load lr scheduler checkpoint
-    if args.resume_from_checkpoint is not None and not args.deepspeed:
+    if args.resume_from_checkpoint is not None:
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
-
-    if args.deepspeed:
-        distributed_model, optimizer, _, lr_scheduler = deepspeed.initialize(
-            model=model,
-            optimizer=optimizer,
-            args=args,
-            config=ds_config,
-            lr_scheduler=lr_scheduler,
-            dist_init_required=True,
-        )
-        if args.resume_from_checkpoint is not None:
-            resume_from_epoch = load_deepspeed_checkpoint(args, distributed_model)
 
     # Initialize the loss fn
     loss_fn = get_loss_fn(args.loss)
@@ -435,10 +392,7 @@ def main():
             wandb=wandb,
         )
 
-        if args.deepspeed:
-            save_deepspeed_checkpoint(distributed_model, epoch, args)
-        else:
-            save_checkpoint(distributed_model, optimizer, lr_scheduler, epoch, args)
+        save_checkpoint(distributed_model, optimizer, lr_scheduler, epoch, args)
 
 
 if __name__ == "__main__":

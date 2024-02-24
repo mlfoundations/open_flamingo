@@ -61,9 +61,11 @@ def create_model_and_transforms(
     )
     vision_encoder.visual.output_tokens = True
     vision_encoder = vision_encoder.visual
-    vis_hidden_dim = open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"][
-        "width"
-    ]
+    vision_encoder_config = open_clip.get_model_config(clip_vision_encoder_path)
+    if "SigLIP" in clip_vision_encoder_path: # SigLIP models have a different config format
+        vis_hidden_dim = vision_encoder_config["embed_dim"]
+    else:    
+        vis_hidden_dim = vision_encoder_config["vision_cfg"]["width"]
 
     # load tokenizer and ensure there is a pad token
     text_tokenizer = AutoTokenizer.from_pretrained(
@@ -145,6 +147,9 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "gptneoxforcausallm": "gpt_neox.layers",
     "mpt": "transformer.blocks",
     "mosaicgpt": "transformer.blocks",
+    "gemma": "model.layers",
+    "phi": "model.layers",
+    "minicpm": "model.layers",
 }
 
 
@@ -194,9 +199,5 @@ def check_embedding_fns(lang_model):
 
 
 def has_fn(model, fn_name):
-    """Try to call the fn_name function on the model"""
-    try:
-        getattr(model, fn_name)()
-        return True
-    except:
-        return False
+    """Check if model has a function fn_name"""
+    return callable(getattr(model, fn_name, None))

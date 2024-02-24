@@ -184,10 +184,13 @@ class VLM(nn.Module):
         """
         assert vision_x.ndim == 6, "vision_x should be of shape (b, T_img, F, C, H, W)"
         b, T, F = vision_x.shape[:3]
-
+        
         vision_x = rearrange(vision_x, "b T F c h w -> (b T F) c h w")
         with torch.no_grad():
-            vision_x = self.vision_encoder(vision_x)[1]  # OpenCLIP returns tuples
+            if self.vision_encoder.__class__.__name__ == "TimmModel":
+                vision_x = self.vision_encoder.trunk.forward_features(vision_x)
+            else:
+                vision_x = self.vision_encoder(vision_x)[1]  # OpenCLIP returns tuples
         vision_x = rearrange(vision_x, "(b T F) v d -> b T F v d", b=b, T=T, F=F)
         return vision_x
 

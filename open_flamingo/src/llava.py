@@ -31,11 +31,17 @@ class Llava(VLMWithLanguageStream):
             "media_token": "<image>",
         }
         lang_embedding_dim = lang_model.get_input_embeddings().weight.shape[1]
+
+        if vision_encoder.__class__.__name__ == "TimmModel":
+            grid_size = vision_encoder.trunk.patch_embed.grid_size
+        else:
+            grid_size = vision_encoder.grid_size
+
         super().__init__(
             vision_encoder=vision_encoder,
             vision_tokenizer=LinearPatchProjection(dim_visual=vis_feature_dim,
                                                     dim_out=lang_embedding_dim,
-                                                    num_patches=vision_encoder.grid_size[0] * vision_encoder.grid_size[1]),
+                                                    num_patches=grid_size[0] * grid_size[1]),
             lang_model=lang_model,
             initial_tokenizer_len=initial_tokenizer_len,
             gradient_checkpointing=gradient_checkpointing,
