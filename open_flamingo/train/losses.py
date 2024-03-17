@@ -57,7 +57,6 @@ class NextTokenPrediction(Loss):
         attention_mask: torch.Tensor,
         autocast: callable,
     ):
-        print(input_ids[0])
         # set up labels; language model is expected to handle shifting
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
