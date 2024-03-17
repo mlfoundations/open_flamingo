@@ -84,8 +84,6 @@ def preprocess_laion_text(sample, tokenizer, max_tokens=128):
         (f"<image>{re.sub(CAPTION_BAN_PATTERN, '', s.split('<|synthetic caption|>')[-1].strip())}{tokenizer.eos_token}") for s in sample
     ]
 
-    print(sample[0])
-
     text = tokenizer(
         sample,
         max_length=max_tokens,
