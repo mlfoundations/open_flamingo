@@ -50,14 +50,6 @@ class BLIP(VLMWithLanguageStream):
         """
         self.requires_grad_(False)
         self.vision_tokenizer.requires_grad_(True)
-        self.lang_model.get_output_embeddings().set_requires_grad(
-            require_regular_grad=False,
-            require_additional_grad=True,
-        )
-        self.lang_model.get_input_embeddings().set_requires_grad(
-            require_regular_grad=False,
-            require_additional_grad=True,
-        )
 
     def _should_apply_weight_decay(self, parameter_name):
         """BLIP applies 0.05 weight decay to everything"""

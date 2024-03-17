@@ -13,24 +13,32 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 class EvalModel(BaseEvalModel):
     """OpenFlamingo model evaluation."""
 
-    def __init__(self, model_args, init_on_device=False):
-        super().__init__(model_args, init_on_device)
+    def __init__(self, model_args):
+        super().__init__(model_args)
+
+        if model_args["model_family"] == "openflamingo":
+            assert "cross_attn_every_n_layers" in model_args, "cross_attn_every_n_layers is required for Flamingo models"
+        else:
+            assert "cross_attn_every_n_layers" not in model_args, "cross_attn_every_n_layers is only for Flamingo models"
+
         # initialize the model
-        with self.init_ctx:
-            (
-                self.model,
-                self.image_processor,
-                self.tokenizer,
-            ) = create_model_and_transforms(
-                clip_vision_encoder_path=model_args["vision_encoder_path"],
-                clip_vision_encoder_pretrained=model_args["vision_encoder_pretrained"],
-                lang_model_path=model_args["lm_path"],
-                tokenizer_path=model_args["tokenizer_path"],
-                model_family=model_args["model_family"],
-                cross_attn_every_n_layers=int(
-                    model_args.get("cross_attn_every_n_layers", 1)
-                ),
-            )
+        additional_kwargs = (
+        {"cross_attn_every_n_layers": model_args.get("cross_attn_every_n_layers", 1)}
+        if model_args["model_family"] == "flamingo"
+        else {}
+        )   
+        (
+            self.model,
+            self.image_processor,
+            self.tokenizer,
+        ) = create_model_and_transforms(
+            clip_vision_encoder_path=model_args["vision_encoder_path"],
+            clip_vision_encoder_pretrained=model_args["vision_encoder_pretrained"],
+            lang_model_path=model_args["lm_path"],
+            tokenizer_path=model_args["tokenizer_path"],
+            model_family=model_args["model_family"],
+            **additional_kwargs,
+        )
 
         # load the checkpoint
         checkpoint = torch.load(model_args["checkpoint_path"], map_location="cpu")
@@ -38,6 +46,7 @@ class EvalModel(BaseEvalModel):
             checkpoint = checkpoint["model_state_dict"]
             checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
         self.model.load_state_dict(checkpoint, strict=False)
+        self.model_family = model_args["model_family"]
 
         self._check_init()
 
@@ -46,11 +55,10 @@ class EvalModel(BaseEvalModel):
         """Return list of required arguments to initialize model."""
         return [
             "vision_encoder_path",
-            "model_familyl",
+            "model_family",
             "lm_path",
             "checkpoint_path",
             "tokenizer_path",
-            "cross_attn_every_n_layers",
             "vision_encoder_pretrained",
         ]
 
@@ -170,8 +178,9 @@ class EvalModel(BaseEvalModel):
                     **decode_kwargs,
                 )
 
-        # Extract only the new generated tokens
-        outputs = outputs[:, len(input_ids[0]) :]
+        if self.model_family == "flamingo":
+            # Extract only the new generated tokens
+            outputs = outputs[:, len(input_ids[0]) :]
         return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
     def get_rank_classifications(
@@ -270,8 +279,8 @@ class EvalModel(BaseEvalModel):
     def get_vqav2_prompt(self, question, answer=None) -> str:
         return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
 
-    def get_ok_vqa_prompt(self, question, answer=None) -> str:
-        return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
+    def get_okvqa_prompt(self, question, answer=None) -> str:
+        return f"<image>Instruct: {question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
 
     def get_vizwiz_prompt(self, question, answer=None) -> str:
         return f"<image>Question:{question} Short answer:{answer if answer is not None else ''}{'<|endofchunk|>' if answer is not None else ''}"
@@ -282,7 +291,7 @@ class EvalModel(BaseEvalModel):
     def get_coco_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
 
-    def get_flickr_prompt(self, caption=None) -> str:
+    def get_flickr30_prompt(self, caption=None) -> str:
         return f"<image>Output:{caption if caption is not None else ''}{'<|endofchunk|>' if caption is not None else ''}"
 
     def get_imagenet_prompt(self, label=None) -> str:

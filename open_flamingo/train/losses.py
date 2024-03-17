@@ -57,14 +57,15 @@ class NextTokenPrediction(Loss):
         attention_mask: torch.Tensor,
         autocast: callable,
     ):
+        print(input_ids[0])
         # set up labels; language model is expected to handle shifting
         labels = input_ids.clone()
         labels[labels == tokenizer.pad_token_id] = -100
-        labels[labels == tokenizer.eos_token] = -100
         special_token_ids = torch.Tensor(unwrap_model(model).special_token_ids).to(
             labels.device
         )
-        labels[torch.isin(labels, special_token_ids)] = -100
+        labels[torch.isin(labels, special_token_ids)] = -100 # TODO: dont want to remove loss on <|endofchunk|> tokens
+
         labels = labels.to(input_ids.device)
 
         # call forward

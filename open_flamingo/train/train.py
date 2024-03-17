@@ -180,7 +180,7 @@ def main():
         help="Use FullyShardedDataParallel for distributed training. Not supported for some models, e.g. OPT.",
     )
     parser.add_argument(
-        "--fsdp_sharding_strategy", default="full", type=str, choices=["full", "hybrid"]
+        "--fsdp_sharding_strategy", default="full", type=str, choices=["full", "hybrid", "shard_grad_op", "hybrid_shard_grad_op", "no_shard"]
     )
 
     # wandb args
@@ -321,16 +321,16 @@ def main():
 
     # load optimizer checkpoint
     if args.resume_from_checkpoint is not None:
-        osd = checkpoint["optimizer_state_dict"]
+        optim_state_dict = checkpoint["optimizer_state_dict"]
         if args.fsdp:
-            FSDP.set_state_dict_type(
-                distributed_model,
-                **args.fsdp_checkpoint_config,
+            # FSDP.set_state_dict_type(
+            #     distributed_model,
+            #     **args.fsdp_checkpoint_config,
+            # )
+            optim_state_dict = FSDP.optim_state_dict_to_load(
+                model=distributed_model, optim=optimizer, optim_state_dict=optim_state_dict
             )
-            osd = FSDP.optim_state_dict_to_load(
-                model=distributed_model, optim=optimizer, optim_state_dict=osd
-            )
-        optimizer.load_state_dict(osd)
+        optimizer.load_state_dict(optim_state_dict)
 
     # Initialize datasets
     datasets = [

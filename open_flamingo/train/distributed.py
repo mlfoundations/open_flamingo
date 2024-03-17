@@ -190,13 +190,26 @@ def get_fsdp_config(
         BackwardPrefetch,
     )
 
+    if args.fsdp_sharding_strategy == "full":
+        sharding_strategy = ShardingStrategy.FULL_SHARD
+    elif args.fsdp_sharding_strategy == "hybrid":
+        sharding_strategy = ShardingStrategy.HYBRID_SHARD
+    elif args.fsdp_sharding_strategy == "shard_grad_op":
+        sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
+    elif args.fsdp_sharding_strategy == "hybrid_shard_grad_op":
+        sharding_strategy = ShardingStrategy._HYBRID_SHARD_ZERO2
+    elif args.fsdp_sharding_strategy == "no_shard":
+        sharding_strategy = ShardingStrategy.NO_SHARD
+    else:
+        raise ValueError(
+            f"Invalid sharding strategy: {args.fsdp_sharding_strategy}. Supported: full, hybrid, shard_grad_op, hybrid_shard_grad_op, no_shard"
+        )
+
     return dict(
         cpu_offload=None,
         device_id=device_id,
         sync_module_states=True,  # broadcast loaded ckpt from rank 0 -> all ranks
-        sharding_strategy=ShardingStrategy.FULL_SHARD
-        if args.fsdp_sharding_strategy == "full"
-        else ShardingStrategy.HYBRID_SHARD,
+        sharding_strategy=sharding_strategy,
         use_orig_params=True,
         mixed_precision=mp_policy,
         forward_prefetch=True,

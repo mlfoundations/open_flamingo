@@ -147,6 +147,7 @@ class VLM(nn.Module):
             labels=labels,
             past_key_values=past_key_values,
             past_media_locations=past_media_locations,
+            padding_side="right",
             past_vision_tokens=past_vision_tokens,
         )
         output = self.lang_model(
@@ -273,7 +274,7 @@ class VLM(nn.Module):
             past_key_values=past_key_values,
             past_media_locations=past_media_locations,
             past_vision_tokens=past_vision_tokens,
-            padding_side="right",
+            padding_side="left",
             num_beams=num_beams,
         )
         output = self.lang_model.generate(
@@ -303,10 +304,11 @@ class VLM(nn.Module):
         """
         params_with_wd, params_without_wd = [], []
         for n, p in self.named_parameters():
-            if self._should_apply_weight_decay(n):
-                params_with_wd.append(p)
-            else:
-                params_without_wd.append(p)
+            if p.requires_grad:    
+                if self._should_apply_weight_decay(n):
+                    params_with_wd.append(p)
+                else:
+                    params_without_wd.append(p)
         return params_with_wd, params_without_wd
 
     def _should_apply_weight_decay(self, parameter_name):
@@ -475,7 +477,9 @@ class VLMWithCrossAttention(VLM):
         )
         from .helpers import GatedCrossAttentionBlock
 
-        original_decoder_block_class = self.lang_model.decoder_block_class
+        decoder_block_class = getattr_recursive(
+            self.lang_model, self.decoder_layers_attr_name
+        )[0].__class__
 
         def lambda_fn(module: nn.Module):
             # we want FSDP(ckpt(module)), not ckpt(FSDP(module))

@@ -9,9 +9,9 @@ from open_flamingo.eval.classification_utils import IMAGENET_CLASSNAMES
 
 SUPPORTED_TASKS = [
     "coco",
-    "flickr",
+    "flickr30",
     "vqav2",
-    "ok_vqa",
+    "okvqa",
     "vizwiz",
     "textvqa",
     "hateful_memes",
@@ -87,7 +87,7 @@ class VQADataset(Dataset):
         self.image_dir_path = image_dir_path
         self.is_train = is_train
         self.dataset_name = dataset_name
-        if self.dataset_name in {"vqav2", "ok_vqa"}:
+        if self.dataset_name in {"vqav2", "okvqa"}:
             self.img_coco_split = self.image_dir_path.strip("/").split("/")[-1]
             assert self.img_coco_split in {"train2014", "val2014", "test2015"}
 
@@ -95,7 +95,7 @@ class VQADataset(Dataset):
         return len(self.questions)
 
     def get_img_path(self, question):
-        if self.dataset_name in {"vqav2", "ok_vqa"}:
+        if self.dataset_name in {"vqav2", "okvqa"}:
             return os.path.join(
                 self.image_dir_path,
                 f"COCO_{self.img_coco_split}_{question['image_id']:012d}.jpg"

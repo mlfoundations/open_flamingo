@@ -24,6 +24,7 @@ from scipy.optimize import linear_sum_assignment
 from open_flamingo.train.data_utils import *
 
 SUPPORTED_DATASETS = ["laion", "mmc4"]
+CAPTION_BAN_PATTERN = r'\b(?:This image showcases |This image depicts |This image appears to be |This image is |This image captures |The image showcases |The image depicts | The image appears to be )\b'
 
 Image.MAX_IMAGE_PIXELS = 1000000000
 N_CHANNELS = 3
@@ -68,23 +69,31 @@ def preprocess_laion_image(sample, image_processor):
     return rearrange(sample, "(b t f) c h w -> b t f c h w", t=1, f=1)
 
 
-def preprocess_laion_text(sample, tokenizer, max_tokens=256):
+def preprocess_laion_text(sample, tokenizer, max_tokens=128):
     """
     Preprocess text for LAION. Applied to a batch of captions.
     Captions are truncated to 256 tokens by default.
     """
     tokenizer.padding_side = "right"
+
+    if any("<image>" in s for s in sample):
+        raise ValueError("Image token found in text")
+    
     sample = [
         # (f"<image>{s.strip()}<|endofchunk|>{tokenizer.eos_token}") for s in sample
-        (f"<image>{s.strip()}{tokenizer.eos_token}") for s in sample
+        (f"<image>{re.sub(CAPTION_BAN_PATTERN, '', s.split('<|synthetic caption|>')[-1].strip())}{tokenizer.eos_token}") for s in sample
     ]
+
+    print(sample[0])
+
     text = tokenizer(
         sample,
         max_length=max_tokens,
-        padding="longest",
+        padding="max_length",
         truncation="only_first",
         return_tensors="pt",
     )
+
     return text["input_ids"], text["attention_mask"]
 
 

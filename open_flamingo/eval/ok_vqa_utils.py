@@ -210,6 +210,7 @@ stemmer = OKVQAStemmer()
 
 def postprocess_ok_vqa_generation(predictions) -> str:
     prediction = re.split("Question|Answer|Short", predictions, 1)[0]
+    prediction = prediction.split(". ", 1)[0]
     prediction = re.split(", ", prediction, 1)[0]
     prediction_stem = stemmer.stem(prediction)
     return prediction_stem

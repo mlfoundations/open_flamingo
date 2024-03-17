@@ -51,11 +51,10 @@ class Llava(VLMWithLanguageStream):
 
     def set_trainable(self):
         """
-        Freeze everything except the Q-former and the inserted LM embeddings
+        Unfreeze everything except the vision_encoder
         """
-        self.requires_grad_(False)
-        self.vision_tokenizer.requires_grad_(True)
-        self.lang_model.requires_grad_(True)
+        self.requires_grad_(True)
+        self.vision_encoder.requires_grad_(False)
 
     def _should_apply_weight_decay(self, parameter_name):
         return True

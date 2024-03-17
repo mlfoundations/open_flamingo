@@ -58,11 +58,12 @@ def create_model_and_transforms(
         clip_vision_encoder_path,
         pretrained=clip_vision_encoder_pretrained,
         cache_dir=cache_dir,
+        force_image_size=490,
     )
     vision_encoder.visual.output_tokens = True
     vision_encoder = vision_encoder.visual
     vision_encoder_config = open_clip.get_model_config(clip_vision_encoder_path)
-    if "SigLIP" in clip_vision_encoder_path: # SigLIP models have a different config format
+    if "SigLIP" in clip_vision_encoder_path or "EVA" in clip_vision_encoder_path: # SigLIP models have a different config format
         vis_hidden_dim = vision_encoder_config["embed_dim"]
     else:    
         vis_hidden_dim = vision_encoder_config["vision_cfg"]["width"]
@@ -74,8 +75,9 @@ def create_model_and_transforms(
         trust_remote_code=True,
         cache_dir=cache_dir,
     )
-    if text_tokenizer.pad_token is None:
-        text_tokenizer.pad_token_id = text_tokenizer.eos_token_id
+    if text_tokenizer.pad_token is None or text_tokenizer.pad_token == text_tokenizer.eos_token:
+        # add a pad token if it doesn't exist
+        text_tokenizer.add_special_tokens({"pad_token": "<pad>"})
 
     # load langauge model
     lang_model = AutoModelForCausalLM.from_pretrained(
@@ -150,6 +152,9 @@ __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "gemma": "model.layers",
     "phi": "model.layers",
     "minicpm": "model.layers",
+    "stablelm": "model.layers",
+    "qwen": "model.layers",
+    "mistral": "model.layers"
 }
 
 

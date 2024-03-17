@@ -48,7 +48,6 @@ def train_one_epoch(
     # set up model, autocast, and dtypes
     model.train()
     autocast = get_autocast(args.precision)
-    cast_dtype = get_cast_dtype(args.precision)
 
     # set up logging
     step_time_m = AverageMeter()
@@ -70,7 +69,7 @@ def train_one_epoch(
         batch_metadata_to_log = {}
         for dataset_ix, (images, (input_ids, attention_mask)) in enumerate(batches):
             # unpack the batch and move to device
-            images = images.to(device_id, dtype=cast_dtype, non_blocking=True)
+            images = images.to(device_id, non_blocking=True)
             input_ids = input_ids.to(device_id, non_blocking=True)
             attention_mask = attention_mask.to(device_id, non_blocking=True)
 
@@ -102,7 +101,7 @@ def train_one_epoch(
 
         # clip gradient norm
         if args.fsdp:
-            model.clip_grad_norm_(1.0)
+            model.clip_grad_norm_(1.0, norm_type=2.0)
         else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
@@ -149,18 +148,6 @@ def train_one_epoch(
             )
 
 
-def get_cast_dtype(precision: str):
-    """
-    Parses the precision argument and returns the dtype to cast inputs to.
-    """
-    cast_dtype = None
-    if precision == "bf16":
-        cast_dtype = torch.bfloat16
-    elif precision == "fp16":
-        cast_dtype = torch.float16
-    return cast_dtype
-
-
 def get_autocast(precision, cache_enabled=True):
     """
     Parses the precision argument and returns an autocast context manager.
@@ -168,7 +155,6 @@ def get_autocast(precision, cache_enabled=True):
     if precision == "amp":
         return torch.cuda.amp.autocast(cache_enabled=cache_enabled)
     elif precision == "amp_bfloat16" or precision == "amp_bf16":
-        # amp_bfloat16 is more stable than amp float16 for clip training
         return lambda: torch.cuda.amp.autocast(
             dtype=torch.bfloat16, cache_enabled=cache_enabled
         )
@@ -284,13 +270,17 @@ def load_checkpoint(args, model):
     checkpoint = torch.load(args.resume_from_checkpoint, map_location="cpu")
     msd = checkpoint.pop("model_state_dict")
     msd = {k.replace("module.", ""): v for k, v in msd.items()}
+
+    # remove any module with vision_encoder in the name
+    # msd = {k: v for k, v in msd.items() if "vision_encoder" not in k}
+
     resume_from_epoch = checkpoint["epoch"] + 1
     if args.fsdp:
         FSDP.set_state_dict_type(
             model,
             **args.fsdp_checkpoint_config,
         )
-    model.load_state_dict(msd, False)
+    model.load_state_dict(msd, strict=False)
     return resume_from_epoch, checkpoint
 
 def filter_state_dict_to_trainable(model, state_dict):
@@ -325,6 +315,8 @@ def save_checkpoint(model, optimizer, lr_scheduler, epoch, args):
     """
     Save training checkpoint with model, optimizer, and lr_scheduler state.
     """
+    torch.cuda.empty_cache() # (Sometimes this is necessary to avoid OOM errors when saving checkpoints)
+
     if args.fsdp:
         FSDP.set_state_dict_type(
             model,

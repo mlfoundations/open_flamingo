@@ -122,7 +122,7 @@ parser.add_argument(
     help="Whether to evaluate on VQAV2.",
 )
 parser.add_argument(
-    "--eval_ok_vqa",
+    "--eval_okvqa",
     action="store_true",
     default=False,
     help="Whether to evaluate on OK-VQA.",
@@ -408,10 +408,8 @@ def main():
     model_args["device"] = device_id
 
     # initialize model
-    eval_model = get_eval_model(args.model, model_args, init_on_device=False)
-    eval_model.init_distributed(
-        local_rank=args.local_rank,
-    )
+    eval_model = get_eval_model(args.model, model_args)
+    eval_model.init_distributed()
 
     # Validate args
     if args.model in ZERO_SHOT_ONLY_MODELS and args.shots != [0]:
@@ -504,7 +502,7 @@ def main():
                     }
                 )
 
-    if args.eval_ok_vqa:
+    if args.eval_okvqa:
         print("Evaluating on OK-VQA...")
 
         # load cached demonstration features for RICES
@@ -523,7 +521,7 @@ def main():
                     eval_model=eval_model,
                     num_shots=shot,
                     seed=seed,
-                    dataset_name="ok_vqa",
+                    dataset_name="okvqa",
                     cached_features=cached_features,
                 )
                 if args.rank == 0:
@@ -919,7 +917,7 @@ def evaluate_vqa(
     seed: int = 42,
     min_new_tokens: int = 0,
     max_new_tokens: int = 5,
-    num_beams: int = 3,
+    num_beams: int = 5,
     length_penalty: float = 0.0,
     num_shots: int = 8,
     dataset_name: str = "vqav2",
@@ -936,13 +934,13 @@ def evaluate_vqa(
         num_beams (int, optional): number of beams to use for beam search. Defaults to 3.
         length_penalty (float, optional): length penalty for beam search. Defaults to -2.0.
         num_shots (int, optional): number of shots to use. Defaults to 8.
-        dataset_name (string): type of vqa dataset: currently supports vqav2, ok_vqa. Defaults to vqav2.
+        dataset_name (string): type of vqa dataset: currently supports vqav2, okvqa. Defaults to vqav2.
         cached_features (tensor, optional): cached demonstration features for RICES. Defaults to None.
     Returns:
         float: accuracy score
     """
 
-    if dataset_name == "ok_vqa":
+    if dataset_name == "okvqa":
         train_image_dir_path = args.ok_vqa_train_image_dir_path
         train_questions_json_path = args.ok_vqa_train_questions_json_path
         train_annotations_json_path = args.ok_vqa_train_annotations_json_path
@@ -989,7 +987,7 @@ def evaluate_vqa(
         dataset_name=dataset_name,
     )
 
-    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
+    effective_num_shots = num_shots #utils.compute_effective_num_shots(num_shots, args.model)
 
     np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(
@@ -1012,6 +1010,11 @@ def evaluate_vqa(
 
     utils.random_seed(seed, args.rank)
     predictions = []
+
+    get_vqa_prompt = getattr(
+        eval_model, f"get_{dataset_name}_prompt"
+    ) 
+
     for batch in tqdm(
         test_dataloader,
         desc=f"Running inference {dataset_name}",
@@ -1034,7 +1037,7 @@ def evaluate_vqa(
 
             context_text = "".join(
                 [
-                    eval_model.get_vqa_prompt(
+                    get_vqa_prompt(
                         question=x["question"], answer=x["answers"][0]
                     )
                     + "\n"
@@ -1047,9 +1050,9 @@ def evaluate_vqa(
                 context_text = context_text.replace("<image>", "")
 
             batch_text.append(
-                context_text + eval_model.get_vqa_prompt(question=batch["question"][i])
+                context_text + get_vqa_prompt(question=batch["question"][i])
             )
-
+        
         outputs = eval_model.get_outputs(
             batch_images=batch_images,
             batch_text=batch_text,
@@ -1186,7 +1189,7 @@ def evaluate_classification(
 
     class_id_to_name = dict(zip(range(len(all_class_names)), all_class_names))
 
-    effective_num_shots = utils.compute_effective_num_shots(num_shots, args.model)
+    effective_num_shots = num_shots #utils.compute_effective_num_shots(num_shots, args.model)
 
     np.random.seed(seed)
     test_dataloader = utils.prepare_eval_samples(

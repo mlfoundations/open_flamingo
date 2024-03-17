@@ -345,43 +345,22 @@ class QFormerWithProjection(VisionTokenizer):
         dim_inner=768,
         num_hidden_layers=12,
         num_query_tokens=32,
-        pretrained_path=None,
     ):
         super().__init__(dim_media=dim_out, num_tokens_per_media=num_query_tokens)
         # initialize the qformer
-        from transformers import Blip2Model, Blip2QFormerModel, Blip2QFormerConfig
+        from transformers import Blip2QFormerModel, Blip2QFormerConfig
 
-        if pretrained_path is None:
-            self.qformer = Blip2QFormerModel(
-                Blip2QFormerConfig(
-                    encoder_hidden_size=dim_input,
-                    hidden_size=dim_inner,
-                    num_hidden_layers=num_hidden_layers,
-                )
+        self.qformer = Blip2QFormerModel(
+            Blip2QFormerConfig(
+                encoder_hidden_size=dim_input,
+                hidden_size=dim_inner,
+                num_hidden_layers=num_hidden_layers,
             )
-            self.query_tokens = nn.Parameter(
-                torch.zeros(1, num_query_tokens, dim_inner)
-            )
-            self.proj = nn.Linear(dim_inner, dim_out)
-        else:
-            model = Blip2Model.from_pretrained(
-                pretrained_path,
-            )
-            self.qformer = model.qformer
-            self.query_tokens = model.query_tokens
-            self.proj = model.language_projection
-            assert (
-                self.qformer.config.hidden_size == dim_inner
-            ), f"dim_inner={dim_inner} but pretrained model expects {self.qformer.config.hidden_size}"
-            assert (
-                self.qformer.config.encoder_hidden_size == dim_input
-            ), f"dim_input={dim_input} but pretrained model expects {self.qformer.config.encoder_hidden_size}"
-            assert (
-                self.qformer.config.num_hidden_layers == num_hidden_layers
-            ), f"num_hidden_layers={num_hidden_layers} but pretrained model expects {self.qformer.config.num_hidden_layers}"
-            assert (
-                self.query_tokens.shape[1] == num_query_tokens
-            ), f"num_query_tokens={num_query_tokens} but pretrained model expects {self.query_tokens.shape[1]}"
+        )
+        self.query_tokens = nn.Parameter(
+            torch.zeros(1, num_query_tokens, dim_inner)
+        )
+        self.proj = nn.Linear(dim_inner, dim_out)
 
     def forward(self, x):
         """

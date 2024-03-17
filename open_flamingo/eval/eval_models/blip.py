@@ -12,16 +12,15 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 class EvalModel(BaseEvalModel):
     """BLIP-2 model evaluation."""
 
-    def __init__(self, model_args, init_on_device=False):
-        super().__init__(model_args, init_on_device)
-        with self.init_ctx:
-            self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
-            self.model = Blip2ForConditionalGeneration.from_pretrained(
-                model_args["lm_path"]
-            )
-            self.tokenizer = self.processor.tokenizer
+    def __init__(self, model_args):
+        super().__init__(model_args)
+        self.processor = Blip2Processor.from_pretrained(model_args["processor_path"])
+        self.model = Blip2ForConditionalGeneration.from_pretrained(
+            model_args["lm_path"]
+        )
+        self.tokenizer = self.processor.tokenizer
+        
         self._check_init()
-
     @property
     def required_args(self):
         return ["processor_path", "lm_path"]
@@ -100,7 +99,7 @@ class EvalModel(BaseEvalModel):
     def get_vqav2_prompt(self, question, answer=None) -> str:
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
     
-    def get_ok_vqa_prompt(self, question, answer=None) -> str:
+    def get_okvqa_prompt(self, question, answer=None) -> str:
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
     
     def get_vizwiz_prompt(self, question, answer=None) -> str:
@@ -112,5 +111,5 @@ class EvalModel(BaseEvalModel):
     def get_coco_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
     
-    def get_flickr_prompt(self, caption=None) -> str:
+    def get_flickr30_prompt(self, caption=None) -> str:
         return f"A photo of {caption if caption is not None else ''}"
