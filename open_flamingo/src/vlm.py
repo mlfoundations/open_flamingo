@@ -393,6 +393,7 @@ class VLMWithCrossAttention(VLM):
             gradient_checkpointing=gradient_checkpointing,
         )
         self.lang_model.set_decoder_layers_attr_name(decoder_layers_attr_name)
+        self.decoder_layers_attr_name = decoder_layers_attr_name
         self.lang_model.init_cross_attention_layers(
             lang_hidden_size=self.lang_hidden_dim,
             vis_hidden_size=self.vis_embedding_dim,
@@ -491,7 +492,7 @@ class VLMWithCrossAttention(VLM):
                 return True
             if isinstance(module, GatedCrossAttentionBlock):
                 return True
-            if isinstance(module, original_decoder_block_class):
+            if isinstance(module, decoder_block_class):
                 return True
 
         return lambda_fn
