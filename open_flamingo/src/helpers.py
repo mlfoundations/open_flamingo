@@ -183,7 +183,7 @@ class PerceiverResampler(VisionTokenizer):
         if exists(self.projection):
             return self.projection(self.norm(latents)) 
         else:
-            self.norm(latents)
+            return self.norm(latents)
 
 class LinearPatchProjection(VisionTokenizer):
     """Linear projection from patch features to image tokens."""
