@@ -5,7 +5,7 @@ import torch
 
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 from eval_models.eval_model import BaseEvalModel
-from utils import unwrap_model
+from utils import unwrap_model, combine_images
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 
@@ -27,9 +27,14 @@ class EvalModel(BaseEvalModel):
 
     def prepare_images(self, batch: List[List[Image.Image]]) -> torch.Tensor:
         batch_images = None
+        for i in range(len(batch)):
+            if len(batch[i]) > 1:
+                batch[i] = combine_images(batch[i])
+        """
         assert all(
             len(example) == 1 for example in batch
         ), "BLIP-2 only supports one image per example"
+        """
         for example in batch:
             if batch_images is None:
                 batch_images = self.processor.image_processor(
@@ -107,6 +112,12 @@ class EvalModel(BaseEvalModel):
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
     
     def get_textvqa_prompt(self, question, answer=None) -> str:
+        return f"Question:{question} Short answer:{answer if answer is not None else ''}"
+    
+    def get_gqa_prompt(self, question, answer=None) -> str:
+        return f"Question:{question} Short answer:{answer if answer is not None else ''}"
+    
+    def get_mantiseval_prompt(self, question, answer=None) -> str:
         return f"Question:{question} Short answer:{answer if answer is not None else ''}"
 
     def get_coco_prompt(self, caption=None) -> str:

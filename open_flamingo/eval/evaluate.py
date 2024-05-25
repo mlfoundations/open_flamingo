@@ -34,7 +34,7 @@ from eval_datasets import (
     HatefulMemesDataset,
 )
 from ok_vqa_utils import postprocess_ok_vqa_generation
-from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation
+from vqa_metric import compute_vqa_accuracy, postprocess_vqa_generation, compute_mantis_accuracy
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -109,56 +109,29 @@ parser.add_argument(
 )
 
 # Per-dataset evaluation flags
-parser.add_argument(
-    "--eval_coco",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on COCO.",
-)
-parser.add_argument(
-    "--eval_vqav2",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on VQAV2.",
-)
-parser.add_argument(
-    "--eval_okvqa",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on OK-VQA.",
-)
-parser.add_argument(
-    "--eval_vizwiz",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on VizWiz.",
-)
-parser.add_argument(
-    "--eval_textvqa",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on TextVQA.",
-)
-parser.add_argument(
-    "--eval_imagenet",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on ImageNet.",
-)
-parser.add_argument(
-    "--eval_flickr30",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on Flickr30.",
-)
-parser.add_argument(
-    "--eval_hateful_memes",
-    action="store_true",
-    default=False,
-    help="Whether to evaluate on Hateful Memes.",
-)
+for task in SUPPORTED_TASKS:
+    parser.add_argument(
+        f"--eval_{task}",
+        action="store_true",
+        default=False,
+        help=f"Whether to evaluate on {task.replace('_', ' ')}"
+    )
 
 # Dataset arguments
+
+for task in ['flickr', 'coco']:
+    parser.add_argument(
+        f"--{task}_karpathy_json_path",
+        type=str,
+        help="Path to the dataset_flickr30k.json file." if task=='flickr' else argparse.SUPPRESS,
+        default=None,
+    )
+    parser.add_argument(
+        f"--{task}_annotations_json_path",
+        type=str,
+        help="Path to the dataset_flickr30k_coco_style.json file." if task=='flickr' else argparse.SUPPRESS,
+        default=None
+    )
 
 ## Flickr30 Dataset
 parser.add_argument(
@@ -166,17 +139,6 @@ parser.add_argument(
     type=str,
     help="Path to the flickr30/flickr30k_images directory.",
     default=None,
-)
-parser.add_argument(
-    "--flickr_karpathy_json_path",
-    type=str,
-    help="Path to the dataset_flickr30k.json file.",
-    default=None,
-)
-parser.add_argument(
-    "--flickr_annotations_json_path",
-    type=str,
-    help="Path to the dataset_flickr30k_coco_style.json file.",
 )
 ## COCO Dataset
 parser.add_argument(
@@ -189,160 +151,47 @@ parser.add_argument(
     type=str,
     default=None,
 )
-parser.add_argument(
-    "--coco_karpathy_json_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--coco_annotations_json_path",
-    type=str,
-    default=None,
-)
+
+## VQAV2, OK-VQA, VizWiz, TextVQA, GQA, Mantis-Eval Datasets
+for task in ['vqav2', 'okvqa', 'vizwiz', 'textvqa', 'gqa', 'mantiseval']:
+    parser.add_argument(
+        f"--{task}_image_dir_path" if task=='gqa' or task=='textvqa' or task=='mantiseval' else f"--{task}_train_image_dir_path",
+        type=str,
+        default=None,
+    )
+    if task != 'mantiseval':
+        if task!='gqa' and task!='textvqa':
+            parser.add_argument(
+                f"--{task}_test_image_dir_path",
+                type=str,
+                default=None,
+            )
+        parser.add_argument(
+            f"--{task}_train_questions_json_path",
+            type=str,
+            default=None,
+        )
+        parser.add_argument(
+            f"--{task}_train_annotations_json_path",
+            type=str,
+            default=None,
+        )
+    parser.add_argument(
+        f"--{task}_test_questions_json_path",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        f"--{task}_test_annotations_json_path",
+        type=str,
+        default=None,
+    )
 
 ## VQAV2 Dataset
-parser.add_argument(
-    "--vqav2_train_image_dir_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--vqav2_train_questions_json_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--vqav2_train_annotations_json_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--vqav2_test_image_dir_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--vqav2_test_questions_json_path",
-    type=str,
-    default=None,
-)
-parser.add_argument(
-    "--vqav2_test_annotations_json_path",
-    type=str,
-    default=None,
-)
 parser.add_argument(
     "--vqav2_final_test_questions_json_path",
     type=str,
     help="Path to the v2_OpenEnded_mscoco_test2015_questions.json file containing all test questions. This is required to format the predictions for EvalAI.",
-    default=None,
-)
-
-## OK-VQA Dataset
-parser.add_argument(
-    "--ok_vqa_train_image_dir_path",
-    type=str,
-    help="Path to the vqav2/train2014 directory.",
-    default=None,
-)
-parser.add_argument(
-    "--ok_vqa_train_questions_json_path",
-    type=str,
-    help="Path to the v2_OpenEnded_mscoco_train2014_questions.json file.",
-    default=None,
-)
-parser.add_argument(
-    "--ok_vqa_train_annotations_json_path",
-    type=str,
-    help="Path to the v2_mscoco_train2014_annotations.json file.",
-    default=None,
-)
-parser.add_argument(
-    "--ok_vqa_test_image_dir_path",
-    type=str,
-    help="Path to the vqav2/val2014 directory.",
-    default=None,
-)
-parser.add_argument(
-    "--ok_vqa_test_questions_json_path",
-    type=str,
-    help="Path to the v2_OpenEnded_mscoco_val2014_questions.json file.",
-    default=None,
-)
-parser.add_argument(
-    "--ok_vqa_test_annotations_json_path",
-    type=str,
-    help="Path to the v2_mscoco_val2014_annotations.json file.",
-    default=None,
-)
-
-## VizWiz Dataset
-parser.add_argument(
-    "--vizwiz_train_image_dir_path",
-    type=str,
-    help="Path to the vizwiz train images directory.",
-    default=None,
-)
-parser.add_argument(
-    "--vizwiz_test_image_dir_path",
-    type=str,
-    help="Path to the vizwiz test images directory.",
-    default=None,
-)
-parser.add_argument(
-    "--vizwiz_train_questions_json_path",
-    type=str,
-    help="Path to the vizwiz questions json file.",
-    default=None,
-)
-parser.add_argument(
-    "--vizwiz_train_annotations_json_path",
-    type=str,
-    help="Path to the vizwiz annotations json file.",
-    default=None,
-)
-parser.add_argument(
-    "--vizwiz_test_questions_json_path",
-    type=str,
-    help="Path to the vizwiz questions json file.",
-    default=None,
-)
-parser.add_argument(
-    "--vizwiz_test_annotations_json_path",
-    type=str,
-    help="Path to the vizwiz annotations json file.",
-    default=None,
-)
-
-# TextVQA Dataset
-parser.add_argument(
-    "--textvqa_image_dir_path",
-    type=str,
-    help="Path to the textvqa images directory.",
-    default=None,
-)
-parser.add_argument(
-    "--textvqa_train_questions_json_path",
-    type=str,
-    help="Path to the textvqa questions json file.",
-    default=None,
-)
-parser.add_argument(
-    "--textvqa_train_annotations_json_path",
-    type=str,
-    help="Path to the textvqa annotations json file.",
-    default=None,
-)
-parser.add_argument(
-    "--textvqa_test_questions_json_path",
-    type=str,
-    help="Path to the textvqa questions json file.",
-    default=None,
-)
-parser.add_argument(
-    "--textvqa_test_annotations_json_path",
-    type=str,
-    help="Path to the textvqa annotations json file.",
     default=None,
 )
 
@@ -398,6 +247,7 @@ parser.add_argument(
 
 def main():
     args, leftovers = parser.parse_known_args()
+    var_args = vars(args)
 
     # set up distributed evaluation
     args.local_rank, args.rank, args.world_size = world_info_from_env()
@@ -427,313 +277,125 @@ def main():
 
     # Run through datasets and evaluate
     results = defaultdict(list)
+    
+    for task in ["flickr30", "coco"]:
+        if var_args[f"eval_{task}"]:
+            print(f"Evaluating on {task}...")
 
-    if args.eval_flickr30:
-        print("Evaluating on Flickr30k...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/flickr30.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_captioning(
-                    args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="flickr",
-                    cached_features=cached_features,
+            # load cached demonstration features for RICES
+            if args.cached_demonstration_features is not None:
+                cached_features = torch.load(
+                    f"{args.cached_demonstration_features}/{task}.pkl", map_location="cpu"
                 )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
-                    scores.append(cider_score)
+            else:
+                cached_features = None
 
-            if args.rank == 0:
-                print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
-                results["flickr30"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
-                )
-
-    if args.eval_coco:
-        print("Evaluating on COCO...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/coco.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                cider_score = evaluate_captioning(
-                    args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="coco",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
-                    scores.append(cider_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
-                results["coco"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
-                )
-
-    if args.eval_okvqa:
-        print("Evaluating on OK-VQA...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/ok_vqa.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                ok_vqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="okvqa",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} OK-VQA score: {ok_vqa_score}")
-                    scores.append(ok_vqa_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean OK-VQA score: {np.nanmean(scores)}")
-                results["ok_vqa"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
-                )
-
-    if args.eval_vqav2:
-        print("Evaluating on VQAv2...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/vqav2.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="vqav2",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0 and vqa_score is not None:
-                    print(f"Shots {shot} Trial {trial} VQA score: {vqa_score}")
-                    scores.append(vqa_score)
-
-            if args.rank == 0 and len(scores) > 0:
-                print(f"Shots {shot} Mean VQA score: {np.nanmean(scores)}")
-                results["vqav2"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
-                )
-
-    if args.eval_vizwiz:
-        print("Evaluating on VizWiz...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/vizwiz.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                vizwiz_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="vizwiz",
-                    cached_features=cached_features,
-                )
-                if args.rank == 0 and vizwiz_score is not None:
-                    print(f"Shots {shot} Trial {trial} VizWiz score: {vizwiz_score}")
-                    scores.append(vizwiz_score)
-
-            if args.rank == 0 and len(scores) > 0:
-                print(f"Shots {shot} Mean VizWiz score: {np.nanmean(scores)}")
-                results["vizwiz"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
-                )
-
-    if args.eval_textvqa:
-        print("Evaluating on TextVQA...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/textvqa.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                textvqa_score = evaluate_vqa(
-                    args=args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    dataset_name="textvqa",
-                    max_new_tokens=10,
-                    cached_features=cached_features,
-                )
-                if args.rank == 0:
-                    print(f"Shots {shot} Trial {trial} TextVQA score: {textvqa_score}")
-                    scores.append(textvqa_score)
-
-            if args.rank == 0:
-                print(f"Shots {shot} Mean TextVQA score: {np.nanmean(scores)}")
-                results["textvqa"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
-                )
-
-    if args.eval_imagenet:
-        print("Evaluating on ImageNet...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/imagenet.pkl", map_location="cpu"
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                imagenet_score = evaluate_classification(
-                    args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    no_kv_caching=args.no_caching_for_classification,
-                    dataset_name="imagenet",
-                    cached_features=cached_features,
-                    use_prompt_ensembling=args.classification_prompt_ensembling,
-                )
-                if args.rank == 0:
-                    print(
-                        f"Shots {shot} Trial {trial} "
-                        f"ImageNet score: {imagenet_score}"
+            for shot in args.shots:
+                scores = []
+                for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                    cider_score = evaluate_captioning(
+                        args,
+                        eval_model=eval_model,
+                        num_shots=shot,
+                        seed=seed,
+                        dataset_name="flickr" if task=="flickr30" else task,
+                        cached_features=cached_features,
                     )
-                    scores.append(imagenet_score)
+                    if args.rank == 0:
+                        print(f"Shots {shot} Trial {trial} CIDEr score: {cider_score}")
+                        scores.append(cider_score)
 
-            if args.rank == 0:
-                print(f"Shots {shot} Mean ImageNet score: {np.nanmean(scores)}")
-                results["imagenet"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
-                )
-
-    if args.eval_hateful_memes:
-        print("Evaluating on Hateful Memes...")
-
-        # load cached demonstration features for RICES
-        if args.cached_demonstration_features is not None:
-            cached_features = torch.load(
-                f"{args.cached_demonstration_features}/hateful_memes.pkl",
-                map_location="cpu",
-            )
-        else:
-            cached_features = None
-
-        for shot in args.shots:
-            scores = []
-            for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
-                hateful_memes_score = evaluate_classification(
-                    args,
-                    eval_model=eval_model,
-                    num_shots=shot,
-                    seed=seed,
-                    no_kv_caching=args.no_caching_for_classification,
-                    dataset_name="hateful_memes",
-                    cached_features=cached_features,
-                )
                 if args.rank == 0:
-                    print(
-                        f"Shots {shot} Trial {trial} "
-                        f"Hateful Memes score: {hateful_memes_score}"
+                    print(f"Shots {shot} Mean CIDEr score: {np.nanmean(scores)}")
+                    results[task].append(
+                        {
+                            "shots": shot,
+                            "trials": scores,
+                            "mean": np.nanmean(scores),
+                            "stddev": np.nanstd(scores),
+                        }
                     )
-                    scores.append(hateful_memes_score)
+    
+    for vqa_task in ["okvqa", "vqav2", "vizwiz", "textvqa", "gqa", "mantiseval"]:
+        if var_args[f"eval_{vqa_task}"]:
+            print(f"Evaluating on {vqa_task}...")
 
-            if args.rank == 0:
-                print(f"Shots {shot} Mean Hateful Memes score: {np.nanmean(scores)}")
-                results["hateful_memes"].append(
-                    {
-                        "shots": shot,
-                        "trials": scores,
-                        "mean": np.nanmean(scores),
-                        "stddev": np.nanstd(scores),
-                    }
+            # load cached demonstration features for RICES
+            if args.cached_demonstration_features is not None:
+                cached_features = torch.load(
+                    f"{args.cached_demonstration_features}/{vqa_task}.pkl", map_location="cpu"
                 )
+            else:
+                cached_features = None
+
+            for shot in args.shots:
+                scores = []
+                for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                    vqa_score = evaluate_vqa(
+                        args=args,
+                        eval_model=eval_model,
+                        num_shots=shot,
+                        seed=seed,
+                        dataset_name=vqa_task,
+                        cached_features=cached_features,
+                    )
+                    if args.rank == 0:
+                        print(f"Shots {shot} Trial {trial} {vqa_task} score: {vqa_score}")
+                        scores.append(vqa_score)
+
+                if args.rank == 0:
+                    print(f"Shots {shot} Mean {vqa_task} score: {np.nanmean(scores)}")
+                    results[vqa_task].append(
+                        {
+                            "shots": shot,
+                            "trials": scores,
+                            "mean": np.nanmean(scores),
+                            "stddev": np.nanstd(scores),
+                        }
+                    )
+    
+    for classification_task in ["imagenet", "hateful_memes"]:
+        if var_args[f"eval_{classification_task}"]:
+            print(f"Evaluating on {classification_task}...")
+
+            # load cached demonstration features for RICES
+            if args.cached_demonstration_features is not None:
+                cached_features = torch.load(
+                    f"{args.cached_demonstration_features}/{classification_task}.pkl", map_location="cpu"
+                )
+            else:
+                cached_features = None
+
+            for shot in args.shots:
+                scores = []
+                for seed, trial in zip(args.trial_seeds, range(args.num_trials)):
+                    classification_score = evaluate_classification(
+                        args,
+                        eval_model=eval_model,
+                        num_shots=shot,
+                        seed=seed,
+                        no_kv_caching=args.no_caching_for_classification,
+                        dataset_name=classification_task,
+                        cached_features=cached_features,
+                        use_prompt_ensembling=args.classification_prompt_ensembling,
+                    )
+                    if args.rank == 0:
+                        print(
+                            f"Shots {shot} Trial {trial} "
+                            f"{classification_task.replace('_', ' ')} score: {classification_score}"
+                        )
+                        scores.append(classification_score)
+
+                if args.rank == 0:
+                    print(f"Shots {shot} Mean {classification_task.replace('_', ' ')} score: {np.nanmean(scores)}")
+                    results[classification_task].append(
+                        {
+                            "shots": shot,
+                            "trials": scores,
+                            "mean": np.nanmean(scores),
+                            "stddev": np.nanstd(scores),
+                        }
+                    )
 
     if args.rank == 0 and args.results_file is not None:
         with open(args.results_file, "w") as f:
@@ -939,36 +601,17 @@ def evaluate_vqa(
     Returns:
         float: accuracy score
     """
-
-    if dataset_name == "okvqa":
-        train_image_dir_path = args.ok_vqa_train_image_dir_path
-        train_questions_json_path = args.ok_vqa_train_questions_json_path
-        train_annotations_json_path = args.ok_vqa_train_annotations_json_path
-        test_image_dir_path = args.ok_vqa_test_image_dir_path
-        test_questions_json_path = args.ok_vqa_test_questions_json_path
-        test_annotations_json_path = args.ok_vqa_test_annotations_json_path
-    elif dataset_name == "vqav2":
-        train_image_dir_path = args.vqav2_train_image_dir_path
-        train_questions_json_path = args.vqav2_train_questions_json_path
-        train_annotations_json_path = args.vqav2_train_annotations_json_path
-        test_image_dir_path = args.vqav2_test_image_dir_path
-        test_questions_json_path = args.vqav2_test_questions_json_path
-        test_annotations_json_path = args.vqav2_test_annotations_json_path
-    elif dataset_name == "vizwiz":
-        train_image_dir_path = args.vizwiz_train_image_dir_path
-        train_questions_json_path = args.vizwiz_train_questions_json_path
-        train_annotations_json_path = args.vizwiz_train_annotations_json_path
-        test_image_dir_path = args.vizwiz_test_image_dir_path
-        test_questions_json_path = args.vizwiz_test_questions_json_path
-        test_annotations_json_path = args.vizwiz_test_annotations_json_path
-    elif dataset_name == "textvqa":
-        train_image_dir_path = args.textvqa_image_dir_path
-        train_questions_json_path = args.textvqa_train_questions_json_path
-        train_annotations_json_path = args.textvqa_train_annotations_json_path
-        test_image_dir_path = args.textvqa_image_dir_path
-        test_questions_json_path = args.textvqa_test_questions_json_path
-        test_annotations_json_path = args.textvqa_test_annotations_json_path
-    else:
+    var_args = vars(args)
+    for task in ["okvqa", "vqav2", "vizwiz", "textvqa", "gqa", "mantiseval"]:
+        if dataset_name == task:
+            task = task
+            train_image_dir_path = var_args[f"{task}_train_image_dir_path" if task!="textvqa" and task!="gqa" and task!="mantiseval" else f"{task}_image_dir_path"]
+            train_questions_json_path = var_args[f"{task}_train_questions_json_path"] if task!="mantiseval" else var_args[f"{task}_test_questions_json_path"]
+            train_annotations_json_path = var_args[f"{task}_train_annotations_json_path"] if task!="mantiseval" else var_args[f"{task}_test_annotations_json_path"]
+            test_image_dir_path = var_args[f"{task}_test_image_dir_path" if task!="textvqa" and task!="gqa" and task!="mantiseval" else f"{task}_image_dir_path"]
+            test_questions_json_path = var_args[f"{task}_test_questions_json_path"]
+            test_annotations_json_path = var_args[f"{task}_test_annotations_json_path"]
+    if dataset_name not in ["okvqa", "vqav2", "vizwiz", "textvqa", "gqa", "mantiseval"]:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
     train_dataset = VQADataset(
@@ -1033,7 +676,10 @@ def evaluate_vqa(
                 context_images = [x["image"] for x in batch_demo_samples[i]]
             else:
                 context_images = []
-            batch_images.append(context_images + [batch["image"][i]])
+            if dataset_name == "mantiseval":
+                batch_images.append(context_images + batch["image"][i])
+            else:
+                batch_images.append(context_images + [batch["image"][i]])
 
             context_text = "".join(
                 [
@@ -1061,10 +707,10 @@ def evaluate_vqa(
             num_beams=num_beams,
             length_penalty=length_penalty,
         )
-
+        
         process_function = (
             postprocess_ok_vqa_generation
-            if dataset_name == "ok_vqa"
+            if dataset_name == "okvqa"
             else postprocess_vqa_generation
         )
 
@@ -1090,11 +736,17 @@ def evaluate_vqa(
         f.write(json.dumps(all_predictions, indent=4))
 
     if test_annotations_json_path is not None:
-        acc = compute_vqa_accuracy(
-            f"{dataset_name}results_{random_uuid}.json",
-            test_questions_json_path,
-            test_annotations_json_path,
-        )
+        if dataset_name == "mantiseval":
+            acc = compute_mantis_accuracy(
+                f"{dataset_name}results_{random_uuid}.json",
+                test_annotations_json_path,
+            )
+        else:
+            acc = compute_vqa_accuracy(
+                f"{dataset_name}results_{random_uuid}.json",
+                test_questions_json_path,
+                test_annotations_json_path,
+            )
         # delete the temporary file
         os.remove(f"{dataset_name}results_{random_uuid}.json")
 

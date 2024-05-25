@@ -553,6 +553,26 @@ def compute_vqa_accuracy(result_json_path, question_json_path, annotation_json_p
 
     return vqaEval.accuracy["overall"]
 
+def compute_mantis_accuracy(result_json_path, annotation_json_path):
+    dataset = json.load(open(annotation_json_path, "r"))
+    gt_ans = {}
+    for ann in dataset["annotations"]:
+        gt_ans[ann["question_id"]] = {"answer": ann["answers"][0]["answer"], "type": ann["question_type"]}
+    results = json.load(open(result_json_path, "r"))
+    assert type(results) == list, "results is not an array of objects"
+    correct = 0
+    for res in results:
+        res_ans = res["answer"].lower().strip('()\n ')
+        if gt_ans[res["question_id"]]["type"] == "multi-choice":
+            if len(res_ans) > 1:
+                for c in res_ans:
+                    if c.isalpha():
+                        res_ans = c
+                        break
+        if res_ans == gt_ans[res["question_id"]]["answer"].lower().strip('()\n '):
+            correct+=1
+    acc = correct / len(results)
+    return acc
 
 def postprocess_vqa_generation(predictions):
     answer = re.split("Question|Answer|Short", predictions, 1)[0]

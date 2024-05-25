@@ -14,6 +14,8 @@ SUPPORTED_TASKS = [
     "okvqa",
     "vizwiz",
     "textvqa",
+    "gqa",
+    "mantiseval",
     "hateful_memes",
     "imagenet",
 ]
@@ -104,16 +106,28 @@ class VQADataset(Dataset):
             )
         elif self.dataset_name == "vizwiz":
             return os.path.join(self.image_dir_path, question["image_id"])
-        elif self.dataset_name == "textvqa":
+        elif self.dataset_name == "textvqa" or self.dataset_name == "gqa":
             return os.path.join(self.image_dir_path, f"{question['image_id']}.jpg")
+        elif self.dataset_name == "mantiseval":
+            img_paths = []
+            for img_id in question['image_id']:
+                img_paths.append(os.path.join(self.image_dir_path, f"{img_id}.jpg"))
+            return img_paths
         else:
             raise Exception(f"Unknown VQA dataset {self.dataset_name}")
 
     def __getitem__(self, idx):
         question = self.questions[idx]
         img_path = self.get_img_path(question)
-        image = Image.open(img_path)
-        image.load()
+        if self.dataset_name == "mantiseval":
+            image = []
+            for path in img_path:
+                img = Image.open(path)
+                img.load()
+                image.append(img)
+        else:
+            image = Image.open(img_path)
+            image.load()
         results = {
             "image": image,
             "question": question["question"],

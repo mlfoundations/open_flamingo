@@ -3,6 +3,7 @@ import torch
 import random
 import torch.nn as nn
 from contextlib import suppress
+from PIL import Image
 
 
 def random_seed(seed=42, rank=0):
@@ -122,3 +123,25 @@ def get_autocast(precision):
         return lambda: torch.cuda.amp.autocast(dtype=torch.bfloat16)
     else:
         return suppress
+
+def combine_images(images):
+    img_heights, _ = zip(*(img.size for img in images))
+    avg_height = sum(img_heights) // len(img_heights)
+    for i, img in enumerate(images):
+        images[i] = img.resize((int(img.size[0] * avg_height / img.size[1]), avg_height))
+    resized_heights, resized_widths = zip(*(img.size for img in images))
+    total_width = sum(resized_widths)
+    max_height = max(resized_heights)
+    new_img = Image.new("RGB", (total_width + 10 * (len(images) - 1), max_height))
+    x_offset = 0
+    for i, img in enumerate(images):
+        if i > 0:
+            new_img.paste(Image.new("RGB", (1, max_height), (0, 0, 0)), (x_offset, 0))
+            x_offset += 1
+            new_img.paste(Image.new("RGB", (8, max_height), (255, 255, 255)), (x_offset, 0))
+            x_offset += 8
+            new_img.paste(Image.new("RGB", (1, max_height), (0, 0, 0)), (x_offset, 0))
+            x_offset += 1
+        new_img.paste(img, (x_offset, 0))
+        x_offset += img.size[0]
+    return new_img
